@@ -14,13 +14,14 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 
 ## Supabase (source of truth: remote DB)
 
-- **Org:** hasini.four@gmail.com's Org — ID `ycenpzlqllsoddavsvpw`
-  - Projects in org: CarbonX (`rbdyzeuucgqkhlikbpnd`), AquaSentinel (`eqrogkpwlmdmappphkvp`), cropdoc (`iachrjbkhgqvrvfntxwh`)
-- **CarbonX project ref:** `rbdyzeuucgqkhlikbpnd` — region: Oceania (Sydney)
-- **URL:** `https://rbdyzeuucgqkhlikbpnd.supabase.co`
-- **Env vars:** root `.env` → `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`; `backend/.env` → `SUPABASE_URL`, `SUPABASE_KEY` (anon key), `SUPABASE_SERVICE_ROLE_KEY` (write access — required for backend writes; anon key alone can only SELECT profiles/farms/marketplace_listings and gets `permission denied` on fpos/corporates/otp_codes/kyc_verifications)
-- CLI is installed (v2.116.0) and logged in on this machine; auth token is managed by the CLI itself (no `~/.supabase/access-token` file).
-- Project is NOT linked locally (`supabase link` not run); always pass the ref explicitly.
+**ACTIVE PROJECT (since 2026-10-04): sreethan05's own "CarbonX" — ref `ihyqhisxgdwxudnxksts`, region Southeast Asia (Singapore), org `qdjrdxufhdhzqpavnvpt` (own org, alongside "Agri").**
+
+- **URL:** `https://ihyqhisxgdwxudnxksts.supabase.co`
+- Env vars: root `.env` → `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`; `backend/.env` → `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (write access). Keys are fetched via `npx supabase projects api-keys --project-ref ihyqhisxgdwxudnxksts` (CLI logged in on this machine, token in Windows Credential Manager under `Supabase CLI:supabase`).
+- Schema completed 2026-10-04 (10 tables): the 7 core tables plus `fpos`, `corporates`, `land_registry` (empty — old 30 Telangana parcels were in the old project), `fpo_members`, `ledger_events` (hash-chain store, service_role granted).
+- Demo data seeded via `python scripts/seed_marketplace_data.py` (defaults to this ref; override with `SUPABASE_PROJECT_REF`).
+
+**LEGACY PROJECT (do not use): `rbdyzeuucgqkhlikbpnd`** — old "CarbonX" in hasini.four@gmail.com's org (Sydney). Kept here only for history.
 
 ### Working CLI commands (no password prompt — use CLI login role)
 
