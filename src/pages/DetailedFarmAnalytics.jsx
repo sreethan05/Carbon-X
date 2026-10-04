@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Sparkles, TrendingUp, ArrowLeft, Sliders, CheckCircle2, ShieldCheck, Hash } from 'lucide-react';
+import { Sparkles, TrendingUp, ArrowLeft, Sliders, CheckCircle2, ShieldCheck, Hash, Download } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
 import { getFarmPassport, getNdviHistory, getFarmLedger } from '../services/api';
@@ -68,6 +68,43 @@ export default function DetailedFarmAnalytics() {
     }, 15000);
     return () => clearInterval(timer);
   }, [farmId]);
+
+  // Farmer-facing analytics export (#34): passport summary + NDVI history as CSV.
+  const exportAnalyticsCsv = () => {
+    const rows = [["section", "key", "value"]];
+    const pp = passport || {};
+    const summary = [
+      ["passport_id", pp.passport_id],
+      ["farm_name", pp.farm_name],
+      ["owner_name", pp.owner_name],
+      ["crop", pp.crop],
+      ["acreage_ha", pp.acreage],
+      ["badge", pp.badge],
+      ["sentinel_ndvi", pp.sentinel_ndvi],
+      ["carbon_tonnes", pp.carbon_tonnes],
+      ["annual_credits", pp.annual_credits],
+      ["status", pp.status],
+      ["expected_income_inr", pp.expected_earnings?.expected_income_inr],
+      ["income_low_inr", pp.expected_earnings?.range_inr?.min],
+      ["income_high_inr", pp.expected_earnings?.range_inr?.max],
+      ["evidence_quality", pp.trust?.evidence_quality],
+      ["uncertainty_pct", pp.trust?.uncertainty_pct],
+      ["ledger_verified", pp.ledger?.verified],
+      ["ledger_tail_hash", pp.ledger?.tail_hash],
+      ["last_monitored_at", pp.monitoring?.last_monitored_at],
+      ["at_risk", pp.monitoring?.at_risk],
+    ];
+    summary.forEach(([k, v]) => rows.push(["passport", k, v ?? ""]));
+    trendData.forEach((d) => rows.push(["ndvi_history", d.month, d.ndvi]));
+    const csv = rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `carbonx_passport_${(pp.passport_id || farmId || "farm").replace(/[^\w-]/g, "_")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // P3 Score Simulator Practice Options
   const practiceOptions = [
@@ -253,11 +290,19 @@ export default function DetailedFarmAnalytics() {
               </h2>
               <p className="text-xs text-agriText-muted">Evidence quality drives a 10–30% uncertainty deduction; every credit event is hash-chained and publicly recomputable.</p>
             </div>
-            {passport?.ledger?.verified && (
-              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
-                ✓ CHAIN VERIFIED
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exportAnalyticsCsv}
+                className="px-3 py-1.5 bg-white border border-forest-200 text-carbon-800 hover:bg-surface-sage rounded-lg text-[11px] font-bold transition-all flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5" /> Export CSV
+              </button>
+              {passport?.ledger?.verified && (
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                  ✓ CHAIN VERIFIED
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

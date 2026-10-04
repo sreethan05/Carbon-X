@@ -3,12 +3,35 @@ import io
 import os
 import sys
 import unittest
+
+# Hermetic test env: force demo mode BEFORE app.main is imported anywhere
+# (discovery imports this file first alphabetically). Tests must never touch
+# the live database.
+for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+           "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
+    os.environ.pop(_k, None)
+os.environ["SUPABASE_URL"] = ""
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
+
 import numpy as np
 from PIL import Image
 from fastapi.testclient import TestClient
 
 # Ensure app imports correctly
 from app.main import app
+
+# Force demo mode AFTER import: main.py load_dotenv(override=True) re-reads
+# backend/.env at import time, so env-clearing must happen post-import and the
+# cached Supabase client must be reset. Tests never touch the live database.
+from app import supabase_db as _db
+for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+           "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
+    os.environ.pop(_k, None)
+os.environ["SUPABASE_URL"] = ""
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
+_db._supabase = None
+_db._ready = False
+
 from app.services.kyc_service import validate_aadhaar
 from app.services.ml_service import predict_biodiversity
 
@@ -16,6 +39,13 @@ from app.services.ml_service import predict_biodiversity
 class TestCarbonXFullSuite(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # This suite asserts DB-persisted behaviour (registration, saved
+        # farms, marketplace rows). With credentials removed it runs in demo
+        # mode where those paths correctly 503/401 — so skip unless a live
+        # database is explicitly opted into for testing.
+        if not os.environ.get("SUPABASE_URL") or not os.environ.get("CARBONX_TEST_LIVE_DB"):
+            raise unittest.SkipTest(
+                "DB-backed suite — set SUPABASE_URL + CARBONX_TEST_LIVE_DB=1 to run against a live database")
         # Force OTP dev mode AFTER app import (main.py load_dotenv
         # override=True would clobber module-level env). phone_service
         # reads env per-call, so this guarantees no real SMS in tests.

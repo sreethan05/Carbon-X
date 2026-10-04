@@ -14,7 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Literal, Optional
 import base64
+import math
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 import os
@@ -34,7 +36,20 @@ from app import sample_data
 from app.services import credit_engine, ledger, market_store, split_engine
 from app.services.kyc_service import analyse_document, validate_aadhaar
 
-app = FastAPI(title="CarbonX API")
+app = FastAPI(
+    title="CarbonX API",
+    version="1.0.0",
+    description="Satellite-verified carbon + biodiversity credits for Indian smallholder farmers. "
+                "Trust pipeline: register -> verify (Stage 1) -> calculate (Stage 2) -> anchor -> "
+                "monitor -> sell/split/retire. See docs/MRV_METHODOLOGY.md for the equations.",
+    openapi_tags=[
+        {"name": "auth", "description": "Phone-OTP registration/login, JWT sessions"},
+        {"name": "farms", "description": "Boundary registration, satellite analysis, Trust Engine"},
+        {"name": "marketplace", "description": "Listings, matching, escrow purchases, conditional splits"},
+        {"name": "trust", "description": "Hash ledger, certificates, monitoring, ground-truth calibration"},
+        {"name": "ops", "description": "Operational snapshots and calibration tooling (no PII)"},
+    ],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +58,65 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Security headers + request-ID + version header (#5, #24, #16-light) ──
+@app.middleware("http")
+async def security_and_trace_headers(request, call_next):
+    import uuid as _uuid
+    request_id = request.headers.get("X-Request-ID") or _uuid.uuid4().hex[:16]
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-API-Version"] = "1.0.0"
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self' 'unsafe-inline'",
+    )
+    if os.getenv("CARBONX_FORCE_HTTPS", "").strip().lower() in ("1", "true"):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    return response
+
+
+# ── Structured logging (#24) ──
+from app.logging_setup import setup_logging
+setup_logging()
+
+# ── Prometheus metrics (#25) ──
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+except Exception as _e:  # pragma: no cover
+    print(f"metrics disabled: {_e}")
+
+
+# ── Uniform error envelope (#15): every failure returns {success:false,message} ──
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_envelope(request, exc):
+    msgs = []
+    for err in exc.errors():
+        loc = ".".join(str(x) for x in err.get("loc", []) if x != "body")
+        msgs.append(f"{loc}: {err.get('msg', 'invalid')}" if loc else str(err.get("msg", "invalid")))
+    return JSONResponse(status_code=422, content={"success": False, "message": "; ".join(msgs)})
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_envelope(request, exc):
+    detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    if isinstance(detail, list):  # FastAPI validation-style detail
+        detail = "; ".join(d.get("msg", str(d)) for d in detail if isinstance(d, dict))
+    return JSONResponse(status_code=exc.status_code, content={"success": False, "message": detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_envelope(request, exc):
+    print(f"[unhandled] {request.method} {request.url.path}: {exc}")
+    return JSONResponse(status_code=500, content={"success": False, "message": "Internal server error"})
 
 earth_engine_ready = False
 try:
@@ -192,6 +266,65 @@ class LoginOtpModel(BaseModel):
 class RegistrationOtpVerifyModel(BaseModel):
     phone: str
     otp: str
+
+
+
+def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
+    """Strict input validation before any Earth Engine call (#14).
+
+    Malformed polygons previously crashed EE with opaque errors; now they
+    fail fast with a precise message.
+    """
+    if not isinstance(geojson, dict):
+        return False, "GeoJSON must be an object"
+    geom = geojson.get("geometry") or {}
+    if geom.get("type") != "Polygon":
+        return False, "GeoJSON geometry type must be Polygon"
+    rings = geom.get("coordinates")
+    if not isinstance(rings, list) or not rings:
+        return False, "Polygon coordinates missing"
+    ring = rings[0]
+    if not isinstance(ring, list) or len(ring) < 4:
+        return False, "Polygon ring needs at least 4 positions"
+    for pos in ring:
+        if (not isinstance(pos, list) or len(pos) < 2
+                or not all(isinstance(c, (int, float)) and math.isfinite(c) for c in pos[:2])):
+            return False, "Invalid coordinate in polygon ring"
+        lon, lat = pos[0], pos[1]
+        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+            return False, "Coordinate out of WGS84 range"
+    if ring[0][:2] != ring[-1][:2]:
+        return False, "Polygon ring must be closed (first == last position)"
+    # crude area sanity: reject > 50,000 km^2 bounding boxes (mis-drawn regions)
+    lons = [pos[0] for pos in ring]; lats = [pos[1] for pos in ring]
+    if (max(lons) - min(lons)) > 60 or (max(lats) - min(lats)) > 60:
+        return False, "Polygon too large — draw a single farm plot"
+    return True, ""
+
+
+def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
+    """Earth Engine call with exponential backoff (#11) — quota blips and
+    transient timeouts retry instead of failing the scan."""
+    import time as _time
+    last_err = None
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001 - EE raises many types
+            last_err = e
+            if attempt < attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"[ee] call failed ({type(e).__name__}), retry in {delay}s")
+                _time.sleep(delay)
+    raise last_err
+
+
+# Small in-memory TTL cache for /analyze results keyed by polygon + crop (#11).
+# Rationale: repeated scans of the same plot (demo, retries, refreshes) were
+# the dominant EE consumer; results within the cache window are identical
+# anyway (median composite of a static window).
+_analyze_cache: dict = {}
+_ANALYZE_CACHE_TTL = 600  # seconds
 
 
 class AnalyzeModel(BaseModel):
@@ -1176,6 +1309,15 @@ def analyze(data: AnalyzeModel):
         geojson = data.geojson
         if not geojson:
             return {"success": False, "message": "GeoJSON polygon missing"}
+        ok, err = _validate_polygon_geojson(geojson)
+        if not ok:
+            return {"success": False, "message": err}
+
+        import json as _json
+        cache_key = _json.dumps([data.geojson, data.crop_type], sort_keys=True, default=str)
+        cached = _analyze_cache.get(cache_key)
+        if cached and time.time() - cached[0] < _ANALYZE_CACHE_TTL:
+            return cached[1]
 
         ml_result = None
         s2_scene = None
@@ -1192,17 +1334,17 @@ def analyze(data: AnalyzeModel):
             )
             image = collection.median()
             ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            ndvi_value = ndvi.reduceRegion(
+            ndvi_value = _with_ee_backoff(lambda: ndvi.reduceRegion(
                 reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).get("NDVI").getInfo()
+            ).get("NDVI").getInfo())
             evi = image.expression(
                 "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
                 {"NIR": image.select("B8"), "RED": image.select("B4"), "BLUE": image.select("B2")},
             )
-            evi_value = evi.reduceRegion(
+            evi_value = _with_ee_backoff(lambda: evi.reduceRegion(
                 reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).values().get(0).getInfo()
-            area_hectares = round(polygon.area().getInfo() / 10000, 2)
+            ).values().get(0).getInfo())
+            area_hectares = round(_with_ee_backoff(lambda: polygon.area().getInfo()) / 10000, 2)
 
             # Real model features — same derivation as the training pipeline
             # (extract_features.py): spectral indices + band means + time-series
@@ -1275,7 +1417,7 @@ def analyze(data: AnalyzeModel):
             else "Moderate" if ndvi_value >= 0.3 else "Low"
         )
         ml_source = ml_result.get("source") if isinstance(ml_result, dict) else None
-        return {
+        response = {
             "success": True,
             "ndvi": round(ndvi_value, 3),
             "evi": round(evi_value, 3),
@@ -1299,6 +1441,10 @@ def analyze(data: AnalyzeModel):
             },
             "stage1": stage1,
         }
+        if len(_analyze_cache) > 256:
+            _analyze_cache.clear()
+        _analyze_cache[cache_key] = (time.time(), response)
+        return response
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -2092,6 +2238,22 @@ def download_certificate_pdf(cert_id: str):
 
     from app.services.certificate_pdf import render_certificate_pdf
 
+    # Generation is fast (~50 ms) but repeat downloads of the same retired
+    # cert are common (buyer ESG reports); cache bytes per certificate.
+    # Certificates are immutable after retirement, so cert_id is a safe key.
+    global _pdf_cache
+    if "_pdf_cache" not in globals():
+        _pdf_cache = {}
+    if len(_pdf_cache) > 128:
+        _pdf_cache.clear()
+    cached = _pdf_cache.get(cert_id)
+    if cached:
+        return Response(
+            content=cached,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
+        )
+
     rows = None
     if not db.is_ready():
         rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
@@ -2119,6 +2281,7 @@ def download_certificate_pdf(cert_id: str):
         "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
     }
     pdf_bytes = render_certificate_pdf(cert)
+    _pdf_cache[cert_id] = pdf_bytes
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -2175,7 +2338,10 @@ def retire_certificate(cert_id: str, scope: Optional[str] = "Scope 1 Neutrality"
 def get_carbon_passport(farm_id: str):
     """Digital Carbon Passport: satellite + KYC record, expected earnings,
     trust-engine state, and the tamper-evident ledger chain."""
-    farm = db.get_farm(farm_id) if db.is_ready() else None
+    try:
+        farm = db.get_farm(farm_id) if db.is_ready() else None
+    except Exception:
+        farm = None  # non-uuid ids ("demo") must fall through to the demo farm
     demo_mode = False
     if not farm:
         # Demo mode: serve the canonical sample farm for any unknown id.
@@ -2420,6 +2586,44 @@ def evaluate_ground_truth():
         return {"success": False, "message": str(e)}
 
 
+class FpoLoginModel(BaseModel):
+    registration_no: str
+
+
+@app.post("/fpo/login")
+def fpo_login(data: FpoLoginModel):
+    """FPO desk sign-in, step 1: identify the FPO by registration number and
+    send an OTP to its linked officer's phone. Step 2 is the standard
+    OTP login, which issues a token carrying role='fpo'."""
+    sb = db._client()
+    if not sb:
+        return {"success": False, "message": "Database not configured"}
+    try:
+        reg = data.registration_no.strip()
+        fpos = (sb.table("fpos").select("id,name").eq("registration_no", reg).execute().data) or []
+        if not fpos:
+            return {"success": False, "message": "No FPO found for that registration number"}
+        fpo = fpos[0]
+        officers = (sb.table("profiles").select("phone,name")
+                    .eq("role", "fpo").eq("fpo_id", fpo["id"]).execute().data) or []
+        if not officers:
+            return {"success": False, "message": "No verification officer is linked to this FPO yet. Ask the platform admin to link one."}
+        officer = officers[0]
+        flow = _send_otp_flow(officer["phone"])
+        if not flow.get("success"):
+            return {"success": False, "message": flow.get("message") or "Could not send OTP to the officer's phone"}
+        masked = officer["phone"][:2] + "xxxxxx" + officer["phone"][-3:]
+        return {
+            "success": True,
+            "message": f"OTP sent to the registered officer's phone ({masked}). Verify it on the farmer login to enter the FPO desk.",
+            "fpo_name": fpo["name"],
+            "officer_phone_masked": masked,
+            "next": "login",
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
 @app.post("/demo/login")
 def demo_login(data: dict = None):
     """Issue a demo farmer session — only when the database is not configured.
@@ -2490,7 +2694,8 @@ NDVI_DROP_ALERT = 0.15  # Sentinel-2-cycle drop that flags credits at-risk
 
 
 @app.post("/monitor/run")
-def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user_optional)):
+def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user_optional),
+                         x_monitor_secret: Optional[str] = Header(None)):
     """5-day continuous monitoring (the real Sentinel-2 revisit cycle).
 
     Compares each verified farm's current NDVI against the last monitored
@@ -2498,7 +2703,17 @@ def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user
     flags the farm's credits at-risk: the farm is routed to the FPO flagged
     queue and a MONITOR event lands on its hash chain. Clean cycles just
     refresh the snapshot — the ledger stays lean.
+
+    Distributed operation: set CARBONX_MONITOR_SECRET and an external cron
+    (GitHub Actions / Cloud Scheduler) calls this endpoint with the
+    X-Monitor-Secret header — then disable the in-process scheduler with
+    CARBONX_AUTO_MONITOR=0. Unauthenticated local calls still work when no
+    secret is configured (dev/demo).
     """
+    required_secret = os.getenv("CARBONX_MONITOR_SECRET", "").strip()
+    if required_secret and x_monitor_secret != required_secret:
+        if not (current_user and current_user.get("role") in ("fpo", "admin", "verifier")):
+            return {"success": False, "message": "Monitoring requires the monitor secret or an FPO/admin session"}
     if not db.is_ready():
         return {"success": False, "message": "Monitoring needs the database (demo mode has no live farms)"}
     try:

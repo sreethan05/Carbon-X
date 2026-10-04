@@ -51,3 +51,40 @@ on every table (anon/authenticated denied); the backend talks through the
 (Polygon Amoy testnet), deployed contract addresses, and minter keys to
 enable it. Nothing else depends on it — the hash ledger is the system of
 record until on-chain settlement goes live.
+echo "blockchain env example + deploy docs done"
+# multi-lang SMS param (#30)
+python - <<'EOF'
+import pathlib
+p = pathlib.Path("backend/app/phone_service.py")
+t = p.read_text(encoding="utf-8")
+if "def send_phone_otp(phone: str, otp: str" in t and "language: str" not in t:
+    t = t.replace("def send_phone_otp(phone: str, otp: str)",
+                  "def send_phone_otp(phone: str, otp: str, language: str = \"en\"):")
+    # note the provider-side template constraint honestly
+    t = t.replace("def send_phone_otp(phone: str, otp: str, language: str = \"en\"):",
+                  '''def send_phone_otp(phone: str, otp: str, language: str = "en"):
+    # NOTE: Textplate OTP body comes from the provider-side template
+    # (TEXTPLATE_TEMPLATE_ID). Language selection therefore requires one
+    # template id per language (en/te/hi) configured in the provider
+    # dashboard; map them here once those template ids exist:
+    #   _lang_templates = {"en": ..., "te": ..., "hi": ...}''')
+    p.write_text(t, encoding="utf-8")
+    print("phone_service language param + template note added")
+EOF
+python -c "import ast; ast.parse(open('backend/app/phone_service.py', encoding='utf-8').read()); print('phone_service OK')"
+__zcode_status=$?
+if [ "$__zcode_status" -eq 0 ]; then pwd -P > '/c/Users/USER/AppData/Local/Temp/zcode-0479dae7-fb03-411a-a100-a6b84555c985-cwd'; fi
+exit "$__zcode_status"
+
+## 5 · Blockchain service (backend/src, port 3001) — enabling the Amoy demo
+
+1. `cd blockchain && npm install`
+2. Copy `blockchain/.env.example` to `blockchain/.env` → set a burner testnet key.
+3. Deploy: `npx hardhat run scripts/deploy.js --network amoy`
+4. Write the printed `CARBON_CREDIT_ADDRESS` + `MARKETPLACE_ADDRESS` into
+   `backend/.env` (alongside `RPC_URL` and `MINTER_PRIVATE_KEY`), restart the
+   Node service (port 3001, `/bc-api` proxy).
+5. `GET /bc-api/health` should now report `blockchain: true`.
+
+This is optional — the hash ledger remains the system of record until
+on-chain settlement goes live (docs/ROADMAP.md Phase 2).

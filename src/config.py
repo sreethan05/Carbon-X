@@ -1,4 +1,5 @@
-FEATURE_COLS = ["NDVI","NDWI","SAVI","NDVI_STD","B4","B8","B11","B8_VAR"]
+FEATURE_COLS = ["NDVI","NDWI","SAVI","NDVI_STD","B4","B8","B11","B8_VAR",
+                "ELEVATION","NDVI_RANGE","SEASONAL_CONTRAST"]
 ARTIFACTS    = "artifacts"
 DATA         = "data"
 # GEE project the machine's Earth Engine auth has access to (matches backend/.env).
