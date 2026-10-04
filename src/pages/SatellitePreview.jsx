@@ -155,10 +155,20 @@ export default function SatellitePreview() {
             </div>
           )}
 
-          {mrvLocked && (
-            <div className="mt-6 inline-flex items-center gap-2 bg-[#2D6A4F] border border-emerald-400 text-[#D1FAE5] px-5 py-2 rounded-full text-xs font-bold font-mono shadow-md animate-in fade-in zoom-in duration-200">
+          {mrvLocked && result?.stage1 && (
+            <div className={`mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-full text-xs font-bold font-mono shadow-md border animate-in fade-in zoom-in duration-200 ${
+              result.stage1.status === 'MATCH'
+                ? 'bg-[#2D6A4F] border-emerald-400 text-[#D1FAE5]'
+                : result.stage1.status === 'MISMATCH'
+                  ? 'bg-amber-100 border-amber-400 text-amber-900'
+                  : 'bg-slate-100 border-slate-300 text-slate-700'
+            }`}>
               <Lock className="w-4 h-4" />
-              <span>LOCKED : APPROVED MRV RECORD</span>
+              <span>
+                {result.stage1.status === 'MATCH' && 'LOCKED : APPROVED MRV RECORD'}
+                {result.stage1.status === 'MISMATCH' && `PAUSED : ${result.stage1.reason}`}
+                {result.stage1.status === 'UNREVIEWED' && 'LOCKED : NO SIGNATURE CHECK AVAILABLE'}
+              </span>
             </div>
           )}
         </div>

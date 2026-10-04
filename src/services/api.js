@@ -172,6 +172,10 @@ export async function demoLogin(phone) {
   return post(`${PY}/demo/login`, { phone });
 }
 
+export async function runMonitoring() {
+  return post(`${PY}/monitor/run`, {});
+}
+
 // ── Farm passport & history ──
 
 export async function getFarmPassport(farmId) {

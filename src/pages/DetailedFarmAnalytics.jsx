@@ -288,6 +288,26 @@ export default function DetailedFarmAnalytics() {
               )}
             </div>
           </div>
+
+          {/* 5-day monitoring strip */}
+          {passport?.monitoring && (
+            <div className={`rounded-xl border p-3 flex flex-wrap items-center justify-between gap-2 text-xs ${
+              passport.monitoring.at_risk
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : 'bg-surface-sage/40 border-forest-200 text-carbon-800'
+            }`}>
+              <span className="font-bold">
+                {passport.monitoring.at_risk
+                  ? '⚠ Credits AT-RISK — flagged by the 5-day NDVI monitoring cycle, routed to FPO review'
+                  : '✓ Monitoring clean — no significant NDVI drop detected'}
+              </span>
+              <span className="text-agriText-muted font-semibold">
+                {passport.monitoring.last_monitored_at
+                  ? `Last cycle: ${String(passport.monitoring.last_monitored_at).slice(0, 10)} (NDVI ${Number(passport.monitoring.last_monitor_ndvi || 0).toFixed(2)})`
+                  : 'Not yet monitored — first cycle pending'}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Recharts Trend Visualizer */}
