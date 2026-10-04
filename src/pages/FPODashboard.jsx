@@ -8,7 +8,7 @@ import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
 import {
   getFpoFarmers, getFpoPending, getFpoFlagged, getCertificates,
-  fpoOnboardFarmer, fpoConfirmFarm, fpoReviewFarm,
+  fpoOnboardFarmer, fpoConfirmFarm, fpoReviewFarm, runMonitoring,
 } from '../services/api';
 
 export default function FPODashboard() {
@@ -41,6 +41,23 @@ export default function FPODashboard() {
   const [auditNotes, setAuditNotes] = useState('');
   const [auditActionDone, setAuditActionDone] = useState(null);
   const [auditBusyId, setAuditBusyId] = useState(null);
+
+  // 5-day NDVI monitoring cycle
+  const [monitorResult, setMonitorResult] = useState(null);
+  const [isMonitoring, setIsMonitoring] = useState(false);
+  const handleRunMonitoring = async () => {
+    setIsMonitoring(true);
+    setMonitorResult(null);
+    try {
+      const res = await runMonitoring();
+      setMonitorResult(res && res.success ? res : { success: false, message: (res && res.message) || 'Monitoring failed' });
+      if (res && res.success) await loadAll();
+    } catch {
+      setMonitorResult({ success: false, message: 'Monitoring service unreachable.' });
+    } finally {
+      setIsMonitoring(false);
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -186,6 +203,33 @@ export default function FPODashboard() {
             </button>
           </div>
         )}
+
+        {/* 5-day NDVI Monitoring Cycle */}
+        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-carbon-900">5-Day Sentinel-2 Monitoring Cycle</h2>
+            <p className="text-xs text-agriText-muted mt-0.5">
+              Re-checks every plot's NDVI; a significant drop flags credits at-risk and routes them to the flagged queue.
+            </p>
+            {monitorResult && monitorResult.success && (
+              <p className={`text-xs font-bold mt-2 ${monitorResult.at_risk_count > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                Last cycle: {monitorResult.checked} plots checked · {monitorResult.healthy} healthy ·{' '}
+                {monitorResult.at_risk_count} flagged at-risk (drop ≥ {monitorResult.alert_threshold})
+              </p>
+            )}
+            {monitorResult && !monitorResult.success && (
+              <p className="text-xs font-bold text-rose-700 mt-2">{monitorResult.message}</p>
+            )}
+          </div>
+          <button
+            onClick={handleRunMonitoring}
+            disabled={isMonitoring}
+            className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm whitespace-nowrap flex items-center gap-2"
+          >
+            {isMonitoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            <span>{isMonitoring ? 'Running cycle…' : 'Run Monitoring Cycle'}</span>
+          </button>
+        </div>
 
         {/* 5 Tab Navigation Ribbon */}
         <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-2 flex flex-wrap gap-2">

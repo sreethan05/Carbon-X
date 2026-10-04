@@ -1168,6 +1168,7 @@ def analyze(data: AnalyzeModel):
         soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
         carbon_tonnes = round(area_hectares * tree_cover * 0.12, 2)
         credits = db.compute_credits(carbon_tonnes, biodiversity_score)
+        stage1 = credit_engine.stage1_verification(data.crop_type, ndvi_value)
         veg_health = (
             "Excellent" if ndvi_value >= 0.7 else "Good" if ndvi_value >= 0.5
             else "Moderate" if ndvi_value >= 0.3 else "Low"
@@ -1187,6 +1188,7 @@ def analyze(data: AnalyzeModel):
             "biodiversity_score": biodiversity_score,
             "ai_confidence": round(min(85 + ndvi_value * 20, 99.5), 1),
             "satellite_source": satellite_source,
+            "stage1": stage1,
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -1224,6 +1226,15 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
             credits_blocked = status in ("PENDING", "FLAGGED")
         if credits_blocked:
             credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
+
+        # Trust Engine Stage 1 (server-side): declared crop vs NDVI signature.
+        # A mismatch pauses the record for FPO/KVK review — never auto-rejects.
+        stage1 = credit_engine.stage1_verification(farm.get("crop_type"), farm.get("ndvi"))
+        if not stage1["match"] and status not in ("PENDING", "FLAGGED"):
+            status = "PENDING"
+            credits_blocked = True
+            credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
+
         record = {
             "owner_phone": phone,
             "name": farm.get("name", "My Farm"),
@@ -1250,12 +1261,23 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
         saved = db.insert_farm_safe(record)
         if not saved or not saved.get("id"):
             return {"success": False, "message": "Failed to save farm to database"}
+        # Anchor the credit's evidence snapshot at enrollment (tamper-evident chain).
+        ledger.ensure_genesis(saved["id"], {
+            "farm": record["name"],
+            "crop": record["crop_type"],
+            "area_hectares": record["area_hectares"],
+            "ndvi": record["ndvi"],
+            "status": status,
+            "badge": badge,
+            "stage1": stage1["status"],
+        })
         return {
             "success": True,
             "message": "Farm saved",
             "farm": saved,
             "credits_blocked": credits_blocked,
             "badge": badge,
+            "stage1": stage1,
         }
     except HTTPException:
         raise
@@ -2056,6 +2078,13 @@ def get_carbon_passport(farm_id: str):
         "status": farm.get("status"),
     }, ts=(farm.get("updated_at") or "") or None)
     chain = ledger.summary(farm_id)
+    farm_status = farm.get("status")
+    monitoring = {
+        "last_monitored_at": farm.get("last_monitored_at"),
+        "last_monitor_ndvi": farm.get("last_monitor_ndvi"),
+        "at_risk": str(farm_status or "").lower() == "flagged",
+        "cycle": "5-day Sentinel-2 revisit",
+    }
 
     return {
         "success": True,
@@ -2079,10 +2108,11 @@ def get_carbon_passport(farm_id: str):
         "satellite_source": farm.get("satellite_source"),
         "ai_confidence": farm.get("ai_confidence"),
         "verification_hash": verification_hash,
-        "farm_status": farm.get("status"),
+        "farm_status": farm_status,
         "kyc_status": (kyc or {}).get("status"),
         "status": "APPROVED MRV RECORD" if verified_status else "PENDING MRV REVIEW",
         "expected_earnings": income,
+        "monitoring": monitoring,
         "trust": {
             "evidence_quality": quality["score"],
             "uncertainty_pct": credit_engine.uncertainty_pct(quality["score"]),
@@ -2195,6 +2225,73 @@ def demo_login(data: dict = None):
         },
         "message": f"Demo session started for {farmer['name']}",
     }
+
+
+NDVI_DROP_ALERT = 0.15  # Sentinel-2-cycle drop that flags credits at-risk
+
+
+@app.post("/monitor/run")
+def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user_optional)):
+    """5-day continuous monitoring (the real Sentinel-2 revisit cycle).
+
+    Compares each verified farm's current NDVI against the last monitored
+    value. A significant drop (drought, disease, abandonment, land-use change)
+    flags the farm's credits at-risk: the farm is routed to the FPO flagged
+    queue and a MONITOR event lands on its hash chain. Clean cycles just
+    refresh the snapshot — the ledger stays lean.
+    """
+    if not db.is_ready():
+        return {"success": False, "message": "Monitoring needs the database (demo mode has no live farms)"}
+    try:
+        sb = db._client()
+        farms = (sb.table("farms").select("id,name,ndvi,status,last_monitor_ndvi,last_monitored_at").execute().data) or []
+        checked = 0
+        at_risk = []
+        healthy = 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for farm in farms:
+            if str(farm.get("status") or "").lower() in ("pending",):
+                continue  # unverified farms aren't carrying credits yet
+            checked += 1
+            current = farm.get("ndvi")
+            if current is None:
+                continue
+            current = float(current)
+            last = farm.get("last_monitor_ndvi")
+            drop = round(float(last) - current, 3) if last is not None else 0.0
+            sb.table("farms").update({
+                "last_monitor_ndvi": current,
+                "last_monitored_at": now_iso,
+            }).eq("id", farm["id"]).execute()
+            if last is not None and drop >= NDVI_DROP_ALERT:
+                sb.table("farms").update({"status": "Flagged"}).eq("id", farm["id"]).execute()
+                ledger.append_event(farm["id"], "MONITOR", {
+                    "risk": "ndvi_drop",
+                    "drop": drop,
+                    "previous_ndvi": float(last),
+                    "current_ndvi": current,
+                    "note": "Credits at-risk — routed to FPO review (drought/disease/abandonment possible)",
+                })
+                at_risk.append({
+                    "farm_id": farm["id"],
+                    "name": farm.get("name"),
+                    "drop": drop,
+                    "previous_ndvi": float(last),
+                    "current_ndvi": current,
+                })
+            else:
+                healthy += 1
+        return {
+            "success": True,
+            "checked": checked,
+            "healthy": healthy,
+            "at_risk_count": len(at_risk),
+            "at_risk": at_risk,
+            "alert_threshold": NDVI_DROP_ALERT,
+            "ran_at": now_iso,
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 class EarningsCalcModel(BaseModel):

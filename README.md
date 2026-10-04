@@ -16,6 +16,13 @@ CarbonX enables smallholder farmers in India to monetize their carbon sequestrat
 - Automated NDVI calculation using Sentinel-2 satellite imagery
 - Real-time carbon sequestration estimates
 - Farmer dashboard with earnings projections
+- Trust Engine: crop-vs-NDVI verification (Stage 1) + VM0042-style credit math with 10–30% uncertainty deduction (Stage 2)
+- Conditional payment splits — farmer 70% floor, FPO 5% only when involved, purchase = instant retirement
+- Tamper-evident SHA-256 event ledger (Supabase `ledger_events`) with public verification
+- 5-day Sentinel-2 monitoring cycle with at-risk flagging to the FPO queue
+- Pre-signup earnings calculator and offline demo mode
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture, the five core flows, and design philosophy.
 
 ---
 

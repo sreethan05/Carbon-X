@@ -37,6 +37,58 @@ PRICE_FLOOR = 400.0   # conservative voluntary-market range shown to farmers
 PRICE_CEILING = 650.0
 FARMER_FLOOR_SHARE = 0.70
 
+# Trust Engine Stage 1 — in-season NDVI signature windows per declared crop.
+# A mismatch never auto-rejects: the record pauses for FPO/KVK human review.
+_CROP_NDVI_WINDOWS = {
+    "rice": (0.55, 0.95), "paddy": (0.55, 0.95),
+    "sugarcane": (0.60, 0.95),
+    "cotton": (0.40, 0.90),
+    "maize": (0.45, 0.92),
+    "millets": (0.30, 0.80),
+    "turmeric": (0.45, 0.90),
+    "chilli": (0.35, 0.85),
+}
+
+
+def stage1_verification(crop: str, ndvi) -> dict:
+    """Declared crop/practice cross-checked against the plot's NDVI signature.
+
+    MATCH advances the record; MISMATCH pauses it for human review rather
+    than auto-rejecting — satellite evidence checks declarations, it does not
+    replace human judgment.
+    """
+    ndvi = round(float(ndvi or 0), 3)
+    key = str(crop or "").strip().lower()
+    window = _CROP_NDVI_WINDOWS.get(key)
+    label = _CROP_FACTORS.get(key, (0, 0, crop or "Mixed Crop"))[2]
+    if not window:
+        return {
+            "status": "UNREVIEWED",
+            "match": True,
+            "crop": label,
+            "ndvi": ndvi,
+            "expected_range": None,
+            "reason": f"No NDVI signature window for {label} yet — accepted without satellite cross-check",
+        }
+    lo, hi = window
+    if lo <= ndvi <= hi:
+        return {
+            "status": "MATCH",
+            "match": True,
+            "crop": label,
+            "ndvi": ndvi,
+            "expected_range": [lo, hi],
+            "reason": f"NDVI {ndvi:.2f} sits inside the {label} in-season signature ({lo}–{hi})",
+        }
+    return {
+        "status": "MISMATCH",
+        "match": False,
+        "crop": label,
+        "ndvi": ndvi,
+        "expected_range": [lo, hi],
+        "reason": f"NDVI {ndvi:.2f} is outside the {label} in-season signature ({lo}–{hi}) — paused for FPO/KVK review",
+    }
+
 
 def evidence_quality(
     *,
