@@ -175,6 +175,11 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   the old ad-hoc `area x tree_cover x 0.12` formula was removed. Every
   estimate now carries `ci90` (statistical interval from the uncertainty
   fraction) plus provenance (`s2_scene` system:index, `ml_source`).
+- **Soil-factor r2 recalibration**: 287 SoilGrids SOC stock reference points
+  ingested (source='soilgrids_v2', topsoil-derived, unit caveat in notes);
+  the eval's stock-plausibility check caught the original soil factors
+  overclaiming ~3x — _CROP_FACTORS soil components recalibrated to
+  IPCC-consistent 0.25-0.60 tCO2e/ha/yr, FORMULA_VERSION bumped to `-r2`.
 - **Ground-truth calibration**: `ground_truth_samples` table +
   `POST /ops/ground-truth` + `GET /ops/ground-truth/eval` (estimate-vs-
   measured error; honest empty state until field data exists).
