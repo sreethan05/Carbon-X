@@ -22,7 +22,7 @@ from app import config as app_config
 from app.services import credit_engine, ledger, market_store, split_engine
 from app.services.kyc_service import analyse_document, validate_aadhaar
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+router = APIRouter(tags=["auth"])
 
 
 # ─── Helpers ───
@@ -458,26 +458,25 @@ def get_me(current_user: dict = Depends(get_current_user)):
     return {"success": True, "user": _user_response(user, phone), "farms": farms, "kyc": kyc}
 
 
+class UpdateProfileModel(BaseModel):
+    name: Optional[str] = None
+    state: Optional[str] = None
+    district: Optional[str] = None
+    village: Optional[str] = None
+    upi: Optional[str] = None
+    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = None
+    preferred_language: Optional[str] = None
+
+
 @router.patch("/profile")
-def update_profile(
-    name: Optional[str] = None,
-    state: Optional[str] = None,
-    district: Optional[str] = None,
-    village: Optional[str] = None,
-    upi: Optional[str] = None,
-    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = None,
-    preferred_language: Optional[str] = None,
-    current_user: dict = Depends(get_current_user),
-):
+def update_profile(data: UpdateProfileModel, current_user: dict = Depends(get_current_user)):
     try:
         phone = current_user.get("phone")
-        fields = {k: v for k, v in {
-            "name": name, "state": state, "district": district,
-            "village": village, "upi": upi, "role": role,
-            "preferred_language": preferred_language[:2] if preferred_language else None,
-        }.items() if v is not None}
+        fields = {k: v for k, v in data.model_dump().items() if v is not None}
         if not fields:
             return {"success": False, "message": "No fields to update"}
+        if "preferred_language" in fields and fields["preferred_language"]:
+            fields["preferred_language"] = fields["preferred_language"][:2]
         updated = db.update_profile(phone, fields)
         if not updated:
             return {"success": False, "message": "Profile update failed"}

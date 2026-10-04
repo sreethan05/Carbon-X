@@ -1,4 +1,4 @@
-"""Farms routes: satellite analysis, farm persistence, Trust Engine Stage 1."""
+"""Farms routes: satellite analysis, farm persistence, Trust Engine Stage 1, KYC & land registry."""
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Optional
@@ -24,49 +24,14 @@ from app import supabase_db as db
 from app import redis_store
 from app import config as app_config
 from app.services import credit_engine, ledger, market_store, split_engine
-from app.services.kyc_service import analyse_document, validate_aadhaar
+from app.services.kyc_service import (
+    analyse_document,
+    validate_aadhaar,
+    _match_name,
+    _extract_ocr_text,
+)
 
-router = APIRouter(prefix="/farms", tags=["farms"])
-
-
-# ─── /predict endpoint ───
-
-@router.get("/predict")
-def predict_biodiversity(longitude: float, latitude: float):
-    try:
-        from app.services.ml_service import predict_biodiversity
-
-        ndvi = None
-        ndvi_source = "Estimated (GEE offline)"
-        if earth_engine_ready:
-            try:
-                from app.services.gee_service import get_ndvi_at_point
-
-                sat = get_ndvi_at_point(latitude, longitude)
-                if sat.get("live_satellite"):
-                    ndvi = float(sat.get("ndvi"))
-                    ndvi_source = str(sat.get("source"))
-            except Exception as exc:
-                print(f"/predict GEE point query failed: {exc}")
-        if ndvi is None:
-            import math
-
-            ndvi = round(0.5 + math.sin(longitude * 0.1) * 0.2 + math.cos(latitude * 0.1) * 0.15, 3)
-            ndvi = min(max(ndvi, 0.1), 0.9)
-        result = predict_biodiversity(ndvi=ndvi)
-        credits = db.compute_credits(ndvi * 10, result["biodiversity_score"])
-        return {
-            "success": True,
-            "location": {"longitude": longitude, "latitude": latitude},
-            "ndvi": ndvi,
-            "ndvi_source": ndvi_source,
-            "biodiversity_score": result["biodiversity_score"],
-            "status": result["status"],
-            "biodiversity_credits": credits["biodiversity_credits"],
-            "total_credits": credits["total_credits"],
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+router = APIRouter(tags=["farms"])
 
 
 # ─── Helpers ───
@@ -91,30 +56,31 @@ def _get_user_farms(phone: str):
 
 def _polygon_area_hectares(geojson: dict) -> float:
     from app.services.polygon_service import polygon_area_hectares as _canonical
-    import math
-
-    geometry = geojson.get("geometry", {})
-    if geometry.get("type") != "Polygon":
-        raise ValueError("GeoJSON must be a Polygon")
-    rings = geometry.get("coordinates") or []
-    ring = rings[0] if rings else []
-    if len(ring) < 4:
-        raise ValueError("Polygon must have at least 3 points")
-    if ring[0] != ring[-1]:
-        ring = [*ring, ring[0]]
-    lat_mid = sum(float(point[1]) for point in ring[:-1]) / (len(ring) - 1)
-    meters_per_degree_lng = 111320 * math.cos(math.radians(lat_mid))
-    meters_per_degree_lat = 110540
-    area_m2 = 0
-    projected = [
-        (float(lng) * meters_per_degree_lng, float(lat) * meters_per_degree_lat)
-        for lng, lat in ring
-    ]
-    for i in range(len(projected) - 1):
-        x1, y1 = projected[i]
-        x2, y2 = projected[i + 1]
-        area_m2 += x1 * y2 - x2 * y1
-    return round(abs(area_m2) / 20000, 2)
+    try:
+        return _canonical(geojson)
+    except Exception:
+        geometry = geojson.get("geometry", {})
+        if geometry.get("type") != "Polygon":
+            raise ValueError("GeoJSON must be a Polygon")
+        rings = geometry.get("coordinates") or []
+        ring = rings[0] if rings else []
+        if len(ring) < 4:
+            raise ValueError("Polygon must have at least 3 points")
+        if ring[0] != ring[-1]:
+            ring = [*ring, ring[0]]
+        lat_mid = sum(float(point[1]) for point in ring[:-1]) / (len(ring) - 1)
+        meters_per_degree_lng = 111320 * math.cos(math.radians(lat_mid))
+        meters_per_degree_lat = 110540
+        area_m2 = 0
+        projected = [
+            (float(lng) * meters_per_degree_lng, float(lat) * meters_per_degree_lat)
+            for lng, lat in ring
+        ]
+        for i in range(len(projected) - 1):
+            x1, y1 = projected[i]
+            x2, y2 = projected[i + 1]
+            area_m2 += x1 * y2 - x2 * y1
+        return round(abs(area_m2) / 20000, 2)
 
 
 def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
@@ -145,8 +111,90 @@ def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _decode_upload(content: str) -> bytes:
+    """Decode a browser data-URL/base64 upload without writing identity files to disk."""
+    encoded = (content or "").split(",")[-1]
+    if not encoded:
+        raise ValueError("Upload a document first.")
+    try:
+        return base64.b64decode(encoded, validate=False)
+    except Exception as exc:
+        raise ValueError("Document content must be valid base64.") from exc
+
+
+def _pahani_polygon(coords: Optional[list]) -> Optional[dict]:
+    """Turn Section 5 latitude/longitude points into a GeoJSON feature."""
+    ring = []
+    for point in coords or []:
+        try:
+            ring.append([float(point["longitude"]), float(point["latitude"])])
+        except (KeyError, TypeError, ValueError):
+            continue
+    if len(ring) < 3:
+        return None
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    return {"type": "Feature", "properties": {"source": "pahani_section_5"}, "geometry": {"type": "Polygon", "coordinates": [ring]}}
+
+
+def _pahani_fallback_fields(text: str) -> dict:
+    """Small OCR fallback when Azure layout extraction is unavailable."""
+    def found(pattern: str) -> Optional[str]:
+        match = re.search(pattern, text, re.IGNORECASE)
+        return match.group(1).strip() if match else None
+
+    aadhaar = re.search(r"(?:\d{4}[- ]?){2}\d{4}", text)
+    return {
+        "survey_no": found(r"survey\s*(?:no\.?|number)?\s*[:#-]?\s*([A-Z0-9/-]+)"),
+        "pattadar_name": found(r"(?:pattadar|owner)\s*(?:name)?\s*[:#-]?\s*([^\n]{3,80})"),
+        "aadhaar": aadhaar.group(0) if aadhaar else None,
+        "village": found(r"village\s*[:#-]?\s*([^\n]{2,80})"),
+        "district": found(r"district\s*[:#-]?\s*([^\n]{2,80})"),
+        "crop_name": found(r"crop\s*(?:name)?\s*[:#-]?\s*([^\n]{2,60})"),
+        "irrigation_source": found(r"irrigation\s*(?:source)?\s*[:#-]?\s*([^\n]{2,60})"),
+    }
+
+
+def _parse_pahani_upload(content_base64: str, filename: str, content_type: str) -> tuple[dict, str]:
+    """Use the existing Azure + Pahani parser, with installed Tesseract as fallback."""
+    from app.services.document_intelligence_service import analyze_document_bytes, validate_upload
+    from app.services.pahani_parser import parse_pahani
+
+    raw = _decode_upload(content_base64)
+    validate_upload(content_type, raw)
+    try:
+        parsed = parse_pahani(analyze_document_bytes(raw, filename=filename))
+        return parsed["fields"], parsed.get("english_text", "")
+    except RuntimeError as exc:
+        print(f"Pahani Azure OCR unavailable, using local OCR fallback: {exc}")
+        checks = analyse_document(content_base64, filename, "", "", [])
+        text = checks.get("ocr_text_preview", "")
+        return _pahani_fallback_fields(text), text
+
+
+def _claimed_area_ha(data: "LandVerificationModel") -> Optional[float]:
+    if data.area_hectares is not None:
+        return float(data.area_hectares)
+    if data.area_acres is not None:
+        return round(float(data.area_acres) * 0.404686, 4)
+    return None
+
+
+def _patch_farm(farm_id: Optional[str], fields: dict):
+    if not farm_id:
+        return None
+    try:
+        return db.update_farm(farm_id, fields)
+    except Exception:
+        fields.pop("badge", None)
+        try:
+            return db.update_farm(farm_id, fields)
+        except Exception as exc:
+            print(f"farm patch failed: {exc}")
+            return None
+
+
 def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
-    import time as _time
     last_err = None
     for attempt in range(attempts):
         try:
@@ -156,14 +204,11 @@ def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
             if attempt < attempts - 1:
                 delay = base_delay * (2 ** attempt)
                 print(f"[ee] call failed ({type(e).__name__}), retry in {delay}s")
-                _time.sleep(delay)
+                time.sleep(delay)
     raise last_err
 
 
-# In-memory TTL cache for /analyze
-_analyze_cache: dict = {}
-_ANALYZE_CACHE_TTL = app_config.ANALYZE_CACHE_TTL_SECONDS
-
+# ─── Pydantic Models ───
 
 class GeoJSONPolygon(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -192,188 +237,48 @@ class SaveFarmModel(BaseModel):
     farm: dict
 
 
+class LandVerificationModel(BaseModel):
+    document_name: Optional[str] = "document.png"
+    document_content_base64: Optional[str] = ""
+    extracted_text: Optional[str] = ""
+    survey_number: Optional[str] = ""
+    village: Optional[str] = ""
+    district: Optional[str] = ""
+    area_acres: Optional[float] = None
+    area_hectares: Optional[float] = None
+    path: Optional[str] = None
+    fpo_id: Optional[str] = None
+    farm_id: Optional[str] = None
+    geojson: Optional[dict] = None
+    aadhaar: Optional[str] = None
+    confirm_polygon: Optional[bool] = False
+    pahani_file: Optional[str] = ""
+    document_content_type: Optional[str] = "image/jpeg"
+
+
+class AadhaarVerificationModel(BaseModel):
+    front_image: str
+    back_image: str
+    front_content_type: Optional[str] = "image/jpeg"
+    back_content_type: Optional[str] = "image/jpeg"
+
+
+class AutoDrawModel(BaseModel):
+    survey_number: Optional[str] = None
+    village: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    area_hectares: Optional[float] = None
+
+
+class CheckFarmlandModel(BaseModel):
+    geojson: dict
+
+
 # ─── Endpoints ───
 
-@router.post("/analyze")
-def analyze(data: AnalyzeModel):
-    try:
-        geojson = data.geojson.model_dump()
-        ok, err = _validate_polygon_geojson(geojson)
-        if not ok:
-            return {"success": False, "message": err}
-
-        cache_key = json.dumps([data.geojson, data.crop_type], sort_keys=True, default=str)
-        cached = _analyze_cache.get(cache_key)
-        if cached and time.time() - cached[0] < _ANALYZE_CACHE_TTL:
-            return cached[1]
-
-        ml_result = None
-        s2_scene = None
-        scan_est = None
-        max_area = app_config.ANALYZE_MAX_AREA_HECTARES
-        try:
-            approx_area = _polygon_area_hectares(geojson)
-            if approx_area > max_area:
-                return {"success": False,
-                        "message": f"Parcel area {approx_area:,.0f} ha exceeds the {max_area:,} ha scan limit — redraw the boundary"}
-        except Exception:
-            pass
-
-        # Check Earth Engine readiness
-        earth_engine_ready = False
-        try:
-            import ee
-            ee.Initialize(project=app_config.GEE_PROJECT)
-            earth_engine_ready = True
-        except Exception:
-            pass
-
-        if earth_engine_ready:
-            import ee
-            coordinates = geojson["geometry"]["coordinates"]
-            polygon = ee.Geometry.Polygon(coordinates)
-            collection = (
-                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                .filterBounds(polygon)
-                .filterDate("2024-01-01", "2025-12-31")
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-            )
-            image = collection.median()
-            ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            ndvi_value = _with_ee_backoff(lambda: ndvi.reduceRegion(
-                reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).get("NDVI").getInfo())
-            evi = image.expression(
-                "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
-                {"NIR": image.select("B8"), "RED": image.select("B4"), "BLUE": image.select("B2")},
-            )
-            evi_value = _with_ee_backoff(lambda: evi.reduceRegion(
-                reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).values().get(0).getInfo())
-            area_hectares = round(_with_ee_backoff(lambda: polygon.area().getInfo()) / 10000, 2)
-
-            # Real model features
-            try:
-                B4, B8, B3, B11 = (image.select("B4"), image.select("B8"),
-                                   image.select("B3"), image.select("B11"))
-                stack = (ndvi.rename("NDVI")
-                         .addBands(image.normalizedDifference(["B3", "B11"]).rename("NDWI"))
-                         .addBands(image.expression("((NIR-RED)/(NIR+RED+0.5))*1.5",
-                                    {"NIR": B8, "RED": B4}).rename("SAVI"))
-                         .addBands(B4.rename("B4"))
-                         .addBands(B8.rename("B8"))
-                         .addBands(B11.rename("B11"))
-                         .addBands(collection.map(lambda i: i.normalizedDifference(["B8", "B4"]))
-                                   .reduce(ee.Reducer.stdDev()).rename("NDVI_STD"))
-                         .addBands(collection.map(lambda i: i.select("B8"))
-                                   .reduce(ee.Reducer.variance()).rename("B8_VAR")))
-                feat_values = stack.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
-                ).getInfo()
-                real_features = {k: feat_values.get(k) for k in
-                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
-                if any(v is None for v in real_features.values()):
-                    real_features = None
-            except Exception as e:
-                print(f"[analyze] real feature extraction failed: {e}")
-                real_features = None
-
-            # Parallel EE queries
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                evi_future = pool.submit(lambda: _with_ee_backoff(lambda: evi.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-                ).values().get(0).getInfo()))
-                area_future = pool.submit(lambda: _with_ee_backoff(lambda: polygon.area().getInfo()) / 10000)
-                feat_future = pool.submit(lambda: stack.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
-                ).getInfo())
-                try:
-                    s2_scene = _with_ee_backoff(lambda: collection.first().get("system:index").getInfo())
-                except Exception:
-                    s2_scene = None
-                evi_value = round(evi_future.result(), 3)
-                area_hectares = round(area_future.result(), 2)
-                feat_values = feat_future.result()
-                real_features = {k: feat_values.get(k) for k in
-                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
-                if any(v is None for v in real_features.values()):
-                    real_features = None
-
-            try:
-                from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
-                                                 area_ha=area_hectares, features=real_features)
-                biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
-            satellite_source = "Google Earth Engine · Sentinel-2 SR"
-
-            # Canonical carbon estimate with real features for model-based CI90
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value, features=real_features)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
-            carbon_tonnes = scan_est["credits_tco2e"]
-        else:
-            coords = geojson.get("geometry", {}).get("coordinates", [[]])
-            area_hectares = _polygon_area_hectares(geojson)
-            seed = hash(str(coords)) % 1000
-            ndvi_value = round(0.45 + (seed % 40) / 100.0, 3)
-            evi_value = round(ndvi_value * 0.85, 3)
-            s2_scene = None
-            real_features = None
-            try:
-                from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value, area_ha=area_hectares)
-                biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 110, 40), 95), 1)
-            satellite_source = "Estimated (GEE offline)"
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
-            carbon_tonnes = scan_est["credits_tco2e"]
-
-        tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
-        soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
-        credits = credit_engine.credit_split(carbon_tonnes, biodiversity_score)
-        stage1 = credit_engine.stage1_verification(data.crop_type, ndvi_value)
-        veg_health = (
-            "Excellent" if ndvi_value >= 0.7 else "Good" if ndvi_value >= 0.5
-            else "Moderate" if ndvi_value >= 0.3 else "Low"
-        )
-        ml_source = ml_result.get("source") if isinstance(ml_result, dict) else None
-        response = {
-            "success": True,
-            "ndvi": round(ndvi_value, 3),
-            "evi": round(evi_value, 3),
-            "tree_cover": tree_cover,
-            "soil_moisture": soil_moisture,
-            "carbon_tonnes": carbon_tonnes,
-            "carbon_credits": credits["carbon_credits"],
-            "biodiversity_credits": credits["biodiversity_credits"],
-            "total_credits": credits["total_credits"],
-            "area_hectares": area_hectares,
-            "vegetation_health": veg_health,
-            "biodiversity_score": biodiversity_score,
-            "ml_source": ml_source,
-            "ai_confidence": round(min(85 + ndvi_value * 20, 99.5), 1),
-            "satellite_source": satellite_source,
-            "s2_scene": s2_scene,
-            "scan_estimate": {
-                "method": "credit_engine.quick_scan_estimate (single source of truth)",
-                "evidence_quality": scan_est.get("evidence_quality"),
-                "ci90": scan_est.get("ci90"),
-            },
-            "stage1": stage1,
-        }
-        if len(_analyze_cache) > 256:
-            _analyze_cache.clear()
-        _analyze_cache[cache_key] = (time.time(), response)
-        return response
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
 @router.post("/save-farm")
+@router.post("/farms/save-farm")
 def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user)):
     try:
         phone = current_user.get("phone")
@@ -467,7 +372,8 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
         return {"success": False, "message": str(e)}
 
 
-@router.get("/{farm_id}/ndvi-history")
+@router.get("/farm/{farm_id}/ndvi-history")
+@router.get("/farms/{farm_id}/ndvi-history")
 def get_farm_ndvi_history(farm_id: str):
     farm = db.get_farm(farm_id) if db.is_ready() else None
     if not farm:
@@ -505,153 +411,364 @@ def get_farm_ndvi_history(farm_id: str):
     }
 
 
-# ─── /analyze endpoint ───
+# ─── KYC & Land Verification ───
 
-@router.post("/analyze")
-def analyze(data: AnalyzeModel):
+@router.post("/verify-aadhaar")
+def verify_aadhaar(data: AadhaarVerificationModel, current_user: dict = Depends(get_current_user)):
+    """OCR Aadhaar front/back and compare it to the registered identity anchor."""
+    from PIL import Image
+    import io
+
+    profile = _get_user(current_user.get("phone"))
+    if not profile:
+        raise HTTPException(status_code=404, detail="User not found")
     try:
-        geojson = data.geojson.model_dump()
-        ok, err = _validate_polygon_geojson(geojson)
-        if not ok:
-            return {"success": False, "message": err}
-
-        import json as _json
-        cache_key = _json.dumps([data.geojson, data.crop_type], sort_keys=True, default=str)
-        cached = _analyze_cache.get(cache_key)
-        if cached and time.time() - cached[0] < _ANALYZE_CACHE_TTL:
-            return cached[1]
-
-        ml_result = None
-        s2_scene = None
-        scan_est = None
-        max_area = app_config.ANALYZE_MAX_AREA_HECTARES
-        try:
-            approx_area = _polygon_area_hectares(geojson)
-            if approx_area > max_area:
-                return {"success": False,
-                        "message": f"Parcel area {approx_area:,.0f} ha exceeds the {max_area:,} ha scan limit — redraw the boundary"}
-        except Exception:
-            pass
-        if earth_engine_ready:
-            import ee
-            coordinates = geojson["geometry"]["coordinates"]
-            polygon = ee.Geometry.Polygon(coordinates)
-            collection = (
-                ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-                .filterBounds(polygon)
-                .filterDate("2024-01-01", "2025-12-31")
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
-            )
-            image = collection.median()
-            ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
-            ndvi_value = _with_ee_backoff(lambda: ndvi.reduceRegion(
-                reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).get("NDVI").getInfo())
-            evi = image.expression(
-                "2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))",
-                {"NIR": image.select("B8"), "RED": image.select("B4"), "BLUE": image.select("B2")},
-            )
-            evi_value = _with_ee_backoff(lambda: evi.reduceRegion(
-                reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-            ).values().get(0).getInfo())
-            area_hectares = round(_with_ee_backoff(lambda: polygon.area().getInfo()) / 10000, 2)
-
-            try:
-                B4, B8, B3, B11 = (image.select("B4"), image.select("B8"),
-                                   image.select("B3"), image.select("B11"))
-                stack = (ndvi.rename("NDVI")
-                         .addBands(image.normalizedDifference(["B3", "B11"]).rename("NDWI"))
-                         .addBands(image.expression("((NIR-RED)/(NIR+RED+0.5))*1.5",
-                                    {"NIR": B8, "RED": B4}).rename("SAVI"))
-                         .addBands(B4.rename("B4"))
-                         .addBands(B8.rename("B8"))
-                         .addBands(B11.rename("B11"))
-                         .addBands(collection.map(lambda i: i.normalizedDifference(["B8", "B4"]))
-                                   .reduce(ee.Reducer.stdDev()).rename("NDVI_STD"))
-                         .addBands(collection.map(lambda i: i.select("B8"))
-                                   .reduce(ee.Reducer.variance()).rename("B8_VAR")))
-                feat_values = stack.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
-                ).getInfo()
-                real_features = {k: feat_values.get(k) for k in
-                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
-                if any(v is None for v in real_features.values()):
-                    real_features = None
-            except Exception as e:
-                print(f"[analyze] real feature extraction failed: {e}")
-                real_features = None
-
-            try:
-                from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
-                                                 area_ha=area_hectares, features=real_features)
-                biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
-            satellite_source = "Google Earth Engine · Sentinel-2 SR"
-            try:
-                s2_scene = collection.first().get("system:index").getInfo()
-            except Exception:
-                s2_scene = None
-
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value, features=real_features)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
-            carbon_tonnes = scan_est["credits_tco2e"]
-        else:
-            coords = geojson.get("geometry", {}).get("coordinates", [[]])
-            area_hectares = _polygon_area_hectares(geojson)
-            seed = hash(str(coords)) % 1000
-            ndvi_value = round(0.45 + (seed % 40) / 100.0, 3)
-            evi_value = round(ndvi_value * 0.85, 3)
-            real_features = None
-            s2_scene = None
-            try:
-                from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value, area_ha=area_hectares)
-                biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 110, 40), 95), 1)
-            satellite_source = "Estimated (GEE offline)"
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
-            carbon_tonnes = scan_est["credits_tco2e"]
-
-        tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
-        soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
-        credits = credit_engine.credit_split(carbon_tonnes, biodiversity_score)
-        stage1 = credit_engine.stage1_verification(data.crop_type, ndvi_value)
-        veg_health = (
-            "Excellent" if ndvi_value >= 0.7 else "Good" if ndvi_value >= 0.5
-            else "Moderate" if ndvi_value >= 0.3 else "Low"
-        )
-        ml_source = ml_result.get("source") if isinstance(ml_result, dict) else None
-        response = {
+        parts = []
+        for image_content, content_type in ((data.front_image, data.front_content_type), (data.back_image, data.back_content_type)):
+            raw = _decode_upload(image_content)
+            if content_type == "application/pdf":
+                from app.services.document_intelligence_service import analyze_document_bytes
+                parts.append(analyze_document_bytes(raw).get("content", ""))
+            else:
+                with Image.open(io.BytesIO(raw)) as image:
+                    text, available = _extract_ocr_text(image)
+                    if available:
+                        parts.append(text)
+        ocr_text = "\n".join(parts)
+        card_numbers = re.findall(r"(?:\d{4}[- ]?){2}\d{4}", ocr_text)
+        card_last4 = card_numbers[0].replace(" ", "").replace("-", "")[-4:] if card_numbers else ""
+        registered_last4 = str(profile.get("aadhaar_last4") or "")[-4:]
+        _score, matched_name = _match_name(profile.get("name", ""), ocr_text)
+        matched_aadhaar = bool(card_last4 and registered_last4 and card_last4 == registered_last4)
+        dob_match = re.search(r"(?:DOB|Date of Birth)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", ocr_text, re.IGNORECASE)
+        reasons = []
+        if not matched_name:
+            reasons.append("Name on Aadhaar card does not match your registered name")
+        if not matched_aadhaar:
+            reasons.append("Aadhaar number on card does not match your registered number")
+        return {
             "success": True,
-            "ndvi": round(ndvi_value, 3),
-            "evi": round(evi_value, 3),
-            "tree_cover": tree_cover,
-            "soil_moisture": soil_moisture,
-            "carbon_tonnes": carbon_tonnes,
-            "carbon_credits": credits["carbon_credits"],
-            "biodiversity_credits": credits["biodiversity_credits"],
-            "total_credits": credits["total_credits"],
-            "area_hectares": area_hectares,
-            "vegetation_health": veg_health,
-            "biodiversity_score": biodiversity_score,
-            "ml_source": ml_source,
-            "ai_confidence": round(min(85 + ndvi_value * 20, 99.5), 1),
-            "satellite_source": satellite_source,
-            "s2_scene": s2_scene,
-            "scan_estimate": {
-                "method": "credit_engine.quick_scan_estimate (single source of truth)",
-                "evidence_quality": scan_est.get("evidence_quality"),
-                "ci90": scan_est.get("ci90"),
-            },
-            "stage1": stage1,
+            "verified": matched_name and matched_aadhaar,
+            "matched_name": matched_name,
+            "matched_aadhaar": matched_aadhaar,
+            "dob": dob_match.group(1) if dob_match else None,
+            "reasons": reasons,
         }
-        if len(_analyze_cache) > 256:
-            _analyze_cache.clear()
-        _analyze_cache[cache_key] = (time.time(), response)
-        return response
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+    except ValueError:
+        return {"success": False, "message": "Invalid Aadhaar upload. Please use a valid JPG, PNG, or PDF file."}
+    except Exception:
+        return {"success": False, "message": "Could not process Aadhaar images. Please try again."}
+
+
+@router.post("/verify-land")
+def verify_land_document(data: LandVerificationModel, current_user: dict = Depends(get_current_user)):
+    """Run the trust engine. Backend assigns tier, badge, status, and eligibility."""
+    try:
+        from app.services.fraud_engine import run_fraud_checks
+        from app.services.registry_service import lookup_survey
+        from app.services.trust_engine import apply_fraud, decide_tier
+
+        _require_database()
+        phone = current_user.get("phone")
+        profile = _get_user(phone)
+        if not profile:
+            raise HTTPException(status_code=404, detail="User not found")
+        village = data.village or profile.get("village", "")
+        district = data.district or profile.get("district", "")
+        state = profile.get("state", "")
+        fpo_path = (data.path or "").lower() == "fpo"
+        claimed_ha = _claimed_area_ha(data)
+
+        if fpo_path:
+            if profile.get("role", "farmer") == "farmer":
+                return {"success": False, "message": "Pahani upload is required for farmer verification. If you need help obtaining one, please contact your FPO."}
+            if data.fpo_id:
+                db.update_profile(phone, {"fpo_id": data.fpo_id})
+            trust = apply_fraud(decide_tier(fpo_path=True), {"status": "PENDING", "risk": "LOW", "failed_checks": []})
+            record = {
+                "owner_phone": phone,
+                "status": "PENDING",
+                "reasons": ["Awaiting FPO confirmation"],
+                "checks": {"path": "fpo", "fpo_id": data.fpo_id},
+                "extracted_fields": {
+                    "path": "fpo",
+                    "fpo_id": data.fpo_id,
+                    "farm_id": data.farm_id,
+                    **trust,
+                },
+                "document_name": (data.document_name or "fpo-path")[:255],
+                "document_sha256": "fpo-path",
+                "perceptual_hash": None,
+            }
+            saved = db.insert_kyc_verification(record)
+            _patch_farm(data.farm_id, {"status": "PENDING"})
+            return {"success": True, **trust, "verification": saved, "checks": record["checks"], "reasons": record["reasons"]}
+
+        document_content = data.pahani_file or data.document_content_base64
+        if not document_content:
+            return {"success": False, "message": "Upload your Pahani land record before verification. Please contact your FPO if you need assistance."}
+
+        pahani_fields, pahani_text = _parse_pahani_upload(
+            document_content,
+            data.document_name or "pahani.jpg",
+            data.document_content_type or "image/jpeg",
+        )
+        survey_number = pahani_fields.get("survey_no") or data.survey_number or ""
+        village = pahani_fields.get("village") or village
+        district = pahani_fields.get("district") or district
+        parsed_area_ha = pahani_fields.get("extent_hectares")
+        if not parsed_area_ha and pahani_fields.get("extent_acres"):
+            parsed_area_ha = round(float(pahani_fields["extent_acres"]) * 0.404686, 4)
+        claimed_ha = parsed_area_ha or claimed_ha
+        pahani_polygon = _pahani_polygon(pahani_fields.get("boundary_coords"))
+
+        checks = analyse_document(
+            document_content,
+            data.document_name,
+            profile.get("name", ""),
+            f"{pahani_text} {data.extracted_text or ''}",
+            db.get_document_hashes(),
+            village=village,
+            district=district,
+            state=state,
+        )
+        registry = lookup_survey(survey_number) if survey_number else {"found": False}
+        if registry.get("error") == "permission_denied":
+            registry = {"found": False, "survey_number": survey_number, "message": registry.get("message")}
+
+        ocr_text = f"{checks.get('ocr_text_preview') or ''} {pahani_text} {data.extracted_text or ''}"
+        document_owner = pahani_fields.get("pattadar_name") or ""
+        document_aadhaar = str(pahani_fields.get("aadhaar") or "").replace(" ", "").replace("-", "")
+        registered_last4 = str(profile.get("aadhaar_last4") or "")[-4:]
+        _name_score, name_ok = _match_name(profile.get("name", ""), document_owner or ocr_text)
+        aadhaar_ok = bool(document_aadhaar and registered_last4 and document_aadhaar[-4:] == registered_last4)
+        village_ok = bool(pahani_fields.get("village") and profile.get("village") and pahani_fields["village"].strip().lower() == profile["village"].strip().lower())
+        district_ok = bool(pahani_fields.get("district") and profile.get("district") and pahani_fields["district"].strip().lower() == profile["district"].strip().lower())
+        three_way_failures = []
+        if not name_ok:
+            three_way_failures.append("pahani_owner_name_mismatch")
+        if not aadhaar_ok:
+            three_way_failures.append("pahani_aadhaar_mismatch")
+        if not village_ok or not district_ok:
+            three_way_failures.append("pahani_location_mismatch")
+        geojson = pahani_polygon or data.geojson or registry.get("geojson")
+        decision = decide_tier(
+            fpo_path=False,
+            survey_number=survey_number,
+            registry=registry,
+            owner_name=profile.get("name", ""),
+            ocr_owner=document_owner or ocr_text,
+            claimed_area_ha=claimed_ha or registry.get("area_ha"),
+        )
+        fraud = run_fraud_checks(
+            aadhaar=data.aadhaar or profile.get("aadhaar_last4") or "",
+            checks=checks,
+            owner_name=profile.get("name", ""),
+            ocr_text=ocr_text,
+            village=village,
+            geojson=geojson,
+            other_farm_geojsons=db.farm_geojsons_except(phone) if geojson else [],
+            claimed_area_ha=claimed_ha or registry.get("area_ha"),
+            skip_ndvi=True,
+        )
+        if three_way_failures:
+            fraud["failed_checks"] = list(dict.fromkeys([*fraud.get("failed_checks", []), *three_way_failures]))
+            fraud["status"] = "FLAGGED"
+            fraud["risk"] = "HIGH"
+        trust = apply_fraud(decision, fraud)
+        reasons = list(trust["failed_checks"])
+        record = {
+            "owner_phone": phone,
+            "status": trust["status"],
+            "reasons": reasons,
+            "checks": {**checks, "registry": registry, "fraud": fraud, "trust": trust},
+            "extracted_fields": {
+                "survey_number": survey_number,
+                "village": village,
+                "district": district,
+                "area_acres": pahani_fields.get("extent_acres") or data.area_acres,
+                "area_hectares": claimed_ha,
+                "owner_name": document_owner,
+                "crop": pahani_fields.get("crop_name"),
+                "irrigation": pahani_fields.get("irrigation_source"),
+                "mandal": pahani_fields.get("mandal"),
+                "pahani_fields": pahani_fields,
+                "polygon_geojson": geojson,
+                "ocr_text_preview": checks.get("ocr_text_preview", ""),
+                "geocoded_location": checks.get("geocoded_location"),
+                "satellite_ndvi": checks.get("satellite_ndvi") or {},
+                "farm_id": data.farm_id,
+                "confirm_polygon": data.confirm_polygon,
+                **trust,
+            },
+            "document_name": (data.document_name or "document")[:255],
+            "document_sha256": checks["document_sha256"],
+            "perceptual_hash": checks["perceptual_hash"] or None,
+        }
+        saved = db.insert_kyc_verification(record)
+        farm_fields = {"status": trust["status"]}
+        if trust.get("badge"):
+            farm_fields["badge"] = trust["badge"]
+        _patch_farm(data.farm_id, farm_fields)
+        return {
+            "success": True,
+            **trust,
+            "checks": checks,
+            "reasons": reasons,
+            "registry": registry,
+            "fraud": fraud,
+            "verification": saved,
+            "polygon_geojson": geojson,
+            "extracted": {
+                "survey_no": survey_number,
+                "owner_name": document_owner,
+                "area_acres": pahani_fields.get("extent_acres") or data.area_acres,
+                "area_hectares": claimed_ha,
+                "crop": pahani_fields.get("crop_name"),
+                "irrigation": pahani_fields.get("irrigation_source"),
+                "village": village,
+                "mandal": pahani_fields.get("mandal"),
+                "district": district,
+            },
+        }
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
+    except Exception as exc:
+        return {"success": False, "message": str(exc)}
+
+
+@router.get("/kyc/status/{phone}")
+def get_kyc_status(phone: str, current_user: dict = Depends(get_current_user)):
+    """Return the latest KYC verification record for a farmer."""
+    try:
+        _require_database()
+        record = db.get_kyc_status(phone)
+        if not record:
+            return {"success": True, "status": "PENDING", "message": "No KYC verification found."}
+        extracted = record.get("extracted_fields") or {}
+        return {
+            "success": True,
+            "status": record.get("status"),
+            "tier": extracted.get("tier"),
+            "badge": extracted.get("badge"),
+            "risk": extracted.get("risk"),
+            "failed_checks": extracted.get("failed_checks") or record.get("reasons") or [],
+            "marketplace_eligible": extracted.get("marketplace_eligible"),
+            "credits_blocked": extracted.get("credits_blocked"),
+            "verification": record,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return {"success": False, "message": str(exc)}
+
+
+@router.post("/documents/parse-pahani")
+def parse_pahani_document(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """OCR a Pahani (Adangal) record and return structured fields as JSON."""
+    from app.services.document_intelligence_service import (
+        analyze_document_bytes,
+        azure_unavailable_response,
+        validate_upload,
+    )
+    from app.services.pahani_parser import parse_pahani
+
+    try:
+        file_bytes = file.file.read()
+    finally:
+        file.file.close()
+
+    try:
+        validate_upload(file.content_type, file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        azure_result = analyze_document_bytes(file_bytes, filename=file.filename)
+        return parse_pahani(azure_result)
+    except Exception as exc:
+        msg = str(exc)
+        if "Azure Cognitive Services not configured" in msg or "Connection" in msg or "Endpoint" in msg:
+            return azure_unavailable_response(msg)
+        return {"success": False, "message": f"Document parsing failed: {msg}"}
+
+
+@router.get("/land/registry/{survey}")
+def land_registry_lookup(survey: str, current_user: dict = Depends(get_current_user)):
+    """Look up a survey number in the Supabase land_registry mock table."""
+    from app.services.registry_service import lookup_survey
+
+    _require_database()
+    result = lookup_survey(survey)
+    if result.get("error") == "permission_denied":
+        raise HTTPException(status_code=503, detail=result["message"])
+    return {"success": True, **result}
+
+
+@router.post("/auto-draw")
+def auto_draw_polygon(data: AutoDrawModel, current_user: dict = Depends(get_current_user)):
+    """Return a locked registry polygon (1A) or an approximate village square (1B/2)."""
+    from app.services.geocoding_service import geocode_village
+    from app.services.polygon_service import approximate_square
+    from app.services.registry_service import lookup_survey
+
+    _require_database()
+    locked = False
+    geojson = None
+    source = None
+    registry = None
+    if data.survey_number:
+        registry = lookup_survey(data.survey_number)
+        if registry.get("error") == "permission_denied":
+            raise HTTPException(status_code=503, detail=registry["message"])
+        if registry.get("geojson"):
+            geojson = registry["geojson"]
+            locked = True
+            source = "registry"
+    if geojson is None:
+        phone = current_user.get("phone")
+        profile = _get_user(phone) or {}
+        village = data.village or profile.get("village", "")
+        district = data.district or profile.get("district", "")
+        state = data.state or profile.get("state", "")
+        geo = geocode_village(village, district, state)
+        if not geo:
+            return {"success": False, "message": "Could not geocode village for an approximate polygon"}
+        area = data.area_hectares or (registry or {}).get("area_ha") or 1.0
+        geojson = approximate_square(geo["lat"], geo["lon"], area)
+        source = "approximate"
+        locked = False
+    return {
+        "success": True,
+        "locked": locked,
+        "source": source,
+        "geojson": geojson,
+        "registry": registry,
+    }
+
+
+@router.post("/check-farmland")
+def check_farmland(data: CheckFarmlandModel, current_user: dict = Depends(get_current_user)):
+    """NDVI farmland check for a drawn/auto polygon."""
+    from app.services.gee_service import get_ndvi_at_point
+    from app.services.polygon_service import ring_from_geojson, polygon_area_hectares
+    from app.services.fraud_engine import NDVI_FARMLAND_MIN
+
+    ring = ring_from_geojson(data.geojson)
+    if len(ring) < 3:
+        raise HTTPException(status_code=400, detail="Valid polygon GeoJSON is required")
+    lat = sum(float(p[1]) for p in ring[:-1]) / (len(ring) - 1)
+    lon = sum(float(p[0]) for p in ring[:-1]) / (len(ring) - 1)
+    ndvi = get_ndvi_at_point(lat, lon)
+    value = float(ndvi.get("ndvi") or 0)
+    return {
+        "success": True,
+        "is_farmland": value >= NDVI_FARMLAND_MIN,
+        "ndvi": ndvi,
+        "area_hectares": polygon_area_hectares(data.geojson),
+        "centroid": {"lat": lat, "lon": lon},
+    }

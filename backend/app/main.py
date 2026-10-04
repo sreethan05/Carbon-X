@@ -9,7 +9,7 @@ ROOT_DIR = BACKEND_DIR.parent
 load_dotenv(ROOT_DIR / ".env", override=True)
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Optional
@@ -527,6 +527,7 @@ from app.routes.fpo_router import router as fpo_router
 from app.routes.corporate_router import router as corporate_router
 
 app.include_router(auth_router)
+app.include_router(auth_router, prefix="/auth")
 app.include_router(farms_router)
 app.include_router(marketplace_router)
 app.include_router(trust_router)
@@ -582,7 +583,11 @@ async def websocket_ledger(ws: WebSocket, farm_id: str):
 NDVI_DROP_ALERT = app_config.NDVI_DROP_ALERT
 
 
-def run_monitoring_cycle(current_user: Optional[dict] = None, x_monitor_secret: Optional[str] = None):
+@app.post("/monitor/run")
+def run_monitoring_cycle(
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    x_monitor_secret: Optional[str] = Header(None),
+):
     required_secret = app_config.MONITOR_SECRET
     if required_secret and x_monitor_secret != required_secret:
         if not (current_user and current_user.get("role") in ("fpo", "admin", "verifier")):

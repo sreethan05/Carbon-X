@@ -17,7 +17,7 @@ farmer or buyer sees can be recomputed by hand.
 """
 
 # Formula version for auditability — bump when crop factors or methodology change
-FORMULA_VERSION = "vm0042-soilgrids-v1-2026-10-04"
+FORMULA_VERSION = "vm0042-soilgrids-v1-r2-2026-10-04"
 
 # (base tCO2e/ha/yr at NDVI 0.75, soil tCO2e/ha/yr, label)
 # Soil factors recalibrated 2026-10-04 against the SoilGrids stock reference

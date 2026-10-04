@@ -7,11 +7,12 @@ import unittest
 # Hermetic test env: force demo mode BEFORE app.main is imported anywhere
 # (discovery imports this file first alphabetically). Tests must never touch
 # the live database.
-for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
-           "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
-    os.environ.pop(_k, None)
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
+if not os.environ.get("CARBONX_TEST_LIVE_DB"):
+    for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+               "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
+        os.environ.pop(_k, None)
+    os.environ["SUPABASE_URL"] = ""
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
 
 import numpy as np
 from PIL import Image
@@ -23,14 +24,15 @@ from app.main import app
 # Force demo mode AFTER import: main.py load_dotenv(override=True) re-reads
 # backend/.env at import time, so env-clearing must happen post-import and the
 # cached Supabase client must be reset. Tests never touch the live database.
-from app import supabase_db as _db
-for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
-           "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
-    os.environ.pop(_k, None)
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
-_db._supabase = None
-_db._ready = False
+if not os.environ.get("CARBONX_TEST_LIVE_DB"):
+    from app import supabase_db as _db
+    for _k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+               "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY"):
+        os.environ.pop(_k, None)
+    os.environ["SUPABASE_URL"] = ""
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
+    _db._supabase = None
+    _db._ready = False
 
 from app.services.kyc_service import validate_aadhaar
 from app.services.ml_service import predict_biodiversity
