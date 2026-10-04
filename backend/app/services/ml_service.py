@@ -10,6 +10,8 @@ _model = None
 _feature_scaler = None
 _score_scaler = None
 _model_loaded = False
+_serving_enabled = False
+_MIN_SERVING_TEST_R2 = 0.2
 
 def _load_models():
     global _model, _feature_scaler, _score_scaler, _model_loaded
@@ -33,6 +35,23 @@ def _load_models():
             print(f"ML models not found at {model_path}")
             _model_loaded = True
             return False
+
+        # Quality gate: a model may only serve if its held-out test R^2 clears
+        # the threshold recorded in its model card. The v2 honesty retrain
+        # (real GBIF richness) scored below it, so the app currently serves
+        # the labelled heuristic until a passing model is trained. This gate
+        # is the difference between honest ML and confident garbage.
+        global _serving_enabled
+        card_path = os.path.join(os.path.dirname(model_path), "model_card.json")
+        try:
+            import json
+            with open(card_path, "r", encoding="utf-8") as fh:
+                card = json.load(fh)
+            _serving_enabled = float(card.get("test_r2", -9)) >= _MIN_SERVING_TEST_R2
+        except Exception:
+            _serving_enabled = False
+        if not _serving_enabled:
+            print(f"ML model below quality gate (test_r2 in {card_path} < {_MIN_SERVING_TEST_R2}) — serving labelled heuristic")
 
         _model = joblib.load(model_path)
         _feature_scaler = joblib.load(scaler_path)
@@ -61,7 +80,7 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
     """
     nd = float(ndvi or 0.45)
 
-    model_ready = _load_models() and _model is not None and _feature_scaler is not None
+    model_ready = _load_models() and _model is not None and _feature_scaler is not None and _serving_enabled
     if model_ready and features:
         try:
             vector = [float(features[k]) for k in FEATURE_ORDER]
@@ -78,7 +97,12 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
         except Exception as e:
             print(f"ML predict error: {e}")
 
-    source = "Heuristic (NDVI-only)" if not model_ready else "Heuristic (real features unavailable)"
+    if model_ready:
+        source = "Heuristic (real features unavailable)"
+    elif _model is not None:
+        source = "Heuristic (model below quality gate — see model card)"
+    else:
+        source = "Heuristic (NDVI-only)"
     return _package(_heuristic_score(nd), nd, source=source)
 
 

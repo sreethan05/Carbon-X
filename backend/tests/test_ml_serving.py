@@ -35,9 +35,20 @@ class MLServingTests(unittest.TestCase):
         self.assertTrue(ml_service._load_models())
         self.assertIsNotNone(ml_service._model)
 
-    def test_real_features_use_model(self):
+    def test_quality_gate_respected(self):
+        """The v2 honesty model scored below the gate, so serving must use
+        the labelled heuristic EVEN with real features supplied — the gate,
+        not optimism, decides what serves."""
+        ml_service._load_models()
         out = ml_service.predict_biodiversity(0.62, features=_realistic_features())
-        self.assertIn("real Sentinel-2 features", out["source"])
+        card_path = os.path.join(ml_service.BASE_DIR, "ml", "models", "model_card.json")
+        import json
+        with open(card_path, encoding="utf-8") as fh:
+            test_r2 = json.load(fh).get("test_r2", -9)
+        if test_r2 < ml_service._MIN_SERVING_TEST_R2:
+            self.assertIn("Heuristic", out["source"])
+        else:
+            self.assertIn("real Sentinel-2 features", out["source"])
         self.assertGreaterEqual(out["biodiversity_score"], 0)
         self.assertLessEqual(out["biodiversity_score"], 100)
 

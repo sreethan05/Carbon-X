@@ -22,14 +22,23 @@ Gradient Boosting / Random Forest (best by validation R²), scikit-learn.
 Artifacts: `backend/ml/models/{biodiversity_model,feature_scaler,score_scaler}.pkl`
 + `model_card.json` (generated at train time by `src/train.py`).
 
-## Honest performance
-See `backend/ml/config/feature_config.json` for the current numbers
-(`test_r2`, `test_mae_species`). Expect an R² well below 1.0 — **that is the
-point**. Species richness is only partially explainable from 10 m vegetation
-indices, and GBIF citizen-science data is sampling-biased (the observation
-weights compensate only partially). The previous v2 model's 0.989 "R²" was
-circular: its label was a deterministic formula of its own input features.
-That model was retired.
+## Honest performance (measured 2026-10-04, real GBIF data)
+
+**v2 result: test R² = −0.165, MAE ≈ 4.0 species** (n_test = 32, 315 filtered
+cells). The honest conclusion: **Sentinel-2 vegetation indices alone do not
+predict GBIF citizen-science species richness** for this sample — a model
+that generalises worse than predicting the mean. It is trained, versioned,
+and archived with its true metrics (`ml/models/model_card.json`), and a
+**quality gate** (`ml_service._MIN_SERVING_TEST_R2 = 0.2`) refuses to serve
+any model below threshold — so the app currently serves the labelled
+NDVI-only heuristic, and will automatically serve the model only when a
+retrain clears the gate (planned: elevation, habitat-heterogeneity and
+seasonal-contrast features; ground-truth plot data).
+
+The previous v1 model's 0.989 "R²" was circular — its label was a
+deterministic formula of its own input features. That model was retired.
+Expecting R² near 1.0 on a genuine ecological target is the smell; the
+uncertainty is priced into credits (10–30% deduction + CI).
 
 ## Why not 100% accuracy
 100% classification accuracy (or R²=1) on a genuine ecological target means

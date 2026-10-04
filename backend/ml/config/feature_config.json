@@ -9,9 +9,24 @@
     "B11",
     "B8_VAR"
   ],
-  "model": "gb_slow",
-  "val_r2": 0.981,
-  "test_r2": 0.989,
-  "target": "satellite_derived_bio_index",
-  "ndvi_std_importance": 0.697
+  "model": "rf_shallow",
+  "target": "log1p(GBIF species richness per 0.02-degree cell)",
+  "n_train": 252,
+  "n_val": 31,
+  "n_test": 32,
+  "val_r2": -0.072,
+  "test_r2": -0.165,
+  "test_mae_species": 4.0,
+  "serving_enabled": false,
+  "note": "v2 honest model \u2014 below serving quality gate; heuristic serves until a passing model is trained (needs habitat/elevation features + ground truth)",
+  "feature_importance": {
+    "NDVI": 0.117,
+    "NDWI": 0.109,
+    "SAVI": 0.132,
+    "NDVI_STD": 0.13,
+    "B4": 0.119,
+    "B8": 0.161,
+    "B11": 0.112,
+    "B8_VAR": 0.12
+  }
 }

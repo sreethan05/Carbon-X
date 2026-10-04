@@ -140,9 +140,14 @@ def estimate_credits(
     # 4. Raw combined estimate.
     raw_per_ha = biomass_proxy + soil
     raw_total = area * raw_per_ha
-    # 5. Uncertainty deduction.
+    # 5. Uncertainty deduction + statistical interval.
     pct = uncertainty_pct(quality_score)
     final = raw_total * (1 - pct / 100.0)
+    # Treat the uncertainty fraction as ~1 sigma: a 90% interval is ±1.64 sigma.
+    ci90 = {
+        "low": round(max(0.0, final * (1 - 1.64 * pct / 100.0)), 2),
+        "high": round(final * (1 + 1.64 * pct / 100.0), 2),
+    }
 
     return {
         "crop": label,
@@ -184,7 +189,28 @@ def estimate_credits(
         "raw_tco2e": round(raw_total, 2),
         "uncertainty_pct": pct,
         "credits_tco2e": round(final, 2),
+        "ci90": ci90,
     }
+
+
+def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float) -> dict:
+    """Canonical carbon estimate for enrollment scans.
+
+    THE single source of truth — /analyze must use this, never its own
+    formula. It is Trust Engine Stage 2 evaluated at scan-only evidence
+    quality (satellite scan exists; no photo/geotag/FPO check yet), so the
+    preview is deliberately conservative: farmers see earnings *rise* as
+    their evidence quality improves.
+    """
+    quality = evidence_quality(
+        has_photo=False, geotag_ok=False, fpo_or_registry=False,
+        ndvi_current=True, baseline_known=False,
+    )
+    est = estimate_credits(area_hectares, crop, ndvi, quality_score=quality["score"])
+    est["evidence_quality"] = quality["score"]
+    est["note"] = ("Scan-only preview at scan-only evidence quality — "
+                   "add photo, geotag and FPO verification to reduce the deduction.")
+    return est
 
 
 def income_projection(credits_tco2e: float, badge: str = "DOCUMENT") -> dict:

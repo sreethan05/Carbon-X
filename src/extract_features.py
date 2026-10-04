@@ -5,7 +5,7 @@ ee.Initialize(project=GEE_PROJECT)
 
 def get_features(lat, lon, buffer=1500):
     pt  = ee.Geometry.Point([lon, lat]).buffer(buffer)
-    col = (ee.ImageCollection("COPERNICUS/S2_SR")
+    col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
            .filterBounds(pt)
            .filterDate("2023-01-01","2023-12-31")
            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE",20)))

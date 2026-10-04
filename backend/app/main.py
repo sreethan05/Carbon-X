@@ -1178,6 +1178,8 @@ def analyze(data: AnalyzeModel):
             return {"success": False, "message": "GeoJSON polygon missing"}
 
         ml_result = None
+        s2_scene = None
+        scan_est = None
         if earth_engine_ready:
             import ee
             coordinates = geojson["geometry"]["coordinates"]
@@ -1238,12 +1240,22 @@ def analyze(data: AnalyzeModel):
             except Exception:
                 biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
             satellite_source = "Google Earth Engine · Sentinel-2 SR"
+            try:
+                s2_scene = collection.first().get("system:index").getInfo()
+            except Exception:
+                s2_scene = None
+
+            # Canonical carbon estimate — credit_engine is the single source
+            # of truth for carbon math (scan-only evidence quality here).
+            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
+            carbon_tonnes = scan_est["credits_tco2e"]
         else:
             coords = geojson.get("geometry", {}).get("coordinates", [[]])
             area_hectares = _polygon_area_hectares(geojson)
             seed = hash(str(coords)) % 1000
             ndvi_value = round(0.45 + (seed % 40) / 100.0, 3)
             evi_value = round(ndvi_value * 0.85, 3)
+            s2_scene = None
             try:
                 from app.services.ml_service import predict_biodiversity
                 ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value, area_ha=area_hectares)
@@ -1251,10 +1263,11 @@ def analyze(data: AnalyzeModel):
             except Exception:
                 biodiversity_score = round(min(max(ndvi_value * 110, 40), 95), 1)
             satellite_source = "Estimated (GEE offline)"
+            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
+            carbon_tonnes = scan_est["credits_tco2e"]
 
         tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
         soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
-        carbon_tonnes = round(area_hectares * tree_cover * 0.12, 2)
         credits = db.compute_credits(carbon_tonnes, biodiversity_score)
         stage1 = credit_engine.stage1_verification(data.crop_type, ndvi_value)
         veg_health = (
@@ -1278,6 +1291,12 @@ def analyze(data: AnalyzeModel):
             "ml_source": ml_source,
             "ai_confidence": round(min(85 + ndvi_value * 20, 99.5), 1),
             "satellite_source": satellite_source,
+            "s2_scene": s2_scene,
+            "scan_estimate": {
+                "method": "credit_engine.quick_scan_estimate (single source of truth)",
+                "evidence_quality": scan_est.get("evidence_quality"),
+                "ci90": scan_est.get("ci90"),
+            },
             "stage1": stage1,
         }
     except Exception as e:
@@ -2326,6 +2345,81 @@ def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
     }
 
 
+
+
+# ── Ground-truth calibration (MRV rigor) ─────────────────────────────
+# Measured soil-carbon / species data enters here (Soil Health Card labs,
+# field surveys); /ops/ground-truth/eval compares our estimates against it
+# and reports the real error. Until samples exist the platform says so —
+# honestly — instead of inventing an accuracy number.
+
+
+class GroundTruthModel(BaseModel):
+    farm_id: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    measured_soc_tco2e_ha: Optional[float] = None
+    measured_species_count: Optional[int] = None
+    source: str = "field_survey"
+    measured_at: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@app.post("/ops/ground-truth")
+def add_ground_truth(data: GroundTruthModel):
+    """Record a measured ground-truth value for calibration."""
+    sb = db._client()
+    if not sb:
+        return {"success": False, "message": "Database not configured"}
+    try:
+        row = {k: v for k, v in data.model_dump().items() if v is not None}
+        res = sb.table("ground_truth_samples").insert(row).execute()
+        return {"success": True, "sample": (res.data or [None])[0]}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/ops/ground-truth/eval")
+def evaluate_ground_truth():
+    """Estimate-vs-measured error report (empty state = honest 'no data yet')."""
+    sb = db._client()
+    if not sb:
+        return {"success": False, "message": "Database not configured"}
+    try:
+        samples = (sb.table("ground_truth_samples").select("*").execute().data) or []
+        linked = [s for s in samples if s.get("farm_id") and s.get("measured_soc_tco2e_ha")]
+        comparisons = []
+        for s in linked:
+            farm = db.get_farm(s["farm_id"])
+            if not farm:
+                continue
+            est = credit_engine.estimate_credits(
+                float(farm.get("area_hectares") or 0), farm.get("crop_type") or "",
+                farm.get("ndvi") or 0, quality_score=1.0)
+            per_ha = est["credits_tco2e"] / max(float(farm.get("area_hectares") or 1), 0.01)
+            measured = float(s["measured_soc_tco2e_ha"])
+            comparisons.append({
+                "farm_id": s["farm_id"],
+                "estimated_tco2e_ha": round(per_ha, 2),
+                "measured_tco2e_ha": measured,
+                "error_pct": round(abs(per_ha - measured) / max(measured, 1e-6) * 100, 1),
+                "source": s.get("source"),
+            })
+        n = len(comparisons)
+        summary = {
+            "samples_total": len(samples),
+            "samples_linked_to_farms": n,
+            "mae_pct": round(sum(c["error_pct"] for c in comparisons) / n, 1) if n else None,
+        }
+        if not n:
+            summary["status"] = ("NO CALIBRATION DATA YET — estimates are proxy-based "
+                                 "(NDVI productivity proxy); enter measured SOC via "
+                                 "POST /ops/ground-truth to produce a real error figure.")
+        return {"success": True, "summary": summary, "comparisons": comparisons}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
 @app.post("/demo/login")
 def demo_login(data: dict = None):
     """Issue a demo farmer session — only when the database is not configured.
@@ -2356,6 +2450,40 @@ def demo_login(data: dict = None):
         },
         "message": f"Demo session started for {farmer['name']}",
     }
+
+
+
+
+@app.get("/ops/summary")
+def ops_summary():
+    """Read-only operational snapshot for monitoring dashboards (no PII)."""
+    sb = db._client()
+    if not sb:
+        return {"success": False, "message": "Database not configured", "mode": "demo"}
+    try:
+        def count(table, query=None):
+            q = sb.table(table).select("*", count="exact")
+            if query:
+                q = q.eq(*query)
+            return q.execute().count or 0
+        farms_flagged = count("farms", ("status", "Flagged"))
+        farms_pending = count("farms", ("status", "Pending"))
+        summary = {
+            "success": True,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "profiles": count("profiles"),
+            "farms_total": count("farms"),
+            "farms_pending_review": farms_pending,
+            "farms_flagged_at_risk": farms_flagged,
+            "listings_active": count("marketplace_listings", ("status", "Active")),
+            "listings_retired": count("marketplace_listings", ("status", "Retired")),
+            "kyc_verifications": count("kyc_verifications"),
+            "ground_truth_samples": count("ground_truth_samples"),
+            "ledger_events": count("ledger_events"),
+        }
+        return summary
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 NDVI_DROP_ALERT = 0.15  # Sentinel-2-cycle drop that flags credits at-risk
