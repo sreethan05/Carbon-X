@@ -193,6 +193,24 @@ def estimate_credits(
     }
 
 
+def credit_split(carbon_tonnes: float, biodiversity_score: float) -> dict:
+    """Canonical carbon-vs-biodiversity credit decomposition.
+
+    THE single source of truth for how a farm's estimate becomes credit
+    lines (previously a shim lived in supabase_db.compute_credits and an
+    ad-hoc `ndvi * 10` variant existed in /predict). Biodiversity credits
+    are a linear index conversion of the biodiversity score (score/40),
+    calibrated so demo farms land on their historical values.
+    """
+    carbon = round(float(carbon_tonnes or 0), 2)
+    bio = round(float(biodiversity_score or 0) / 40.0, 2)
+    return {
+        "carbon_credits": carbon,
+        "biodiversity_credits": bio,
+        "total_credits": round(carbon + bio, 2),
+    }
+
+
 def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float) -> dict:
     """Canonical carbon estimate for enrollment scans.
 

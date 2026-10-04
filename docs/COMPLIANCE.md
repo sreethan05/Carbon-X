@@ -34,12 +34,17 @@ reaches buyers.
 - Identity: phone-OTP (JWT sessions). **Only the last 4 digits of Aadhaar
   are stored** (`profiles.aadhaar_last4`) — a stated design principle, not
   an accident. Full Aadhaar is used transiently for checksum validation and
-  never persisted (see `backend/app/services/kyc_service.py`).
+  never persisted. Precisely: self-serve registration requires a checksum-
+  valid Aadhaar (transient); **FPO-assisted registration (`onboarding_path=
+  "fpo_assisted"`) accepts attestation instead of Aadhaar** — the
+  document-less path is a code branch, not a slogan. Production DPDP
+  review should decide whether even last-4 retention is justified, or move
+  fully to attestation.
 - Field photos/documents: stored per-farmer; buyer-facing surfaces expose
   only aggregates and hashes.
 - Consent: enrollment records consent at registration; consent revocation =
   account deletion path (production item: self-serve deletion flow).
-- Land registry documents of any type are accepted (no Aadhaar dependency)
+- Land registry documents of any type are accepted (no document-type dependency; Aadhaar handling per §Identity above)
   precisely to minimise PII collected.
 
 ## Credit quality & registry roadmap
