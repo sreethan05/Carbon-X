@@ -28,8 +28,8 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 ```powershell
 supabase orgs list
 supabase projects list
-supabase inspect db table-stats --project-ref rbdyzeuucgqkhlikbpnd
-supabase gen types typescript --project-id rbdyzeuucgqkhlikbpnd --schema public
+supabase inspect db table-stats --project-ref ihyqhisxgdwxudnxksts
+supabase gen types typescript --project-id ihyqhisxgdwxudnxksts --schema public
 ```
 
 CLI quirks:
