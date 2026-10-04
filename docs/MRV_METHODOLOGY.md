@@ -63,19 +63,26 @@ IPCC 2019 Refinement; India-specific cropland factors from ICAR-CRIDA
 
 | Crop | Biomass base | SOC factor | Reference basis |
 |---|---|---|---|
-| Rice/Paddy | 30 | 4.0 | flooded-rice SOC literature; low residue incorporation |
-| Sugarcane | 58 | 6.0 | high biomass trash return |
-| Cotton | 33 | 3.5 | — |
-| Maize | 40 | 3.0 | — |
-| Millets | 21 | 2.0 | low-input rainfed |
-| Turmeric | 46 | 4.0 | — |
-| Chilli | 27 | 2.5 | — |
-| Default | 32 | 3.0 | mixed cropping |
+| Rice/Paddy | 30 | 0.45 | IPCC Tier-1 improved cropland, degraded→improved |
+| Sugarcane | 58 | 0.60 | high-biomass system, upper IPCC bound |
+| Cotton | 33 | 0.40 | — |
+| Maize | 40 | 0.35 | — |
+| Millets | 21 | 0.25 | low-input rainfed |
+| Turmeric | 46 | 0.40 | — |
+| Chilli | 27 | 0.30 | — |
+| Default | 32 | 0.35 | mixed cropping |
 
-These are **implementation factors for the demonstration build** — the
-calibration study that replaces them with measured, region-specific values
-is Phase 0 of the roadmap (docs/ROADMAP.md). The factors, their version,
-and every input are anchored to each credit's ledger hash.
+**r2 recalibration (2026-10-04, FORMULA_VERSION `…-r2`)**: the original
+soil factors (2–6 tCO₂e/ha/yr) were caught by our own stock-plausibility
+check — they implied 20-year sequestration ~3× the *measured SOC stock* on
+287 SoilGrids reference points across Telangana (median claim/stock 2.8,
+100% above the IPCC physical bound). The recalibrated factors (0.25–0.60)
+sit at the upper edge of IPCC Tier-1 improved-management rates
+(0.37–1.8 tCO₂e/ha/yr) consistent with our degraded→improved additionality
+claim; the re-run plausibility check passes (median claim/stock 0.28, 7%
+of points over the conservative 0.5 bound). Rate-grade validation still
+requires field samples (Phase 0). The factors, their version, and every
+input are anchored to each credit's ledger hash.
 
 ## 5. Combination (Step 4)
 

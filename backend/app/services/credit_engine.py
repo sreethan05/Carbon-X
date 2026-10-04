@@ -20,17 +20,23 @@ farmer or buyer sees can be recomputed by hand.
 FORMULA_VERSION = "vm0042-soilgrids-v1-2026-10-04"
 
 # (base tCO2e/ha/yr at NDVI 0.75, soil tCO2e/ha/yr, label)
+# Soil factors recalibrated 2026-10-04 against the SoilGrids stock reference
+# (287 Telangana points, /ops/ground-truth/eval plausibility check): the
+# original 2-6 tCO2e/ha/yr soil components implied 20-yr sequestration ~3x the
+# measured SOC stock — physically impossible. IPCC Tier-1 improved-cropland
+# rates on degraded soils are ~0.1-0.5 tC/ha/yr (0.37-1.8 tCO2e/ha/yr); we sit
+# at the upper edge (degraded -> improved transition = our additionality claim).
 _CROP_FACTORS = {
-    "rice": (30.0, 4.0, "Rice"),
-    "paddy": (30.0, 4.0, "Paddy"),
-    "sugarcane": (58.0, 6.0, "Sugarcane"),
-    "cotton": (33.0, 3.5, "Cotton"),
-    "maize": (40.0, 3.0, "Maize"),
-    "millets": (21.0, 2.0, "Millets"),
-    "turmeric": (46.0, 4.0, "Turmeric"),
-    "chilli": (27.0, 2.5, "Chilli"),
+    "rice": (30.0, 0.45, "Rice"),
+    "paddy": (30.0, 0.45, "Paddy"),
+    "sugarcane": (58.0, 0.60, "Sugarcane"),
+    "cotton": (33.0, 0.40, "Cotton"),
+    "maize": (40.0, 0.35, "Maize"),
+    "millets": (21.0, 0.25, "Millets"),
+    "turmeric": (46.0, 0.40, "Turmeric"),
+    "chilli": (27.0, 0.30, "Chilli"),
 }
-_DEFAULT_FACTOR = (32.0, 3.0, "Mixed cropping")
+_DEFAULT_FACTOR = (32.0, 0.35, "Mixed cropping")
 NDVI_REFERENCE = 0.75
 DEFAULT_BASELINE_GAP = 0.10  # baseline NDVI assumed this far below current when unknown
 

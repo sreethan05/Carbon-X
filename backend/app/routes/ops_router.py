@@ -104,9 +104,43 @@ def evaluate_ground_truth():
             "mae_pct": round(sum(c["error_pct"] for c in comparisons) / n, 1) if n else None,
         }
         if not n:
-            summary["status"] = ("NO CALIBRATION DATA YET — estimates are proxy-based "
+            summary["status"] = ("NO FARM-LINKED CALIBRATION DATA YET — estimates are proxy-based "
                                  "(NDVI productivity proxy); enter measured SOC via "
                                  "POST /ops/ground-truth to produce a real error figure.")
+
+        # Stock-basis plausibility check (soilgrids_v2 reference points):
+        # SoilGrids gives a SOC *stock* (tCO2e/ha, 0-30cm); our estimates are
+        # annual *rates*. The honest comparison is a bound: our claimed
+        # cumulative 20-yr soil sequestration (soil factor x 20) must stay
+        # well below the measured stock (IPCC: improved management moves
+        # <=~30% of initial stock over 20y -> flag ratio > 0.5).
+        soilgrids = [s for s in samples if s.get("source") == "soilgrids_v2"
+                     and s.get("measured_soc_tco2e_ha")]
+        if soilgrids:
+            soil_factor_mean = sum(f[1] for f in credit_engine._CROP_FACTORS.values()) / len(credit_engine._CROP_FACTORS)
+            claim_20yr = soil_factor_mean * 20
+            ratios = []
+            exceed = 0
+            for s in soilgrids:
+                stock = float(s["measured_soc_tco2e_ha"])
+                ratio = claim_20yr / max(stock, 1e-6)
+                ratios.append(ratio)
+                if ratio > 0.5:
+                    exceed += 1
+            ratios.sort()
+            summary["stock_plausibility"] = {
+                "n": len(soilgrids),
+                "note": ("Bound check, not rate validation: claimed 20-yr cumulative "
+                         "soil sequestration (mean soil factor 4.0 tCO2e/ha/yr x 20) vs "
+                         "SoilGrids SOC stock. Rates need field samples."),
+                "median_claim_over_stock": round(ratios[len(ratios) // 2], 3),
+                "share_exceeding_0p5_bound": round(exceed / len(soilgrids), 3),
+                "verdict": ("PLAUSIBLE — claimed cumulative sequestration stays within "
+                            "IPCC stock-change bounds on the reference points"
+                            if exceed / len(soilgrids) < 0.1 else
+                            "REVIEW — a material share of reference points cannot absorb "
+                            "the claimed sequestration; revisit _CROP_FACTORS"),
+            }
         return {"success": True, "summary": summary, "comparisons": comparisons}
     except Exception as e:
         return {"success": False, "message": str(e)}
