@@ -71,11 +71,11 @@ export default function LandingPage() {
         <div className="relative z-10 max-w-5xl mx-auto text-center pt-6">
           <div className="inline-flex items-center gap-2 bg-[#2D6A4F]/80 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-semibold text-[#D1FAE5] mb-6 shadow-inner">
             <ShieldCheck className="w-4 h-4 text-emerald-300" />
-            <span>Government Land Registry & Sentinel-2 Satellite MRV Protocol</span>
+            <span>Registry-Verified Parcels & Sentinel-2 Satellite MRV</span>
           </div>
 
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight leading-tight mb-6 font-manrope">
-            Bridge Farmers to <span className="text-emerald-300">Carbon Markets</span>
+            <span className="text-white">Bridge Farmers to</span> <span className="text-emerald-300">Carbon Markets</span>
           </h1>
 
           <p className="text-lg md:text-xl text-emerald-100 max-w-3xl mx-auto leading-relaxed mb-10">
@@ -138,7 +138,7 @@ export default function LandingPage() {
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmer Payout Target</p>
               <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR 12.4 Cr</p>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">Direct UPI payout with 2% escrow fee split</p>
+              <p className="text-xs text-emerald-700 font-medium mt-0.5">70% farmer floor, paid via UPI</p>
             </div>
           </div>
         </div>
