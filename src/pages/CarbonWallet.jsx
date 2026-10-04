@@ -14,7 +14,6 @@ export default function CarbonWallet() {
   const [farmerShareTotal, setFarmerShareTotal] = useState(0);
   const [fpoShareTotal, setFpoShareTotal] = useState(0);
   const [platformShareTotal, setPlatformShareTotal] = useState(0);
-  const [upiId, setUpiId] = useState(user?.upi || '');
   const [loadError, setLoadError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [isStartingDemo, setIsStartingDemo] = useState(false);
@@ -41,7 +40,7 @@ export default function CarbonWallet() {
         setFarmerShareTotal(data.farmer_share_total || 0);
         setFpoShareTotal(data.fpo_share_total || 0);
         setPlatformShareTotal(data.platform_share_total || 0);
-        setUpiId(data.upi_id || user?.upi || '');
+        setUpiIdInput(data.upi_id || user?.upi || '');
         setDemoMode(!!data.demo_mode);
         setTransactions((data.transactions || []).map((t) => ({
           date: t.date,
