@@ -2,7 +2,15 @@
 
 ## The script (every step runs on the live system)
 
-**0:00 — The number.** "India has 146 million farm holdings. Agriculture
+**0:00 — The errata (say it before a judge finds it).** "Our first pitch
+claimed an LSTM with R² 0.989 and 90% to farmers. When we audited ourselves,
+the model was circular and the claims outran the code — so we retired the
+model, built a quality gate, and rebuilt every claim to match the code. This
+demo is the honest version." (One breath. It converts your biggest former
+liability into your strongest credibility moment — details in
+docs/CLAIMS_ERRATA.md.)
+
+**0:15 — The number.** "India has 146 million farm holdings. Agriculture
 emits 14% of the country's greenhouse gases — and has received **0.2% of its
 own carbon credits**. Not because farmers don't sequester — because
 verification costs more than their credits earn. Watch the whole loop,

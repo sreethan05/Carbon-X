@@ -247,7 +247,12 @@ class RegisterModel(BaseModel):
     phone: str
     otp: str
     name: str
-    aadhaar: str
+    # Aadhaar is REQUIRED for self-serve registration (checksum-validated,
+    # only last-4 stored) and OPTIONAL for FPO-assisted onboarding, where
+    # the FPO's attestation substitutes for the document. This is the code
+    # behind the "no Aadhaar dependency" claim.
+    aadhaar: str = ""
+    onboarding_path: Optional[Literal["self", "fpo_assisted"]] = "self"
     state: str
     district: str
     village: str
@@ -607,8 +612,14 @@ def verify_registration_otp(data: RegistrationOtpVerifyModel):
 def register(data: RegisterModel):
     try:
         phone = data.phone.strip().replace(" ", "")
-        if not validate_aadhaar(data.aadhaar):
-            return {"success": False, "message": "Enter a valid 12-digit Aadhaar number"}
+        fpo_attested = data.onboarding_path == "fpo_assisted"
+        aadhaar_last4 = None
+        if data.aadhaar.strip():
+            if not validate_aadhaar(data.aadhaar):
+                return {"success": False, "message": "Enter a valid 12-digit Aadhaar number"}
+            aadhaar_last4 = data.aadhaar[-4:]
+        elif not fpo_attested:
+            return {"success": False, "message": "Enter a valid Aadhaar number, or register through FPO-assisted onboarding"}
         token_payload = decode_token(data.otp_verification_token) if data.otp_verification_token else None
         token_verified = bool(
             token_payload
@@ -627,7 +638,7 @@ def register(data: RegisterModel):
                 "district": data.district,
                 "village": data.village,
                 "upi": data.upi,
-                "aadhaar_last4": data.aadhaar[-4:],
+                "aadhaar_last4": aadhaar_last4,
                 "preferred_language": lang,
                 "role": role,
             }
@@ -646,7 +657,7 @@ def register(data: RegisterModel):
         user = {
             "phone": phone,
             "name": data.name,
-            "aadhaar_last4": data.aadhaar[-4:],
+            "aadhaar_last4": aadhaar_last4,
             "state": data.state,
             "district": data.district,
             "village": data.village,
@@ -1410,7 +1421,7 @@ def analyze(data: AnalyzeModel):
 
         tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
         soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
-        credits = db.compute_credits(carbon_tonnes, biodiversity_score)
+        credits = credit_engine.credit_split(carbon_tonnes, biodiversity_score)
         stage1 = credit_engine.stage1_verification(data.crop_type, ndvi_value)
         veg_health = (
             "Excellent" if ndvi_value >= 0.7 else "Good" if ndvi_value >= 0.5
@@ -1460,7 +1471,7 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
         area_hectares = float(farm.get("area_hectares") or _polygon_area_hectares(geojson))
         carbon = float(farm.get("carbon_tonnes") or 0)
         bio_score = float(farm.get("biodiversity_score") or 0)
-        credits = db.compute_credits(carbon, bio_score)
+        credits = credit_engine.credit_split(carbon, bio_score)
         path = (farm.get("path") or "").lower()
         fpo_path = path == "fpo"
         if fpo_path and farm.get("fpo_id"):
@@ -1737,7 +1748,9 @@ def predict(longitude: float, latitude: float):
             ndvi = round(0.5 + math.sin(longitude * 0.1) * 0.2 + math.cos(latitude * 0.1) * 0.15, 3)
             ndvi = min(max(ndvi, 0.1), 0.9)
         result = predict_biodiversity(ndvi=ndvi)
-        credits = db.compute_credits(ndvi * 10, result["biodiversity_score"])
+        # /predict is a biodiversity probe only — it does not estimate carbon,
+        # so no carbon credit line is invented here (single source of truth).
+        credits = credit_engine.credit_split(0, result["biodiversity_score"])
         return {
             "success": True,
             "location": {"longitude": longitude, "latitude": latitude},

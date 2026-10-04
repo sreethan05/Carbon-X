@@ -290,13 +290,9 @@ def insert_listing(listing: dict) -> Optional[dict]:
 
 
 def compute_credits(carbon_tonnes: float, biodiversity_score: float) -> dict:
-    carbon = round(float(carbon_tonnes or 0), 2)
-    bio = round(float(biodiversity_score or 0) / 40.0, 2)
-    return {
-        "carbon_credits": carbon,
-        "biodiversity_credits": bio,
-        "total_credits": round(carbon + bio, 2),
-    }
+    """Deprecated shim — canonical implementation is credit_engine.credit_split."""
+    from app.services.credit_engine import credit_split
+    return credit_split(carbon_tonnes, biodiversity_score)
 
 
 def get_land_registry(survey_number: str) -> Optional[dict]:
