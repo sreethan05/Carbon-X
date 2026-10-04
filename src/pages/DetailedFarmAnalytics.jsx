@@ -4,7 +4,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Sparkles, TrendingUp, ArrowLeft, Sliders, CheckCircle2, ShieldCheck, Hash } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
-import { getFarmPassport, getNdviHistory } from '../services/api';
+import { getFarmPassport, getNdviHistory, getFarmLedger } from '../services/api';
 
 export default function DetailedFarmAnalytics() {
   const navigate = useNavigate();
@@ -52,6 +52,21 @@ export default function DetailedFarmAnalytics() {
       }
     })();
     return () => { cancelled = true; };
+  }, [farmId]);
+
+  // Live ledger: poll the hash chain so a sale/split/retire lands on the
+  // farmer's screen without a manual refresh.
+  useEffect(() => {
+    if (!farmId) return undefined;
+    const timer = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const chain = await getFarmLedger(farmId);
+        if (!chain || !chain.success) return;
+        setPassport((prev) => (prev ? { ...prev, ledger: chain.verification ? { ...chain.verification, types: chain.events.map((e) => e.type) } : prev.ledger } : prev));
+      } catch { /* transient — next tick retries */ }
+    }, 15000);
+    return () => clearInterval(timer);
   }, [farmId]);
 
   // P3 Score Simulator Practice Options

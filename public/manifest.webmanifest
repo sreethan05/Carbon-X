@@ -1,0 +1,17 @@
+{
+  "name": "CarbonX — Farmer Carbon Credits",
+  "short_name": "CarbonX",
+  "description": "Satellite-verified carbon credits for Indian smallholder farmers — the phone is the MRV lab.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAF8",
+  "theme_color": "#1B4332",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

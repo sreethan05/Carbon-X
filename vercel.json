@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/py-api/:path*", "destination": "https://REPLACE-WITH-YOUR-API.vercel.app/:path*" },
+    { "source": "/bc-api/:path*", "destination": "http://REPLACE-WITH-YOUR-NODE-API:3001/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

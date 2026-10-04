@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ShieldCheck, Download, Lock, Globe, ArrowLeft, Loader2, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Download, Lock, ArrowLeft, Loader2, AlertTriangle, FileDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getCertificates, retireCertificate } from '../services/api';
+import { getCertificates, retireCertificate, PY_API_BASE } from '../services/api';
 
 export default function CertificateRetirementPage() {
   const { certId } = useParams();
@@ -149,10 +149,20 @@ export default function CertificateRetirementPage() {
                 </p>
               </div>
 
-              {/* Escrow Reference */}
-              <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-700 flex justify-between items-center max-w-xl mx-auto">
-                <span>Escrow Reference:</span>
-                <span className="font-bold text-slate-900 truncate">{cert.tx_hash || '—'}</span>
+              {/* Batch hash + escrow reference */}
+              <div className="bg-slate-100 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-700 space-y-1.5 max-w-xl mx-auto">
+                <div className="flex justify-between items-center">
+                  <span>Escrow Reference:</span>
+                  <span className="font-bold text-slate-900 truncate">{cert.tx_hash || '—'}</span>
+                </div>
+                {cert.batch_hash && (
+                  <div className="flex justify-between items-center border-t border-slate-200 pt-1.5">
+                    <span>Batch hash (sha256):</span>
+                    <span className="font-bold text-emerald-800 truncate" title={cert.batch_hash}>
+                      {String(cert.batch_hash).slice(0, 24)}…
+                    </span>
+                  </div>
+                )}
               </div>
 
               {status === 'RETIRED' && (
@@ -211,20 +221,21 @@ export default function CertificateRetirementPage() {
 
               {/* Export Controls */}
               <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100">
-                <button
-                  onClick={downloadCertificate}
+                <a
+                  href={`${PY_API_BASE}/certificates/${certId}/pdf`}
+                  download={`CarbonX_Certificate_${certId}.pdf`}
                   className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
-                  <Download className="w-4 h-4" />
-                  <span>Download Certificate Copy</span>
-                </button>
+                  <FileDown className="w-4 h-4" />
+                  <span>Download PDF Certificate</span>
+                </a>
 
                 <button
                   onClick={downloadCertificate}
                   className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
-                  <Globe className="w-4 h-4 text-emerald-700" />
-                  <span>Export Compliance Record</span>
+                  <Download className="w-4 h-4 text-emerald-700" />
+                  <span>Export Compliance Record (JSON)</span>
                 </button>
               </div>
             </div>
