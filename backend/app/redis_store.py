@@ -107,3 +107,39 @@ def health_check() -> bool:
             return False
     return False
 
+
+
+# ── Distributed OTP-send rate limiting (#2) ──
+_SEND_KEY_PREFIX = "carbonx:otp_sends:"
+_send_memory: dict[str, list[float]] = {}
+
+
+def otp_send_rate_limited(phone: str, max_sends: int = 3, window_seconds: int = 600) -> bool:
+    """Sliding-window limiter backed by a Redis sorted set when available
+    (works across workers/instances); falls back to per-process memory."""
+    import time as _time
+    now = _time.time()
+    client = _redis_client()
+    key = f"{_SEND_KEY_PREFIX}{phone}"
+    if client is not None:
+        try:
+            pipe = client.pipeline()
+            pipe.zremrangebyscore(key, 0, now - window_seconds)
+            pipe.zcard(key)
+            _, count = pipe.execute()
+            if count >= max_sends:
+                return True
+            pipe = client.pipeline()
+            pipe.zadd(key, {str(now): now})
+            pipe.expire(key, window_seconds)
+            pipe.execute()
+            return False
+        except Exception:
+            pass  # fall through to memory limiter
+    hits = [t for t in _send_memory.get(phone, []) if now - t < window_seconds]
+    if len(hits) >= max_sends:
+        _send_memory[phone] = hits
+        return True
+    hits.append(now)
+    _send_memory[phone] = hits
+    return False

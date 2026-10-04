@@ -193,6 +193,40 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   via `ml_source`). Retrain: src/{download_gbif,aggregate_richness,
   extract_sampled,train}.py then copy artifacts/* to backend/ml/models/.
 
+
+## Production audit hardening (2026-10-04, latest — 35-item audit)
+
+- **Schema**: `supabase/07_production_schema.sql` (idempotent, applied live):
+  ground_truth_samples, hot-path indexes, pg_trgm GIN indexes for
+  marketplace ilike search, soft-delete columns, monitor snapshot columns,
+  RLS posture note.
+- **Security**: CSP/X-Frame/nosniff headers + optional HSTS
+  (`CARBONX_FORCE_HTTPS=1`); distributed OTP limiting via Redis ZSET
+  (`redis_store.otp_send_rate_limited`, memory fallback); `/monitor/run`
+  accepts `X-Monitor-Secret` (`CARBONX_MONITOR_SECRET`) for external cron —
+  `.github/workflows/monitor.yml` runs the 5-day cycle when deployed
+  (in-process scheduler stays the no-config default).
+- **Reliability**: EE calls have exponential backoff + 10-min analyze cache +
+  strict GeoJSON polygon validation; ledger migration is race-safe
+  (`on_conflict ignore_duplicates`, retry-until-success); certificate PDFs
+  cached in memory; uniform error envelope on ALL failures (incl. 404/422);
+  Prometheus `/metrics`; `X-Request-ID` on every response; JSON logging for
+  `carbonx.*` loggers (`app/logging_setup.py`).
+- **New endpoint**: `POST /fpo/login` — registration_no -> OTP to the linked
+  officer's phone (step 2 is the standard OTP login).
+- **Tests**: 48 total, hermetic (tests force demo mode POST-IMPORT because
+  `load_dotenv(override=True)` re-reads backend/.env — see the reset block in
+  test files; `CARBONX_TEST_LIVE_DB=1` opts the old DB-coupled suite into a
+  live run). 15 API integration tests cover buy->split->ledger->retire,
+  validation envelopes, error shapes.
+- **Ops**: `load-tests/k6_carbonx.js`, `docs/DR_RUNBOOK.md`, passport CSV
+  export, SW stale-while-revalidate for public listings only (money paths
+  stay network-only), Dependabot, `blockchain/.env.example` + Amoy deploy
+  steps in docs/DEPLOYMENT.md.
+- **Deferred with rationale**: docs/BACKLOG.md (#16 /v1, #18 React Query,
+  #19 Zod, #20 full i18n, #27 monsoon gap-fill, #28 registry listing,
+  #29 mobile, #35 corporate portfolio).
+
 ## Commands
 
 ```powershell

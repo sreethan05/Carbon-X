@@ -14,7 +14,10 @@ Supabase automatically on first use after the DB comes online.
 """
 import hashlib
 import json
+import logging
 import os
+
+logger = logging.getLogger("carbonx.ledger")
 from datetime import datetime, timezone
 from threading import RLock
 
@@ -103,10 +106,15 @@ def _migrate_local_to_db(sb):
                     "hash": e["hash"],
                 })
         if rows:
-            sb.table("ledger_events").upsert(rows).execute()
+            # on_conflict + ignore_duplicates makes concurrent instances safe:
+            # a losing race simply no-ops instead of erroring.
+            sb.table("ledger_events").upsert(
+                rows, on_conflict="entity_id,seq", ignore_duplicates=True
+            ).execute()
         _MIGRATED = True
     except Exception as e:
-        print(f"[ledger] local→db migration deferred: {e}")
+        # NOTE: deliberately do NOT latch _MIGRATED on failure — retry next call.
+        logger.warning("local→db migration deferred: %s", e)
 
 
 def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -> dict:
@@ -153,7 +161,7 @@ def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -
                 _CHAINS.setdefault(entity_id, []).append(event)  # keep file mirror in sync
                 return event
             except Exception as e:
-                print(f"[ledger] DB append failed ({e}) — writing to local file")
+                logger.error("DB append failed (%s) — writing to local file", e)
 
         chain = _CHAINS.setdefault(entity_id, [])
         prev = chain[-1]["hash"] if chain else "0" * 64
@@ -198,7 +206,7 @@ def get_chain(entity_id: str) -> list:
                     "_payload_json": r.get("payload_json") or _canonical(r["payload"]),
                 } for r in rows]
         except Exception as e:
-            print(f"[ledger] DB read failed ({e}) — falling back to local file")
+            logger.warning("DB read failed (%s) — falling back to local file", e)
     with _LOCK:
         return [dict(e, _payload_json=_canonical(e["payload"])) for e in _CHAINS.get(entity_id, [])]
 

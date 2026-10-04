@@ -11,6 +11,13 @@ def get_features(lat, lon, buffer=1500):
            .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE",20)))
     s2  = col.median()
     B4, B8, B3, B11 = s2.select("B4"), s2.select("B8"), s2.select("B3"), s2.select("B11")
+    ndvi_col = col.map(lambda i: i.normalizedDifference(["B8", "B4"]))
+    # Richness drivers beyond greenness: terrain (elevation is one of the
+    # strongest single richness predictors), within-cell habitat
+    # heterogeneity (NDVI range), and seasonality (kharif vs rabi contrast).
+    dem = ee.Image("USGS/SRTMGL1_003")
+    kharif = col.filterDate("2023-06-01", "2023-10-31").map(lambda i: i.normalizedDifference(["B8", "B4"]))
+    rabi = col.filterDate("2023-11-01", "2024-03-31").map(lambda i: i.normalizedDifference(["B8", "B4"]))
     stack = (s2.normalizedDifference(["B8","B4"]).rename("NDVI")
               .addBands(s2.normalizedDifference(["B3","B11"]).rename("NDWI"))
               .addBands(s2.expression("((NIR-RED)/(NIR+RED+0.5))*1.5",
@@ -21,7 +28,11 @@ def get_features(lat, lon, buffer=1500):
               .addBands(col.map(lambda i: i.normalizedDifference(["B8","B4"]))
                         .reduce(ee.Reducer.stdDev()).rename("NDVI_STD"))
               .addBands(col.map(lambda i: i.select("B8"))
-                        .reduce(ee.Reducer.variance()).rename("B8_VAR")))
+                        .reduce(ee.Reducer.variance()).rename("B8_VAR"))
+              .addBands(dem.select("elevation").rename("ELEVATION"))
+              .addBands(ndvi_col.max().subtract(ndvi_col.min()).rename("NDVI_RANGE"))
+              .addBands(kharif.mean().rename("KHARIF_NDVI")
+                        .subtract(rabi.mean()).rename("SEASONAL_CONTRAST")))
     return stack.reduceRegion(
         reducer=ee.Reducer.mean(), geometry=pt, scale=10, maxPixels=1e9
     ).getInfo()

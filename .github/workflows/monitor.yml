@@ -1,0 +1,27 @@
+name: 5-day NDVI monitoring cycle
+
+on:
+  schedule:
+    # Every 5 days at 03:00 UTC (Sentinel-2 revisit cadence)
+    - cron: "0 3 */5 * *"
+  workflow_dispatch: {}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger monitoring on the deployed API
+        env:
+          MONITOR_URL: ${{ secrets.MONITOR_URL }}
+          MONITOR_SECRET: ${{ secrets.MONITOR_SECRET }}
+        run: |
+          if [ -z "$MONITOR_URL" ]; then
+            echo "MONITOR_URL secret not set — skipping (set it to https://<your-api>/monitor/run after deploy)"
+            exit 0
+          fi
+          code=$(curl -s -o response.json -w "%{http_code}" -X POST "$MONITOR_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Monitor-Secret: $MONITOR_SECRET" -d '{}')
+          echo "HTTP $code"
+          cat response.json
+          test "$code" = "200"

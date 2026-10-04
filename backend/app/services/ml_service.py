@@ -1,8 +1,10 @@
+import logging
 import warnings
 import os
 import numpy as np
 
 warnings.filterwarnings("ignore", category=UserWarning)
+logger = logging.getLogger("carbonx.ml")
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
@@ -32,7 +34,7 @@ def _load_models():
         score_scaler_path = os.path.join(BASE_DIR, "ml/models/score_scaler.pkl")
 
         if not os.path.exists(model_path) or not os.path.exists(scaler_path):
-            print(f"ML models not found at {model_path}")
+            logger.warning("ML models not found at %s", model_path)
             _model_loaded = True
             return False
 
@@ -51,17 +53,17 @@ def _load_models():
         except Exception:
             _serving_enabled = False
         if not _serving_enabled:
-            print(f"ML model below quality gate (test_r2 in {card_path} < {_MIN_SERVING_TEST_R2}) — serving labelled heuristic")
+            logger.warning("ML model below quality gate (test_r2 in %s < %s) — serving labelled heuristic", card_path, _MIN_SERVING_TEST_R2)
 
         _model = joblib.load(model_path)
         _feature_scaler = joblib.load(scaler_path)
         if os.path.exists(score_scaler_path):
             _score_scaler = joblib.load(score_scaler_path)
         _model_loaded = True
-        print(f"ML model loaded: {type(_model).__name__}")
+        logger.info("ML model loaded: %s", type(_model).__name__)
         return True
     except Exception as e:
-        print(f"ML model load error: {e}")
+        logger.error("ML model load error: %s", e)
         _model_loaded = True
         return False
 
@@ -93,9 +95,9 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
             bio_score = min(max(bio_score, 5.0), 98.0)
             return _package(bio_score, nd, source=f"ML {type(_model).__name__} (real Sentinel-2 features)")
         except KeyError as e:
-            print(f"ML predict: missing feature {e} — falling back to heuristic")
+            logger.warning("ML predict: missing feature %s — falling back to heuristic", e)
         except Exception as e:
-            print(f"ML predict error: {e}")
+            logger.error("ML predict error: %s", e)
 
     if model_ready:
         source = "Heuristic (real features unavailable)"
