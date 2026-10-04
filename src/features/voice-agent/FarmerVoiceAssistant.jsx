@@ -52,6 +52,7 @@ function pathForAction(action) {
 }
 
 export default function FarmerVoiceAssistant() {
+  const [minimized, setMinimized] = useState(true);
   const navigate = useNavigate();
   const { role, refreshUser } = useAuth();
   const [language, setLanguage] = useState('te-IN');
@@ -228,8 +229,27 @@ export default function FarmerVoiceAssistant() {
     }
   };
 
+  if (minimized) {
+    return (
+      <button
+        onClick={() => setMinimized(false)}
+        aria-label="Open farmer voice assistant"
+        className="fixed right-4 bottom-20 md:bottom-4 z-50 w-12 h-12 rounded-full bg-forest-800 text-white shadow-xl flex items-center justify-center hover:bg-forest-700 transition-colors"
+      >
+        <Volume2 size={20} />
+      </button>
+    );
+  }
+
   return (
     <section className="fixed right-4 bottom-20 md:bottom-4 z-50 w-[calc(100vw-2rem)] max-w-sm bg-white border border-forest-100 shadow-xl rounded-2xl overflow-hidden">
+      <button
+        onClick={() => setMinimized(true)}
+        aria-label="Minimize voice assistant"
+        className="absolute top-2.5 right-2.5 w-6 h-6 rounded-md text-carbon-500 hover:bg-forest-50 flex items-center justify-center"
+      >
+        <X size={14} />
+      </button>
       <div className="px-4 py-3 border-b border-forest-100 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-8 h-8 rounded-xl bg-forest-800 text-white flex items-center justify-center shrink-0">

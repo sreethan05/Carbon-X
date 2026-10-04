@@ -172,8 +172,24 @@ export default function Marketplace() {
     }
   };
 
+  // Crop visual identity — gradient + emoji tiles that always render (no
+  // network dependency), keyed by crop name.
+  const cropArt = (crop) => {
+    const map = {
+      rice: { emoji: "🌾", grad: "from-emerald-100 to-lime-200" },
+      paddy: { emoji: "🌾", grad: "from-emerald-100 to-lime-200" },
+      maize: { emoji: "🌽", grad: "from-amber-100 to-yellow-200" },
+      cotton: { emoji: "☁️", grad: "from-sky-100 to-slate-200" },
+      millets: { emoji: "🌾", grad: "from-orange-100 to-amber-200" },
+      sugarcane: { emoji: "🎋", grad: "from-lime-100 to-green-200" },
+      turmeric: { emoji: "🟡", grad: "from-yellow-100 to-orange-200" },
+      chilli: { emoji: "🌶️", grad: "from-red-100 to-orange-200" },
+    };
+    return map[(crop || "").toLowerCase()] || { emoji: "🌱", grad: "from-emerald-100 to-teal-200" };
+  };
+
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-8 px-4 md:px-10">
+    <div className="min-h-screen bg-slate-50 font-inter text-slate-900 py-8 px-4 md:px-10">
       <div className="max-w-6xl mx-auto space-y-6">
 
         {/* Header & Search Bar */}
@@ -218,94 +234,102 @@ export default function Marketplace() {
               placeholder="Search by crop or location..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-13 pr-6 py-3.5 bg-white border border-slate-200 rounded-full text-sm text-slate-900 shadow-sm focus:outline-none focus:border-emerald-600 font-medium"
+              className="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-full text-sm text-slate-900 shadow-sm focus:outline-none focus:border-emerald-600 font-medium"
             />
           </div>
         </div>
 
-        {/* Listing Cards Stack */}
-        <div className="space-y-4">
-          {filteredListings.map(item => {
-            const qty = getQuantity(item.id);
-            return (
-              <div
-                key={item.id}
-                className="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm hover:border-slate-300 transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-6"
-              >
-                {/* Left Data Column */}
-                <div className="space-y-3 flex-1 min-w-0">
-                  <div>
-                    <h2 className="text-lg font-bold text-[#0F172A] font-manrope">{item.crop}</h2>
-                    <p className="text-sm font-semibold text-[#4B5563] mt-0.5">{item.farmer}</p>
-                  </div>
-
-                  {/* Details Line */}
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-                    <div className="flex items-center gap-1.5 font-medium">
-                      <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
-                      <span>{item.location}</span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 font-medium">
-                      <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
-                      <span>Available: {item.available}</span>
-                    </div>
-                  </div>
-
-                  {/* Metric & Status Chips Row */}
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-semibold rounded-md border border-slate-200">
-                      Carbon: {item.carbonScore}
+        {/* Marketplace product grid */}
+        {filteredListings.length === 0 ? (
+          <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+            <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm font-bold text-slate-700">No listings match your search</p>
+            <p className="text-xs text-slate-500 mt-1">Try a different crop or location.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+            {filteredListings.map(item => {
+              const qty = getQuantity(item.id);
+              const art = cropArt(item.crop);
+              return (
+                <div key={item.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-emerald-300 transition-all overflow-hidden flex flex-col">
+                  {/* Crop art tile */}
+                  <div className={`relative h-28 bg-gradient-to-br ${art.grad} flex items-center justify-center`}>
+                    <span className="text-5xl drop-shadow-sm">{art.emoji}</span>
+                    <span className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/90 text-emerald-900 border border-emerald-200">
+                      {item.badge || 'DOCUMENT'}
                     </span>
-                    <span className="px-3 py-1 bg-slate-100 text-slate-700 text-xs font-semibold rounded-md border border-slate-200">
-                      Bio: {item.bioScore}
-                    </span>
-                    <span className="px-3 py-1 bg-slate-100 text-slate-800 text-xs font-bold rounded-md border border-slate-200 font-mono">
-                      ₹{item.price}/credit
-                    </span>
-                    <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 text-xs font-semibold rounded-md border border-emerald-200">
+                    <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#1B4332] text-emerald-100">
                       {item.status}
                     </span>
                   </div>
-                </div>
 
-                {/* Right Stepper & Purchase Column */}
-                <div className="flex items-center gap-3 shrink-0 self-end md:self-center">
-                  <div className="flex items-center border border-slate-200 rounded-xl px-3 py-1.5 bg-slate-50 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => updateQuantity(item.id, -1)}
-                      className="p-1 hover:bg-slate-200 rounded text-slate-700 transition-colors"
-                    >
-                      <Minus className="w-3.5 h-3.5" />
-                    </button>
+                  <div className="p-5 flex flex-col gap-3 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h2 className="text-base font-extrabold text-slate-900 font-manrope truncate">{item.crop}</h2>
+                        <p className="text-xs text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                          <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          {item.location}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-lg font-extrabold text-emerald-800 font-manrope">₹{item.price}</p>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">per credit</p>
+                      </div>
+                    </div>
 
-                    <span className="font-mono text-sm font-bold text-slate-900 min-w-[20px] text-center">
-                      {qty}
-                    </span>
+                    <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                      <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center text-[9px] font-black shrink-0">
+                        {item.farmer.slice(0, 2).toUpperCase()}
+                      </span>
+                      {item.farmer}
+                    </p>
 
-                    <button
-                      type="button"
-                      onClick={() => updateQuantity(item.id, 1)}
-                      className="p-1 hover:bg-slate-200 rounded text-slate-700 transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">Available</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.available}</p>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">Carbon</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.carbonScore} t</p>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
+                        <p className="text-[9px] font-bold text-slate-400 uppercase">Bio</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.bioScore} t</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-auto flex items-center gap-2 pt-1">
+                      <div className="flex items-center border border-slate-200 rounded-xl px-2 py-1.5 bg-white gap-2.5">
+                        <button type="button" aria-label="Decrease quantity"
+                          onClick={() => updateQuantity(item.id, -1)}
+                          className="p-0.5 hover:bg-slate-100 rounded text-slate-600">
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="font-mono text-sm font-bold text-slate-900 min-w-[18px] text-center">{qty}</span>
+                        <button type="button" aria-label="Increase quantity"
+                          onClick={() => updateQuantity(item.id, 1)}
+                          className="p-0.5 hover:bg-slate-100 rounded text-slate-600">
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleBuyClick(item)}
+                        className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
+                      >
+                        <span>Buy Credits</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleBuyClick(item)}
-                    className="px-5 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center gap-1.5"
-                  >
-                    <span>Buy</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Purchase Escrow Confirmation Modal */}
         {checkoutModalItem && (
