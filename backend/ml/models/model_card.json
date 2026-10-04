@@ -1,0 +1,42 @@
+{
+  "model": "rf_shallow",
+  "params": {
+    "n_estimators": 300,
+    "max_depth": 8,
+    "min_samples_leaf": 3
+  },
+  "target": "log1p(GBIF species richness per 0.02-degree cell)",
+  "features": [
+    "NDVI",
+    "NDWI",
+    "SAVI",
+    "NDVI_STD",
+    "B4",
+    "B8",
+    "B11",
+    "B8_VAR"
+  ],
+  "trained_at": "2026-10-04",
+  "n_train": 252,
+  "n_val": 31,
+  "n_test": 32,
+  "val_r2": -0.072,
+  "test_r2": -0.165,
+  "test_mae_log": 0.489,
+  "test_mae_species": 4.0,
+  "feature_importance": {
+    "NDVI": 0.117,
+    "NDWI": 0.109,
+    "SAVI": 0.132,
+    "NDVI_STD": 0.13,
+    "B4": 0.119,
+    "B8": 0.161,
+    "B11": 0.112,
+    "B8_VAR": 0.12
+  },
+  "honest_limitations": [
+    "GBIF citizen-science richness is sampling-biased; observation-count weights partially compensate, field validation still required.",
+    "Regional model (India, Sentinel-2 2023): recalibrate for other regions/years.",
+    "R2 well below 1.0 is expected and honest \u2014 richness is only partially explained by 10m vegetation indices."
+  ]
+}

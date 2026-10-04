@@ -168,6 +168,31 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
 - **Deploy**: `vercel.json` (rewrites `/py-api/*` — replace placeholder) +
   `docs/DEPLOYMENT.md`. API bases are env-aware (`VITE_PY_API_BASE`).
 
+
+## Scientific/ops layer (added 2026-10-04, latest)
+
+- **Canonical carbon formula**: `credit_engine.quick_scan_estimate` is the
+  single source of truth — `/analyze` uses it (scan-only evidence quality);
+  the old ad-hoc `area x tree_cover x 0.12` formula was removed. Every
+  estimate now carries `ci90` (statistical interval from the uncertainty
+  fraction) plus provenance (`s2_scene` system:index, `ml_source`).
+- **Ground-truth calibration**: `ground_truth_samples` table +
+  `POST /ops/ground-truth` + `GET /ops/ground-truth/eval` (estimate-vs-
+  measured error; honest empty state until field data exists).
+- **Ops**: `GET /ops/summary` (read-only counts, no PII).
+- **Scripts**: `scripts/tamper_demo.py` (ledger tamper-detection demo),
+  `scripts/simulate_scale.py` (throughput + unit economics),
+  `scripts/seed_land_registry.py`.
+- **Docs suite**: docs/{MRV_METHODOLOGY, MODEL_CARD, ECONOMICS, COMPLIANCE,
+  IMPACT_MODEL, DEMO_SCRIPT, ROADMAP, DEPLOYMENT, PILOT_MOU_TEMPLATE, ARCHITECTURE}.md.
+  README rewritten (was stale/Express claims); LICENSE (MIT) + CONTRIBUTING added.
+- **Biodiversity model v2 (honest)**: trained on real GBIF species richness
+  (log1p) with real Sentinel-2 features via Earth Engine; v1 was circular
+  (label = formula of its own features) and retired — see docs/MODEL_CARD.md.
+  Serving refuses fabricated features (NDVI-only heuristic fallback, labelled
+  via `ml_source`). Retrain: src/{download_gbif,aggregate_richness,
+  extract_sampled,train}.py then copy artifacts/* to backend/ml/models/.
+
 ## Commands
 
 ```powershell

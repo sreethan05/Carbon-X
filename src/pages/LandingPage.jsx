@@ -106,7 +106,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Live Key Performance Indicators (Bento Grid) */}
+      {/* Key Performance Indicators (Bento Grid) — pilot targets, not achieved metrics */}
       <section className="max-w-7xl mx-auto px-4 md:px-10 -mt-8 relative z-20 mb-16">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex items-center gap-4">
@@ -114,7 +114,7 @@ export default function LandingPage() {
               <Leaf className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Farmland Enrolled</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmland Target (Pilot)</p>
               <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">14,200 Acres</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">Verified across 10 Telangana Mandals</p>
             </div>
@@ -125,7 +125,7 @@ export default function LandingPage() {
               <Cpu className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Verified CO2 Sequestered</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sequestration Target</p>
               <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">285.4K Tonnes</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">Indexed via Sentinel-2 multi-spectral NDVI</p>
             </div>
@@ -136,7 +136,7 @@ export default function LandingPage() {
               <Wallet className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Net Farmer Disbursements</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmer Payout Target</p>
               <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR 12.4 Cr</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">Direct UPI payout with 2% escrow fee split</p>
             </div>
@@ -149,19 +149,19 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 md:px-10 flex flex-wrap justify-between items-center gap-6 text-xs font-semibold">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>ISRO Bhuvan Compatible</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
             <span>Sentinel-2 Multi-Spectral NDVI</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>PostGIS Boundary Verification</span>
+            <span>Automated Boundary Verification</span>
           </div>
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>Direct UPI Escrow Settlement</span>
+            <span>SHA-256 Tamper-Evident Ledger</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
+            <span>UPI Payout Rails (escrow simulated, labelled)</span>
           </div>
         </div>
       </section>
