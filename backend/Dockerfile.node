@@ -1,0 +1,27 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dependencies
+COPY backend/package.json backend/package-lock.json ./backend/
+WORKDIR /app/backend
+RUN npm ci --omit=dev
+
+# Copy application files and smart contract artifacts
+WORKDIR /app
+COPY backend/src ./backend/src
+COPY blockchain/artifacts ./blockchain/artifacts
+
+WORKDIR /app/backend
+ENV PORT=3001 \
+    NODE_ENV=production
+
+# Use non-root node user
+USER node
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget -qO- http://localhost:3001/health || exit 1
+
+CMD ["node", "src/index.js"]

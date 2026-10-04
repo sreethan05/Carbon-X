@@ -1,0 +1,82 @@
+services:
+  # ── Development Frontend (Vite Dev Server + HMR) ──
+  frontend:
+    image: node:20-alpine
+    container_name: carbonx-frontend-dev
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - VITE_PY_API_BASE=http://localhost:8000
+      - VITE_BC_API_BASE=http://localhost:3001
+    networks:
+      - carbonx-network
+
+  # ── Development FastAPI Backend (Hot Reload) ──
+  backend-py:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: carbonx-backend-py-dev
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - GEE_PROJECT=${GEE_PROJECT:-carbonx-507617}
+      - CORS_ORIGINS=http://localhost:5000,http://localhost:5173
+      - CARBONX_ALLOW_DEV_OTP=1
+    volumes:
+      - ./backend:/app
+      - carbonx_ledger_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - carbonx-network
+
+  # ── Development Node Blockchain Service ──
+  backend-bc:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.node
+    container_name: carbonx-backend-bc-dev
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./backend/src:/app/backend/src
+      - ./blockchain/artifacts:/app/blockchain/artifacts
+    networks:
+      - carbonx-network
+
+  # ── Redis Cache ──
+  redis:
+    image: redis:7-alpine
+    container_name: carbonx-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - carbonx_redis_data_dev:/data
+    networks:
+      - carbonx-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  carbonx-network:
+    name: carbonx-network-dev
+    driver: bridge
+
+volumes:
+  carbonx_redis_data_dev:
+  carbonx_ledger_data:
