@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Phone, ArrowRight, ShieldCheck, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Phone, ArrowRight, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { sendLoginOtp, loginUser } from '../services/api';
+import { sendLoginOtp, loginUser, demoLogin } from '../services/api';
 
 export default function FarmerLogin() {
   const navigate = useNavigate();
@@ -49,7 +49,9 @@ export default function FarmerLogin() {
           setOtpDigits(res.dev_otp.split(''));
         }
       } else {
-        setError(res.message || 'Failed to send OTP. Please retry.');
+        const msg = res.detail || res.message || 'Failed to send OTP. Please retry.';
+        setError(msg);
+        if (/database is not configured/i.test(msg)) setDbOffline(true);
       }
     } catch {
       if (import.meta.env.DEV) {
@@ -62,6 +64,28 @@ export default function FarmerLogin() {
       }
     } finally {
       setIsVerifying(false);
+    }
+  };
+
+  // Demo-mode entry: lets the whole farmer loop be explored while the
+  // database is unconfigured (login needs the DB to check the profile).
+  const [dbOffline, setDbOffline] = useState(false);
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
+  const handleDemoLogin = async () => {
+    setError('');
+    setIsStartingDemo(true);
+    try {
+      const res = await demoLogin();
+      if (res && res.success && res.token) {
+        await login(res.token, res.user);
+        navigate('/farmer/dashboard');
+      } else {
+        setError((res && res.message) || 'Demo mode is unavailable right now.');
+      }
+    } catch {
+      setError('Demo mode needs the backend running (it is refused when a real database is configured).');
+    } finally {
+      setIsStartingDemo(false);
     }
   };
 
@@ -169,6 +193,17 @@ export default function FarmerLogin() {
             <p className="text-xs font-bold text-red-700 bg-red-50 border border-red-200 p-2.5 rounded-xl text-center">
               {error}
             </p>
+          )}
+
+          {dbOffline && (
+            <button
+              type="button"
+              onClick={handleDemoLogin}
+              disabled={isStartingDemo}
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-800 rounded-xl text-xs font-bold transition-all"
+            >
+              {isStartingDemo ? 'Starting demo session…' : 'Explore in Demo Mode (sample farmer, no OTP)'}
+            </button>
           )}
 
           {!showOtp ? (

@@ -36,7 +36,8 @@ from app.sample_data import (  # noqa: E402
     materialize_listings,
 )
 
-PROJECT_REF = "rbdyzeuucgqkhlikbpnd"
+# Own CarbonX project (sreethan05). Override with SUPABASE_PROJECT_REF env var.
+PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF", "ihyqhisxgdwxudnxksts")
 
 
 # ── PRIMARY: live DB via Supabase REST ──

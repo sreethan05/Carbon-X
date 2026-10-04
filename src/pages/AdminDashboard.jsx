@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import { ShieldCheck, AlertTriangle, Users, Layers, FileText, Check, X, Search } from 'lucide-react';
+import { ShieldCheck, Check, X } from 'lucide-react';
 import BadgePill from '../components/BadgePill';
 
 export default function AdminDashboard() {
-  const [badgeFilter, setBadgeFilter] = useState('ALL');
 
   const [complianceQueue, setComplianceQueue] = useState([
     {

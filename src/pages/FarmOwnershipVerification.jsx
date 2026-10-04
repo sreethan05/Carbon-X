@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, ShieldCheck, FileCheck, FileText, CheckCircle2, ArrowRight, Loader2,
-  Upload, AlertCircle, Info, RefreshCw, Check, ScanLine, Camera, Layers
+  Search, ShieldCheck, FileText, CheckCircle2, ArrowRight, Loader2,
+  Upload, ScanLine
 } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';

@@ -22,9 +22,9 @@ TEST_FARM_ID = "172d370a-f799-4c18-a82a-e38f4edbcdea"
 IMAGE_URL = "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=400"
 
 FARMERS = {
-    "9000000001": {"name": "Venkat Rao", "state": "Telangana", "district": "Khammam", "village": "Bonakal", "upi": "venkatrao@upi"},
+    "9000000001": {"name": "Venkat Rao", "state": "Telangana", "district": "Khammam", "village": "Bonakal", "upi": "venkatrao@upi", "fpo": "Khammam Farmer Producer Org"},
     "9000000002": {"name": "Anjali Devi", "state": "Telangana", "district": "Nizamabad", "village": "Yellareddy", "upi": "anjalidevi@upi"},
-    "9000000003": {"name": "Mohan Reddy", "state": "Telangana", "district": "Karimnagar", "village": "Jagtial", "upi": "mohanreddy@upi"},
+    "9000000003": {"name": "Mohan Reddy", "state": "Telangana", "district": "Karimnagar", "village": "Jagtial", "upi": "mohanreddy@upi", "fpo": "Karimnagar Farmer Producer Org"},
     "9000000004": {"name": "Farida Begum", "state": "Telangana", "district": "Nalgonda", "village": "Devarakonda", "upi": "faridabegum@upi"},
 }
 

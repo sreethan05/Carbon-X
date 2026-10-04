@@ -2,8 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   Home, Compass, ShoppingCart, Wallet, Menu, Bell, Globe, X, LogOut,
-  ShieldCheck, ClipboardList, BarChart3, Sprout, Building2, ChevronLeft,
-} from 'lucide-react';
+  ShieldCheck, ClipboardList, BarChart3, Building2 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import OfflineBanner from './OfflineBanner';
@@ -56,7 +55,7 @@ const ROLE_META = {
 export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { t, changeLanguage, currentLang } = useLanguage();
+  const { changeLanguage, currentLang } = useLanguage();
   const { user, logout, role, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);

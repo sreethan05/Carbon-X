@@ -7,7 +7,7 @@ import { createMarketplaceListing } from '../services/api';
 
 export default function CreateListing() {
   const navigate = useNavigate();
-  const { user, farms, refreshUser } = useAuth();
+  const { farms, refreshUser } = useAuth();
 
   const [volume, setVolume] = useState(1);
   const [unitPrice, setUnitPrice] = useState(340);
@@ -68,7 +68,7 @@ export default function CreateListing() {
       } else {
         setError((res && res.message) || 'Failed to publish listing');
       }
-    } catch (err) {
+    } catch {
       setError('Marketplace service unreachable. Is the backend running?');
     } finally {
       setIsPublishing(false);

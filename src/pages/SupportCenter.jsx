@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { PhoneCall, HelpCircle, ChevronDown, ChevronUp, Send, MessageSquare, User, ChevronLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 

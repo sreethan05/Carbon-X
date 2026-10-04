@@ -58,14 +58,14 @@ export default function FPODashboard() {
       setPendingQueue((pendingRes && pendingRes.pending) || []);
       setFlaggedList((flaggedRes && flaggedRes.flagged) || []);
       setCertificates((certsRes && certsRes.success && certsRes.certificates) || []);
-    } catch (e) {
+    } catch {
       setLoadError('FPO services unreachable. Is the backend running?');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { loadAll(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadAll(); }, []);
 
   const handleOnboardSubmit = async (e) => {
     e.preventDefault();
@@ -89,7 +89,7 @@ export default function FPODashboard() {
       } else {
         setOnboardError((res && res.message) || 'Onboarding failed');
       }
-    } catch (err) {
+    } catch {
       setOnboardError('Onboarding service unreachable. Is the backend running?');
     } finally {
       setIsOnboarding(false);
@@ -122,7 +122,7 @@ export default function FPODashboard() {
       } else {
         alert((res && (res.message || res.detail)) || 'Review action failed');
       }
-    } catch (err) {
+    } catch {
       alert('Review service unreachable. Are you signed in as an FPO officer?');
     } finally {
       setAuditBusyId(null);

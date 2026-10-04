@@ -31,13 +31,14 @@ from app.phone_service import generate_otp, send_phone_otp
 from app import supabase_db as db
 from app import redis_store
 from app import sample_data
+from app.services import credit_engine, ledger, market_store, split_engine
 from app.services.kyc_service import analyse_document, validate_aadhaar
 
 app = FastAPI(title="CarbonX API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5000,http://localhost:5173,http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1318,7 +1319,7 @@ def marketplace_listings(
             print("[marketplace/listings] LIVE DB not configured — serving FALLBACK sample data")
         if result is None:
             source = "fallback"
-            result = sample_data.filter_listings(sample_data.FALLBACK_LISTINGS, **query_kwargs)
+            result = sample_data.filter_listings(market_store.all_rows(), **query_kwargs)
 
         print(
             f"[marketplace/listings] source={'LIVE DB' if source == 'live_db' else 'FALLBACK sample data'} "
@@ -1707,61 +1708,133 @@ class MarketplaceBuyModel(BaseModel):
     buyer_name: Optional[str] = "Corporate Buyer"
 
 
+def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
+    """Proven FPO involvement: live farms carry fpo_id; sample data names the FPO."""
+    if farm and farm.get("fpo_id"):
+        fpos = db.list_fpos() if db.is_ready() else []
+        match = next((f for f in fpos if f.get("id") == farm.get("fpo_id")), None)
+        return (match or {}).get("name") or "Linked FPO"
+    if farm and farm.get("fpo"):
+        return farm["fpo"]
+    return market_store.fpo_for_phone(farmer_phone)
+
+
+def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update) -> dict:
+    """Shared escrow -> conditional split -> ledger -> auto-retire pipeline.
+
+    `apply_update(fields)` persists listing mutations (live DB or demo store).
+    Purchase = retirement in one step: the buyer's money lands in the platform
+    escrow, the conditional split is computed and recorded, and the credits are
+    permanently retired with a batch hash — no resale ambiguity.
+    """
+    available = float(listing.get("total_credits") or 0)
+    unit_price = float(listing.get("price_per_credit") or 0)
+    gross = round(credits * unit_price, 2)
+    farm_id = listing.get("farm_id") or ""
+    fpo_name = _resolve_fpo_link(None, listing.get("farmer_phone") or "")
+    if not fpo_name and farm_id and db.is_ready():
+        farm = db.get_farm(farm_id) or {}
+        fpo_name = _resolve_fpo_link(farm, listing.get("farmer_phone") or "")
+
+    split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
+    escrow_ref = "ESC-" + uuid.uuid4().hex[:12].upper()
+    batch_hash = None
+    partial = credits < available - 1e-6
+
+    updates = {"tx_hash": escrow_ref, "current_bid": gross, "bids_count": int(listing.get("bids_count") or 0) + 1}
+    if partial:
+        updates["total_credits"] = round(available - credits, 4)
+    else:
+        updates["status"] = "Retired"  # purchase = retirement, one step
+    apply_update(updates)
+
+    cert_id = _cert_id_for_listing(listing.get("id"))
+    sale_event = ledger.append_event(farm_id, "SALE", {
+        "listing_id": listing.get("id"),
+        "buyer": buyer_name,
+        "credits": credits,
+        "unit_price": unit_price,
+        "gross_inr": gross,
+        "escrow_ref": escrow_ref,
+        "certificate_id": cert_id,
+    })
+    split_event = ledger.append_event(farm_id, "SPLIT", {
+        "escrow_ref": escrow_ref,
+        "model": split["model"],
+        "farmer_inr": split["farmer_amount_inr"],
+        "fpo_inr": split["fpo_amount_inr"],
+        "platform_inr": split["platform_amount_inr"],
+    })
+    batch_hash = split_event["hash"]
+    ledger.append_event(farm_id, "RETIRE", {
+        "certificate_id": cert_id,
+        "credits_retired": credits,
+        "escrow_ref": escrow_ref,
+        "batch_hash": batch_hash,
+        "buyer": buyer_name,
+    })
+
+    return {
+        "success": True,
+        "message": "Purchase complete — escrowed, split paid, credits retired",
+        "certificate_id": cert_id,
+        "listing_id": listing.get("id"),
+        "farm_id": farm_id,
+        "buyer_name": buyer_name,
+        "escrow_ref": escrow_ref,
+        "batch_hash": batch_hash,
+        "ledger_tail": sale_event["hash"],
+        "retired": not partial,
+        "credits_purchased": credits,
+        "credits_remaining": round(available - credits, 4),
+        "gross_amount": gross,
+        "unit_price": unit_price,
+        "split": split,
+        "farmer_name": listing.get("farmer_name"),
+        "farmer_phone": listing.get("farmer_phone"),
+        "crop": listing.get("crop"),
+        "location": listing.get("location"),
+        "source": listing.get("_source", "live_db"),
+    }
+
+
 @app.post("/marketplace/buy")
 def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
-    """Purchase credits from a live listing: validates availability, marks the listing
-    Sold/partially consumed, and issues a persisted escrow reference."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        rows = (sb.table("marketplace_listings").select("*").eq("id", data.listing_id).execute().data) or []
-        if not rows:
+    """Purchase credits from a live listing: escrow -> conditional split ->
+    hash-anchored ledger events -> instant retirement + certificate."""
+    buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
+
+    if not db.is_ready():
+        # Demo mode: run the full flow against the in-memory sample store.
+        listing = market_store.get(data.listing_id)
+        if not listing:
             return {"success": False, "message": "Listing not found"}
-        listing = rows[0]
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
-
         available = float(listing.get("total_credits") or 0)
         if available <= 0:
             return {"success": False, "message": "This listing has no purchasable credits left"}
         credits = round(min(float(data.credits or available), available), 4)
         if credits <= 0:
             return {"success": False, "message": "Credit quantity must be greater than zero"}
+        listing["_source"] = "demo_store"
+        return _purchase_flow(listing, credits, buyer, lambda fields: market_store.update(data.listing_id, fields))
 
-        unit_price = float(listing.get("price_per_credit") or data.unit_price or 340)
-        gross = round(credits * unit_price, 2)
-        fee = round(gross * 0.02, 2)
-        net = round(gross - fee, 2)
-
-        tx_ref = "ESC-" + uuid.uuid4().hex[:12].upper()
-        partial = credits < available - 1e-6
-        updates = {"tx_hash": tx_ref, "current_bid": gross, "bids_count": int(listing.get("bids_count") or 0) + 1}
-        if partial:
-            updates["total_credits"] = round(available - credits, 4)
-        else:
-            updates["status"] = "Sold"
-        sb.table("marketplace_listings").update(updates).eq("id", data.listing_id).execute()
-
-        buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
-        return {
-            "success": True,
-            "message": "Credits purchased successfully into Escrow",
-            "certificate_id": _cert_id_for_listing(data.listing_id),
-            "listing_id": data.listing_id,
-            "buyer_name": buyer,
-            "tx_hash": tx_ref,
-            "on_chain": False,
-            "credits_purchased": credits,
-            "credits_remaining": round(available - credits, 4),
-            "gross_amount": gross,
-            "fee_amount": fee,
-            "net_farmer_amount": net,
-            "unit_price": unit_price,
-            "farmer_name": listing.get("farmer_name"),
-            "crop": listing.get("crop"),
-            "location": listing.get("location"),
-        }
+    try:
+        sb = db._client()
+        rows = (sb.table("marketplace_listings").select("*").eq("id", data.listing_id).execute().data) or []
+        if not rows:
+            return {"success": False, "message": "Listing not found"}
+        listing = rows[0]
+        if str(listing.get("status") or "Active").lower() not in ("active", ""):
+            return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
+        available = float(listing.get("total_credits") or 0)
+        if available <= 0:
+            return {"success": False, "message": "This listing has no purchasable credits left"}
+        credits = round(min(float(data.credits or available), available), 4)
+        if credits <= 0:
+            return {"success": False, "message": "Credit quantity must be greater than zero"}
+        return _purchase_flow(listing, credits, buyer, lambda fields: sb.table("marketplace_listings").update(fields).eq("id", data.listing_id).execute())
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -1774,68 +1847,95 @@ class AutoMatchModel(BaseModel):
 
 @app.post("/marketplace/auto-match")
 def auto_match_bulk(data: AutoMatchModel):
-    """Greedy fill auto-match over live Active listings until the target volume is met."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable", "matched_farms": []}
-    try:
-        listings = (sb.table("marketplace_listings").select("*").eq("status", "Active").execute().data) or []
-        listings = [l for l in listings if float(l.get("total_credits") or 0) > 0]
-        farm_ids = list({l.get("farm_id") for l in listings if l.get("farm_id")})
-        farms_by_id = {}
-        if farm_ids:
-            farms_by_id = {f.get("id"): f for f in (sb.table("farms").select("id,name,badge,ndvi").in_("id", farm_ids).execute().data or [])}
+    """Greedy fill auto-match over Active listings until the target volume is met.
 
-        if data.priority == "highest_ndvi":
-            listings.sort(key=lambda l: float((farms_by_id.get(l.get("farm_id")) or {}).get("ndvi") or 0), reverse=True)
-        else:  # lowest_price (default)
-            listings.sort(key=lambda l: float(l.get("price_per_credit") or 0))
+    Every matched line previews the farmer's 70% floor — the buyer sees exactly
+    whose credits they are buying and what the farmer keeps before paying.
+    """
+    rows_source = None
+    if not db.is_ready():
+        rows_source = [r for r in market_store.all_rows() if r.get("status") == "Active"]
+    listings = rows_source
+    if listings is None:
+        sb = db._client()
+        try:
+            listings = (sb.table("marketplace_listings").select("*").eq("status", "Active").execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e), "matched_farms": []}
+    listings = [l for l in listings if float(l.get("total_credits") or 0) > 0]
+    farm_ids = list({l.get("farm_id") for l in listings if l.get("farm_id")})
+    farms_by_id = {}
+    if farm_ids and db.is_ready():
+        sb = db._client()
+        farms_by_id = {f.get("id"): f for f in (sb.table("farms").select("id,name,badge,ndvi").in_("id", farm_ids).execute().data or [])}
 
-        volume = float(data.target_volume or 0)
-        matched = []
-        for l in listings:
-            if volume <= 0:
-                break
-            take = min(volume, float(l.get("total_credits") or 0))
-            farm = farms_by_id.get(l.get("farm_id")) or {}
-            badge = farm.get("badge") or "DOCUMENT"
-            matched.append({
-                "listing_id": l.get("id"),
-                "farm": farm.get("name") or l.get("location") or "Telangana Parcel",
-                "farmer": l.get("farmer_name") or "Marketplace Farmer",
-                "survey": l.get("location"),
-                "crop": l.get("crop"),
-                "credits": round(take, 2),
-                "rate": float(l.get("price_per_credit") or 0),
-                "badge": badge,
-                "badge_color": "emerald" if badge == "REGISTRY" else ("forest" if badge == "REGISTRY_DOC" else "amber"),
-            })
-            volume -= take
+    if data.priority == "highest_ndvi":
+        listings.sort(key=lambda l: float((farms_by_id.get(l.get("farm_id")) or {}).get("ndvi") or 0), reverse=True)
+    else:  # lowest_price (default)
+        listings.sort(key=lambda l: float(l.get("price_per_credit") or 0))
 
-        gross = round(sum(m["credits"] * m["rate"] for m in matched), 2)
-        fee = round(gross * 0.02, 2)
-        return {
-            "success": True,
-            "target_volume": float(data.target_volume or 0),
-            "total_matched": round(sum(m["credits"] for m in matched), 2),
-            "gross_value": gross,
-            "fee_value": fee,
-            "net_farmer_value": round(gross - fee, 2),
-            "matched_farms": matched,
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e), "matched_farms": []}
+    volume = float(data.target_volume or 0)
+    matched = []
+    for l in listings:
+        if volume <= 0:
+            break
+        take = min(volume, float(l.get("total_credits") or 0))
+        farm = farms_by_id.get(l.get("farm_id")) or {}
+        badge = farm.get("badge") or "DOCUMENT"
+        line_gross = round(take * float(l.get("price_per_credit") or 0), 2)
+        fpo_name = _resolve_fpo_link(farm or None, l.get("farmer_phone") or "")
+        line_split = split_engine.compute_split(line_gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
+        matched.append({
+            "listing_id": l.get("id"),
+            "farm": farm.get("name") or l.get("location") or "Telangana Parcel",
+            "farmer": l.get("farmer_name") or "Marketplace Farmer",
+            "survey": l.get("location"),
+            "crop": l.get("crop"),
+            "credits": round(take, 2),
+            "rate": float(l.get("price_per_credit") or 0),
+            "badge": badge,
+            "badge_color": "emerald" if badge == "REGISTRY" else ("forest" if badge == "REGISTRY_DOC" else "amber"),
+            "farmer_share_inr": line_split["farmer_amount_inr"],
+            "fpo_name": fpo_name or None,
+        })
+        volume -= take
+
+    gross = round(sum(m["credits"] * m["rate"] for m in matched), 2)
+    overall_split = split_engine.compute_split(
+        gross, fpo_involved=any(m.get("fpo_name") for m in matched)
+    )
+    return {
+        "success": True,
+        "target_volume": float(data.target_volume or 0),
+        "total_matched": round(sum(m["credits"] for m in matched), 2),
+        "gross_value": gross,
+        "farmer_total_inr": overall_split["farmer_amount_inr"],
+        "fpo_total_inr": overall_split["fpo_amount_inr"],
+        "platform_total_inr": overall_split["platform_amount_inr"],
+        "split_model": overall_split["model"],
+        "matched_farms": matched,
+    }
 
 
 @app.get("/certificates")
 def list_certificates():
-    """Escrow certificate ledger, derived from purchased (Sold) listings in the DB."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable", "certificates": []}
-    try:
-        rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).order("updated_at", desc=True).execute().data) or []
-        certificates = [{
+    """Escrow certificate ledger, derived from purchased (Retired) listings."""
+    rows = None
+    if not db.is_ready():
+        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
+        rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+    else:
+        try:
+            sb = db._client()
+            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).order("updated_at", desc=True).execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e), "certificates": []}
+    certificates = []
+    for r in rows:
+        farm_id = r.get("farm_id") or ""
+        chain = ledger.summary(farm_id) if farm_id else {}
+        retired = str(r.get("status")).lower() == "retired"
+        certificates.append({
             "id": _cert_id_for_listing(r.get("id")),
             "listing_id": r.get("id"),
             "issued_to": "Corporate Buyer",
@@ -1845,54 +1945,122 @@ def list_certificates():
             "value_inr": r.get("current_bid"),
             "source_parcels": [f"{r.get('location') or 'Telangana'} ({r.get('crop') or 'Mixed Crop'})"],
             "issued_date": (r.get("updated_at") or r.get("created_at") or "")[:10],
-            "status": "RETIRED" if str(r.get("status")).lower() == "retired" else "HELD_IN_ESCROW",
+            "status": "RETIRED" if retired else "HELD_IN_ESCROW",
+            "batch_hash": chain.get("tail_hash"),
+            "ledger_verified": chain.get("verified", False),
             "tx_hash": r.get("tx_hash"),
             "on_chain": False,
-        } for r in rows]
-        return {"success": True, "certificates": certificates}
-    except Exception as e:
-        return {"success": False, "message": str(e), "certificates": []}
+        })
+    return {"success": True, "certificates": certificates}
 
 
 @app.post("/certificates/{cert_id}/retire")
 def retire_certificate(cert_id: str, scope: Optional[str] = "Scope 1 Neutrality"):
     """Permanently retire a purchased certificate (marks the underlying listing Retired)."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        rows = (sb.table("marketplace_listings").select("id,status").eq("status", "Sold").execute().data) or []
-        target = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
-        if not target:
-            return {"success": False, "message": "Certificate not found among held escrow certificates"}
-        sb.table("marketplace_listings").update({"status": "Retired", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", target["id"]).execute()
+    rows = None
+    if not db.is_ready():
+        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() == "sold"]
+    else:
+        try:
+            sb = db._client()
+            rows = (sb.table("marketplace_listings").select("id,status,farm_id").eq("status", "Sold").execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    target = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    if not target:
+        # Purchase = retirement now happens automatically; treat re-retire as success.
         return {
             "success": True,
-            "message": f"Certificate {cert_id} permanently retired for {scope}",
+            "message": f"Certificate {cert_id} is already permanently retired",
             "cert_id": cert_id,
-            "listing_id": target["id"],
             "status": "RETIRED",
-            "scope": scope,
-            "retired_timestamp": datetime.now(timezone.utc).isoformat(),
+            "already_retired": True,
         }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+    retired_ts = datetime.now(timezone.utc).isoformat()
+    if not db.is_ready():
+        market_store.update(target["id"], {"status": "Retired", "updated_at": retired_ts})
+    else:
+        sb = db._client()
+        sb.table("marketplace_listings").update({"status": "Retired", "updated_at": retired_ts}).eq("id", target["id"]).execute()
+    if target.get("farm_id"):
+        ledger.append_event(target["farm_id"], "RETIRE", {
+            "certificate_id": cert_id,
+            "scope": scope,
+            "manual": True,
+        })
+    return {
+        "success": True,
+        "message": f"Certificate {cert_id} permanently retired for {scope}",
+        "cert_id": cert_id,
+        "listing_id": target["id"],
+        "status": "RETIRED",
+        "scope": scope,
+        "retired_timestamp": retired_ts,
+    }
 
 
 @app.get("/passport/{farm_id}")
 def get_carbon_passport(farm_id: str):
-    """Digital Carbon Passport built from the farm's real satellite + KYC record."""
+    """Digital Carbon Passport: satellite + KYC record, expected earnings,
+    trust-engine state, and the tamper-evident ledger chain."""
     farm = db.get_farm(farm_id) if db.is_ready() else None
+    demo_mode = False
     if not farm:
-        return {"success": False, "message": "Farm not found"}
-    owner = db.get_profile(farm.get("owner_phone") or "") if db.is_ready() else None
+        # Demo mode: serve the canonical sample farm for any unknown id.
+        demo_mode = True
+        farm = {
+            "id": farm_id,
+            "name": "Sri Venkateswara Organic Farm",
+            "owner_phone": "9000000001",
+            "crop_type": "Rice",
+            "area_hectares": 2.4,
+            "ndvi": 0.78,
+            "evi": 0.65,
+            "soil_moisture": 41,
+            "tree_cover": 28,
+            "biodiversity_score": 720,
+            "carbon_tonnes": 82,
+            "total_credits": 96.0,
+            "biodiversity_credits": 18.0,
+            "satellite_source": "Sentinel-2 (demo)",
+            "ai_confidence": 0.87,
+            "status": "verified",
+            "badge": "REGISTRY",
+            "irrigation": "Drip",
+            "updated_at": sample_data.FALLBACK_AS_OF.isoformat(),
+        }
+    owner = db.get_profile(farm.get("owner_phone") or "") if db.is_ready() else sample_data.FARMERS.get(farm.get("owner_phone"))
     kyc = db.get_kyc_status(farm.get("owner_phone") or "") if db.is_ready() else None
     badge = farm.get("badge") or (kyc or {}).get("badge") or "DOCUMENT"
     benchmark = {"REGISTRY": 340, "REGISTRY_DOC": 320, "FPO": 300}.get(badge, 310)
     verification_hash = "0x" + uuid.uuid5(uuid.NAMESPACE_URL, f"carbonx:{farm_id}:{farm.get('updated_at')}").hex[:26]
+
+    credits_total = float(farm.get("total_credits") or 0)
+    income = credit_engine.income_projection(credits_total, badge)
+
+    verified_status = str(farm.get("status", "")).lower() in ("verified", "ver")
+    quality = credit_engine.evidence_quality(
+        has_photo=True,
+        geotag_ok=True,
+        fpo_or_registry=badge in ("REGISTRY", "REGISTRY_DOC", "FPO"),
+        ndvi_current=farm.get("ndvi") is not None,
+        baseline_known=verified_status,
+    )
+    ledger.ensure_genesis(farm_id, {
+        "farm": farm.get("name"),
+        "crop": farm.get("crop_type"),
+        "area_hectares": farm.get("area_hectares"),
+        "ndvi": farm.get("ndvi"),
+        "carbon_tonnes": farm.get("carbon_tonnes"),
+        "badge": badge,
+        "status": farm.get("status"),
+    }, ts=(farm.get("updated_at") or "") or None)
+    chain = ledger.summary(farm_id)
+
     return {
         "success": True,
-        "passport_id": f"CX-FARM-{farm_id.replace('-', '')[:8].upper()}",
+        "passport_id": f"CX-FARM-{str(farm_id).replace('-', '')[:8].upper()}",
+        "demo_mode": demo_mode,
         "farm_name": farm.get("name"),
         "owner_name": (owner or {}).get("name") or "Registered Farmer",
         "phone": farm.get("owner_phone"),
@@ -1913,49 +2081,180 @@ def get_carbon_passport(farm_id: str):
         "verification_hash": verification_hash,
         "farm_status": farm.get("status"),
         "kyc_status": (kyc or {}).get("status"),
-        "status": "APPROVED MRV RECORD" if str(farm.get("status", "")).lower() in ("verified", "ver") else "PENDING MRV REVIEW",
+        "status": "APPROVED MRV RECORD" if verified_status else "PENDING MRV REVIEW",
+        "expected_earnings": income,
+        "trust": {
+            "evidence_quality": quality["score"],
+            "uncertainty_pct": credit_engine.uncertainty_pct(quality["score"]),
+            "components": quality["components"],
+            "verification_hash": verification_hash,
+        },
+        "ledger": chain,
     }
 
 
 @app.get("/wallet")
 def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
-    """Farmer wallet ledger computed from the caller's real listing sales."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        phone = current_user.get("phone")
-        profile = db.get_profile(phone) or {}
-        rows = (sb.table("marketplace_listings").select("*").eq("farmer_phone", phone).execute().data) or []
-        sold = [r for r in rows if str(r.get("status")).lower() == "sold"]
-        active = [r for r in rows if str(r.get("status")).lower() == "active"]
+    """Farmer wallet: sales with the conditional split applied, escrow state,
+    and the ledger hash that proves every payout line."""
+    phone = current_user.get("phone")
+    if not db.is_ready():
+        profile = sample_data.FARMERS.get(phone) or {}
+        rows = [r for r in market_store.all_rows() if r.get("farmer_phone") == phone]
+    else:
+        try:
+            sb = db._client()
+            profile = db.get_profile(phone) or {}
+            rows = (sb.table("marketplace_listings").select("*").eq("farmer_phone", phone).execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e)}
 
-        def _gross(r):
-            return round(float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0), 2)
+    sold = [r for r in rows if str(r.get("status")).lower() in ("sold", "retired")]
+    active = [r for r in rows if str(r.get("status")).lower() == "active"]
 
-        total_earned = round(sum(_gross(r) for r in sold), 2)
-        escrow_pending = round(sum(_gross(r) for r in active), 2)
-        total_fees = round(total_earned * 0.02, 2)
-        transactions = [{
+    def _gross(r):
+        bid = r.get("current_bid")
+        if bid:
+            return round(float(bid), 2)
+        return round(float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0), 2)
+
+    total_earned = round(sum(_gross(r) for r in sold), 2)
+    escrow_pending = round(sum(_gross(r) for r in active), 2)
+
+    farmer_total = 0.0
+    fpo_total = 0.0
+    platform_total = 0.0
+    transactions = []
+    for r in sorted(sold, key=lambda x: x.get("updated_at") or "", reverse=True):
+        gross = _gross(r)
+        fpo_name = _resolve_fpo_link(None, r.get("farmer_phone") or phone)
+        split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
+        farmer_total += split["farmer_amount_inr"]
+        fpo_total += split["fpo_amount_inr"]
+        platform_total += split["platform_amount_inr"]
+        farm_id = r.get("farm_id") or ""
+        chain = ledger.summary(farm_id) if farm_id else {}
+        transactions.append({
             "date": (r.get("updated_at") or r.get("created_at") or "")[:10],
             "tx_id": (r.get("tx_hash") or f"TXN-{(r.get('id') or '')[:6].upper()}"),
             "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
             "listing_id": r.get("id"),
+            "farm_id": farm_id,
             "credits_sold": r.get("total_credits"),
             "rate": r.get("price_per_credit"),
-            "gross": _gross(r),
-            "fee_2pct": round(_gross(r) * 0.02, 2),
-            "net_received": round(_gross(r) * 0.98, 2),
+            "gross": gross,
+            "farmer_share": split["farmer_amount_inr"],
+            "fpo_share": split["fpo_amount_inr"],
+            "platform_share": split["platform_amount_inr"],
+            "split_model": split["model"],
+            "ledger_hash": chain.get("tail_hash"),
             "status": "SETTLED",
-        } for r in sorted(sold, key=lambda x: x.get("updated_at") or "", reverse=True)]
-        return {
-            "success": True,
-            "total_earned": total_earned,
-            "escrow_pending": escrow_pending,
-            "withdrawable_upi": round(total_earned - total_fees, 2),
-            "upi_id": profile.get("upi"),
-            "transactions": transactions,
+        })
+
+    return {
+        "success": True,
+        "total_earned": total_earned,
+        "escrow_pending": escrow_pending,
+        "withdrawable_upi": round(farmer_total, 2),
+        "farmer_share_total": round(farmer_total, 2),
+        "fpo_share_total": round(fpo_total, 2),
+        "platform_share_total": round(platform_total, 2),
+        "upi_id": profile.get("upi"),
+        "demo_mode": not db.is_ready(),
+        "transactions": transactions,
+    }
+
+
+@app.post("/demo/login")
+def demo_login(data: dict = None):
+    """Issue a demo farmer session — only when the database is not configured.
+
+    Lets the whole farmer loop (wallet, passport, calculator) be exercised
+    with credentials removed. Refuses to start when a real DB exists.
+    """
+    if db.is_ready():
+        return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
+    body = data or {}
+    phone = str(body.get("phone") or "9000000001")
+    farmer = sample_data.FARMERS.get(phone)
+    if not farmer:
+        return {"success": False, "message": "Unknown demo farmer"}
+    token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
+    return {
+        "success": True,
+        "demo_mode": True,
+        "token": token,
+        "user": {
+            "phone": phone,
+            "name": farmer["name"],
+            "role": "farmer",
+            "district": farmer.get("district"),
+            "village": farmer.get("village"),
+            "upi": farmer.get("upi"),
+            "demo": True,
+        },
+        "message": f"Demo session started for {farmer['name']}",
+    }
+
+
+class EarningsCalcModel(BaseModel):
+    area_hectares: float
+    crop: Optional[str] = ""
+    ndvi: Optional[float] = 0.7
+    baseline_ndvi: Optional[float] = None
+    badge: Optional[str] = "DOCUMENT"
+    has_photo: Optional[bool] = True
+    geotag_ok: Optional[bool] = True
+    fpo_or_registry: Optional[bool] = False
+
+
+@app.post("/farms/earnings-calculator")
+def earnings_calculator(data: EarningsCalcModel):
+    """Pre-signup earnings estimate — the farmer sees expected rupees before
+    enrolling. Open endpoint: no auth, no database required."""
+    quality = credit_engine.evidence_quality(
+        has_photo=data.has_photo,
+        geotag_ok=data.geotag_ok,
+        fpo_or_registry=data.fpo_or_registry,
+        ndvi_current=data.ndvi is not None,
+        baseline_known=data.baseline_ndvi is not None,
+    )
+    estimate = credit_engine.estimate_credits(
+        area_hectares=data.area_hectares,
+        crop=data.crop or "",
+        ndvi=data.ndvi or 0.7,
+        baseline_ndvi=data.baseline_ndvi,
+        quality_score=quality["score"],
+    )
+    income = credit_engine.income_projection(estimate["credits_tco2e"], data.badge or "DOCUMENT")
+    return {
+        "success": True,
+        "estimate": estimate,
+        "income": income,
+        "evidence_quality": quality,
+    }
+
+
+@app.get("/ledger/{farm_id}")
+def get_farm_ledger(farm_id: str):
+    """The farm's tamper-evident event chain, recomputed and verified."""
+    chain = ledger.get_chain(farm_id)
+    if not chain:
+        farm = db.get_farm(farm_id) if db.is_ready() else None
+        snapshot = {
+            "farm": (farm or {}).get("name") or "Sri Venkateswara Organic Farm (demo)",
+            "crop": (farm or {}).get("crop_type") or "Rice",
+            "ndvi": (farm or {}).get("ndvi") or 0.78,
+            "note": "Genesis anchored from farm evidence snapshot",
         }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+        ledger.ensure_genesis(farm_id, snapshot)
+        chain = ledger.get_chain(farm_id)
+    verification = ledger.verify_chain(farm_id)
+    public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain]
+    return {
+        "success": True,
+        "farm_id": farm_id,
+        "verification": verification,
+        "events": public_events,
+    }
 

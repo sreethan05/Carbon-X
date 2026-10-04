@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Leaf, Sparkles, Sprout, Droplets, ShieldCheck } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
+import { ArrowRight, Sparkles, Sprout } from 'lucide-react';
 
 export default function FarmDetailsForm() {
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const [crop, setCrop] = useState('Cotton');
   const [irrigation, setIrrigation] = useState('Drip Irrigation');

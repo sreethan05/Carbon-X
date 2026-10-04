@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { MapPin, ShieldCheck, Wallet, ArrowRight, Compass, AlertTriangle, PlusCircle, ShoppingCart, TrendingUp } from 'lucide-react';
+import { MapPin, ShieldCheck, Wallet, AlertTriangle, PlusCircle, ShoppingCart, TrendingUp } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
+import EarningsCalculator from '../components/EarningsCalculator';
 import { useAuth } from '../context/AuthContext';
 
 export default function FarmerDashboard() {
@@ -116,6 +117,16 @@ export default function FarmerDashboard() {
             </button>
           </div>
         )}
+
+        {/* Earnings Calculator — pre-signup estimate, Trust Engine Stage 2 */}
+        <EarningsCalculator
+          farm={{
+            areaHectares: currentFarm.acres,
+            crop: currentFarm.crop,
+            ndvi: currentFarm.ndvi,
+            badge: currentFarm.badge,
+          }}
+        />
 
         {/* Highlighted Revenue Card */}
         {isPending ? (
