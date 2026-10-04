@@ -190,7 +190,9 @@ export default function SatellitePreview() {
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Biodiversity Index</span>
             </div>
             <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? `${(result.biodiversity_score / 10).toFixed(1)} / 10` : '—'}</p>
-            <p className="text-[11px] text-emerald-700 font-semibold">{result ? `Score ${result.biodiversity_score} · ML Model` : 'Awaiting scan...'}</p>
+            <p className="text-[11px] text-emerald-700 font-semibold">
+              {result ? `${result.ml_source || 'ML model'}` : 'Awaiting scan...'}
+            </p>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-1">

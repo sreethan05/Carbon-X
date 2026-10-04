@@ -1177,6 +1177,7 @@ def analyze(data: AnalyzeModel):
         if not geojson:
             return {"success": False, "message": "GeoJSON polygon missing"}
 
+        ml_result = None
         if earth_engine_ready:
             import ee
             coordinates = geojson["geometry"]["coordinates"]
@@ -1185,9 +1186,9 @@ def analyze(data: AnalyzeModel):
                 ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
                 .filterBounds(polygon)
                 .filterDate("2024-01-01", "2025-12-31")
-                .sort("CLOUDY_PIXEL_PERCENTAGE")
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20))
             )
-            image = collection.first()
+            image = collection.median()
             ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
             ndvi_value = ndvi.reduceRegion(
                 reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
@@ -1200,9 +1201,39 @@ def analyze(data: AnalyzeModel):
                 reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
             ).values().get(0).getInfo()
             area_hectares = round(polygon.area().getInfo() / 10000, 2)
+
+            # Real model features — same derivation as the training pipeline
+            # (extract_features.py): spectral indices + band means + time-series
+            # variance across the cloud-filtered collection.
+            try:
+                B4, B8, B3, B11 = (image.select("B4"), image.select("B8"),
+                                   image.select("B3"), image.select("B11"))
+                stack = (ndvi.rename("NDVI")
+                         .addBands(image.normalizedDifference(["B3", "B11"]).rename("NDWI"))
+                         .addBands(image.expression("((NIR-RED)/(NIR+RED+0.5))*1.5",
+                                    {"NIR": B8, "RED": B4}).rename("SAVI"))
+                         .addBands(B4.rename("B4"))
+                         .addBands(B8.rename("B8"))
+                         .addBands(B11.rename("B11"))
+                         .addBands(collection.map(lambda i: i.normalizedDifference(["B8", "B4"]))
+                                   .reduce(ee.Reducer.stdDev()).rename("NDVI_STD"))
+                         .addBands(collection.map(lambda i: i.select("B8"))
+                                   .reduce(ee.Reducer.variance()).rename("B8_VAR")))
+                feat_values = stack.reduceRegion(
+                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
+                ).getInfo()
+                real_features = {k: feat_values.get(k) for k in
+                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
+                if any(v is None for v in real_features.values()):
+                    real_features = None
+            except Exception as e:
+                print(f"[analyze] real feature extraction failed: {e}")
+                real_features = None
+
             try:
                 from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value, area_ha=area_hectares)
+                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
+                                                 area_ha=area_hectares, features=real_features)
                 biodiversity_score = ml_result["biodiversity_score"]
             except Exception:
                 biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
@@ -1230,6 +1261,7 @@ def analyze(data: AnalyzeModel):
             "Excellent" if ndvi_value >= 0.7 else "Good" if ndvi_value >= 0.5
             else "Moderate" if ndvi_value >= 0.3 else "Low"
         )
+        ml_source = ml_result.get("source") if isinstance(ml_result, dict) else None
         return {
             "success": True,
             "ndvi": round(ndvi_value, 3),
@@ -1243,6 +1275,7 @@ def analyze(data: AnalyzeModel):
             "area_hectares": area_hectares,
             "vegetation_health": veg_health,
             "biodiversity_score": biodiversity_score,
+            "ml_source": ml_source,
             "ai_confidence": round(min(85 + ndvi_value * 20, 99.5), 1),
             "satellite_source": satellite_source,
             "stage1": stage1,
