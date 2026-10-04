@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, Calendar, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X } from 'lucide-react';
+import { Search, MapPin, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getMarketplaceListings, buyCredits } from '../services/api';
 

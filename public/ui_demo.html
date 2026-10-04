@@ -26,7 +26,36 @@ tailwind.config = {
 <style>
   body { font-family: 'Inter', sans-serif; }
   .glow-line { filter: drop-shadow(0 0 6px rgba(52,211,153,.45)); }
+  @keyframes pulse-dot { 0%,100% { transform: scale(1); opacity: 1 } 50% { transform: scale(1.35); opacity: .6 } }
+  .pulse-dot { animation: pulse-dot 1.8s ease-in-out infinite; }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+  .rise { animation: rise .7s cubic-bezier(.2,.7,.3,1) both; }
+  .rise-1 { animation-delay: .08s } .rise-2 { animation-delay: .16s } .rise-3 { animation-delay: .24s } .rise-4 { animation-delay: .32s }
+  @keyframes shimmer { 0% { background-position: -200% 0 } 100% { background-position: 200% 0 } }
+  .shimmer { background: linear-gradient(90deg, rgba(52,211,153,0) 0%, rgba(52,211,153,.25) 50%, rgba(52,211,153,0) 100%); background-size: 200% 100%; animation: shimmer 2.4s linear infinite; }
+  .hover-lift { transition: transform .25s cubic-bezier(.2,.7,.3,1), box-shadow .25s; }
+  .hover-lift:hover { transform: translateY(-6px) scale(1.015); box-shadow: 0 24px 48px -16px rgba(15,23,42,.25); }
+  @keyframes orbit { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
 </style>
+<script>
+  // animated count-up for any [data-count]
+  function countUp(el) {
+    const target = parseFloat(el.dataset.count);
+    const suffix = el.dataset.suffix || '';
+    const decimals = (el.dataset.count.split('.')[1] || '').length;
+    const dur = 1400; const t0 = performance.now();
+    function tick(t) {
+      const p = Math.min((t - t0) / dur, 1);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = (target * eased).toFixed(decimals) + suffix;
+      if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('[data-count]').forEach(countUp);
+  });
+</script>
 </head>
 <body class="bg-cream text-slate-900">
 
@@ -93,23 +122,23 @@ tailwind.config = {
           <button class="border border-slate-300 font-bold text-sm px-6 py-3 rounded-xl hover:bg-slate-50 transition">Explore credits</button>
         </div>
         <div class="flex gap-6 mt-8">
-          <div><p class="font-display text-2xl font-extrabold text-ink">2,847</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">plots monitored</p></div>
-          <div><p class="font-display text-2xl font-extrabold text-ink">18.3k</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">tCO₂e retired</p></div>
+          <div><p class="font-display text-2xl font-extrabold text-ink" data-count="2847">0</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">plots monitored</p></div>
+          <div><p class="font-display text-2xl font-extrabold text-ink" data-count="18.3" data-suffix="k">0</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">tCO₂e retired</p></div>
           <div><p class="font-display text-2xl font-extrabold text-neonD">70%</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">farmer floor ✓</p></div>
         </div>
       </div>
       <!-- C3-style data card in the hero -->
       <div class="relative">
-        <div class="rounded-2xl bg-panel text-white p-5 shadow-2xl border border-emerald-900/30">
+        <div class="rounded-2xl bg-white text-slate-900 p-5 shadow-2xl border border-slate-200">
           <div class="flex items-center justify-between mb-3">
             <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Live NDVI · Survey 42/Plot A</p>
-            <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-neonD/10 text-neon border border-neon/20">SENTINEL-2 ✓</span>
+            <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">SENTINEL-2 ✓</span>
           </div>
           <canvas id="heroChart" height="120"></canvas>
           <div class="grid grid-cols-3 gap-2 mt-4 text-center">
-            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">NDVI</p><p class="text-sm font-extrabold text-neon">0.78</p></div>
-            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">Soil C</p><p class="text-sm font-extrabold text-white">+0.4 t/ha</p></div>
-            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">Earnings</p><p class="text-sm font-extrabold text-white">₹12.6k</p></div>
+            <div class="bg-stone-50 rounded-lg py-2 border border-slate-100"><p class="text-[9px] font-bold text-slate-400 uppercase">NDVI</p><p class="text-sm font-extrabold text-emerald-600">0.78</p></div>
+            <div class="bg-stone-50 rounded-lg py-2 border border-slate-100"><p class="text-[9px] font-bold text-slate-400 uppercase">Soil C</p><p class="text-sm font-extrabold text-slate-900">+0.4 t/ha</p></div>
+            <div class="bg-stone-50 rounded-lg py-2 border border-slate-100"><p class="text-[9px] font-bold text-slate-400 uppercase">Earnings</p><p class="text-sm font-extrabold text-slate-900">₹12.6k</p></div>
           </div>
         </div>
         <div class="absolute -bottom-4 -left-4 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-2.5 flex items-center gap-2">
@@ -140,7 +169,7 @@ tailwind.config = {
 
 <!-- ═══ 03 · FARMER DASHBOARD (C3 dark analytics panel) ═══ -->
 <div class="max-w-6xl mx-auto px-6 pt-14 pb-16">
-  <p class="font-mono text-xs text-slate-500 mb-3">03 · FARMER DASHBOARD — light app + C3 dark analytics panel</p>
+  <p class="font-mono text-xs text-slate-500 mb-3">03 · FARMER DASHBOARD — light app + white analytics charts</p>
   <div class="rounded-3xl overflow-hidden shadow-xl border border-slate-200 bg-white">
     <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
       <div class="flex items-center gap-3">
@@ -178,20 +207,45 @@ tailwind.config = {
         <button class="w-full bg-primary text-white text-xs font-bold py-3 rounded-xl hover:bg-primaryd transition">Open Carbon Passport →</button>
       </div>
       <!-- C3 dark analytics panel -->
-      <div class="md:col-span-3 rounded-2xl bg-panel border border-emerald-900/30 p-5 text-white shadow-xl">
+      <div class="md:col-span-3 rounded-2xl bg-white border border-slate-200 p-5 text-slate-900 shadow-xl">
         <div class="flex items-center justify-between mb-3">
           <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">5-Day Satellite Monitoring · Sentinel-2</p>
-          <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-neonD/10 text-neon border border-neon/20">LIVE</span>
+          <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">● LIVE</span>
         </div>
         <canvas id="dashChart" height="150"></canvas>
         <div class="grid grid-cols-4 gap-2 mt-4 text-center">
-          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">NDVI</p><p class="text-sm font-extrabold text-neon">0.78</p></div>
-          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">EVI</p><p class="text-sm font-extrabold text-white">0.65</p></div>
-          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">Soil moisture</p><p class="text-sm font-extrabold text-white">41%</p></div>
-          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">Next scan</p><p class="text-sm font-extrabold text-white">2d</p></div>
+          <div class="bg-stone-50 border border-slate-100 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">NDVI</p><p class="text-sm font-extrabold text-emerald-600">0.78</p></div>
+          <div class="bg-stone-50 border border-slate-100 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">EVI</p><p class="text-sm font-extrabold text-slate-900">0.65</p></div>
+          <div class="bg-stone-50 border border-slate-100 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Soil moisture</p><p class="text-sm font-extrabold text-slate-900">41%</p></div>
+          <div class="bg-stone-50 border border-slate-100 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Next scan</p><p class="text-sm font-extrabold text-slate-900">2d</p></div>
         </div>
-        <div class="mt-4 bg-white/5 border border-white/10 rounded-xl p-3.5">
-          <p class="text-[10px] font-bold uppercase tracking-wider text-emerald-300 mb-2">Tamper-evident ledger</p>
+        <div class="grid grid-cols-3 gap-2 mt-4">
+          <div class="bg-stone-50 border border-slate-100 rounded-xl p-3 text-center">
+            <svg viewBox="0 0 80 80" class="w-16 h-16 mx-auto">
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#EEF2F0" stroke-width="8"/>
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#34D399" stroke-width="8" stroke-linecap="round"
+                stroke-dasharray="201" stroke-dashoffset="20" transform="rotate(-90 40 40)" class="glow-line"/>
+              <text x="40" y="46" text-anchor="middle" fill="#0F172A" font-size="16" font-weight="800" font-family="Manrope">90%</text>
+            </svg>
+            <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Evidence quality</p>
+          </div>
+          <div class="bg-stone-50 border border-slate-100 rounded-xl p-3 text-center">
+            <svg viewBox="0 0 80 80" class="w-16 h-16 mx-auto">
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#EEF2F0" stroke-width="8"/>
+              <circle cx="40" cy="40" r="32" fill="none" stroke="#818CF8" stroke-width="8" stroke-linecap="round"
+                stroke-dasharray="201" stroke-dashoffset="60" transform="rotate(-90 40 40)"/>
+              <text x="40" y="46" text-anchor="middle" fill="#0F172A" font-size="16" font-weight="800" font-family="Manrope">70%</text>
+            </svg>
+            <p class="text-[9px] font-bold text-slate-500 uppercase mt-1">Farmer floor</p>
+          </div>
+          <div class="bg-stone-50 border border-slate-100 rounded-xl p-3">
+            <p class="text-[9px] font-bold text-slate-500 uppercase mb-1">Soil moisture</p>
+            <p class="text-2xl font-extrabold text-neon" data-count="41" data-suffix="%">0%</p>
+            <p class="text-[9px] text-slate-500">optimal range</p>
+          </div>
+        </div>
+        <div class="mt-4 bg-stone-50 border border-slate-100 rounded-xl p-3.5">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-emerald-700 mb-2">Tamper-evident ledger</p>
           <div class="font-mono text-[11px] space-y-1.5">
             <div class="flex justify-between"><span class="text-emerald-300">ISSUE</span><span class="text-slate-500">sha 3a7f…9e21</span><span class="text-neon">✓</span></div>
             <div class="flex justify-between"><span class="text-emerald-300">MONITOR</span><span class="text-slate-500">sha c82e…77b0</span><span class="text-neon">✓</span></div>
@@ -212,20 +266,20 @@ new Chart(document.getElementById('heroChart'), {
     fill: true, backgroundColor: 'rgba(52,211,153,0.10)',
   }]},
   options: { plugins: { legend: { display: false } },
-    scales: { x: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { display: false } },
-              y: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+    scales: { x: { ticks: { color: '#94A3B8', font: { size: 9 } }, grid: { display: false } },
+              y: { ticks: { color: '#94A3B8', font: { size: 9 } }, grid: { color: 'rgba(15,23,42,0.05)' } } } }
 });
 // dashboard chart — bigger, multi-series
 new Chart(document.getElementById('dashChart'), {
   type: 'line',
   data: { labels: ['W1','W2','W3','W4','W5','W6','W7','W8'],
     datasets: [
-      { label: 'NDVI', data: [0.48,0.55,0.62,0.60,0.68,0.72,0.75,0.78], borderColor: '#34D399', borderWidth: 2.5, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(52,211,153,0.06)' },
-      { label: 'EVI', data: [0.38,0.44,0.50,0.49,0.55,0.60,0.63,0.65], borderColor: '#818CF8', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: false },
+      { label: 'NDVI', data: [0.48,0.55,0.62,0.60,0.68,0.72,0.75,0.78], borderColor: '#16A34A', borderWidth: 2.5, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(22,163,74,0.07)' },
+      { label: 'EVI', data: [0.38,0.44,0.50,0.49,0.55,0.60,0.63,0.65], borderColor: '#CBD5E1', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: false },
     ]},
-  options: { plugins: { legend: { labels: { color: '#94A3B8', font: { size: 9 }, boxWidth: 12 } } },
-    scales: { x: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { display: false } },
-              y: { min: 0.2, max: 1.0, ticks: { color: '#64748B', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+  options: { plugins: { legend: { labels: { color: '#64748B', font: { size: 9 }, boxWidth: 12 } } },
+    scales: { x: { ticks: { color: '#94A3B8', font: { size: 9 } }, grid: { display: false } },
+              y: { min: 0.2, max: 1.0, ticks: { color: '#94A3B8', font: { size: 9 } }, grid: { color: 'rgba(15,23,42,0.05)' } } } }
 });
 
 // marketplace demo cards

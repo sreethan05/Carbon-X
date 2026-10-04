@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Leaf, ArrowRight, ShieldCheck, Cpu, Globe, Users, Building2, Wallet, CheckCircle2 } from 'lucide-react';
+import { CountUp, FadeIn } from '../components/ui/motion';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -115,7 +116,7 @@ export default function LandingPage() {
             </div>
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmland Target (Pilot)</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">14,200 Acres</p>
+              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1"><CountUp value={14200} /> Acres</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">Verified across 10 Telangana Mandals</p>
             </div>
           </div>
@@ -126,7 +127,7 @@ export default function LandingPage() {
             </div>
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sequestration Target</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">285.4K Tonnes</p>
+              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1"><CountUp value={285.4} decimals={1} suffix="K" /> Tonnes</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">Indexed via Sentinel-2 multi-spectral NDVI</p>
             </div>
           </div>
@@ -137,7 +138,7 @@ export default function LandingPage() {
             </div>
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmer Payout Target</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR 12.4 Cr</p>
+              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR <CountUp value={12.4} decimals={1} /> Cr</p>
               <p className="text-xs text-emerald-700 font-medium mt-0.5">70% farmer floor, paid via UPI</p>
             </div>
           </div>
@@ -206,6 +207,7 @@ export default function LandingPage() {
 
       {/* Quick Portal Navigation Cards */}
       <section className="max-w-7xl mx-auto px-4 md:px-10 mb-20">
+        <FadeIn>
         <div className="text-center mb-12">
           <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope">Ecosystem Access Portals</h2>
           <p className="text-sm text-slate-600 mt-2">Select your role to access dedicated tools and verification workflows.</p>
@@ -272,6 +274,7 @@ export default function LandingPage() {
             </button>
           </div>
         </div>
+      </FadeIn>
       </section>
 
       {/* Footer */}
