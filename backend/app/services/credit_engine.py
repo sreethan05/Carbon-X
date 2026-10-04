@@ -16,6 +16,9 @@ passports. All math is exposed step-by-step in the response: every number a
 farmer or buyer sees can be recomputed by hand.
 """
 
+# Formula version for auditability — bump when crop factors or methodology change
+FORMULA_VERSION = "vm0042-soilgrids-v1-2026-10-04"
+
 # (base tCO2e/ha/yr at NDVI 0.75, soil tCO2e/ha/yr, label)
 _CROP_FACTORS = {
     "rice": (30.0, 4.0, "Rice"),
@@ -124,8 +127,15 @@ def estimate_credits(
     ndvi: float = 0.7,
     baseline_ndvi: float = None,
     quality_score: float = 1.0,
+    model_quantiles: dict = None,  # {"p10": float, "p50": float, "p90": float} in tCO2e for the plot
+    model_source: str = None,
 ) -> dict:
-    """Run the 5-step calculation and return every intermediate number."""
+    """Run the 5-step calculation and return every intermediate number.
+    
+    If model_quantiles is provided (from ML serving), use them for CI90
+    instead of the heuristic uncertainty deduction. The quantiles should be
+    on the same scale as credits_tco2e (i.e., total tCO2e for the plot).
+    """
     area = max(0.0, float(area_hectares or 0))
     ndvi = max(0.0, min(1.0, float(ndvi or 0)))
     base, soil, label = _CROP_FACTORS.get(str(crop or "").strip().lower(), _DEFAULT_FACTOR)
@@ -143,11 +153,21 @@ def estimate_credits(
     # 5. Uncertainty deduction + statistical interval.
     pct = uncertainty_pct(quality_score)
     final = raw_total * (1 - pct / 100.0)
-    # Treat the uncertainty fraction as ~1 sigma: a 90% interval is ±1.64 sigma.
-    ci90 = {
-        "low": round(max(0.0, final * (1 - 1.64 * pct / 100.0)), 2),
-        "high": round(final * (1 + 1.64 * pct / 100.0), 2),
-    }
+    
+    # CI90: prefer model quantiles if provided, else heuristic
+    if model_quantiles and all(k in model_quantiles for k in ("p10", "p50", "p90")):
+        ci90 = {
+            "low": round(max(0.0, float(model_quantiles["p10"])), 2),
+            "high": round(float(model_quantiles["p90"]), 2),
+        }
+        ci90_source = model_source or "model_quantiles"
+    else:
+        # Treat the uncertainty fraction as ~1 sigma: a 90% interval is ±1.64 sigma.
+        ci90 = {
+            "low": round(max(0.0, final * (1 - 1.64 * pct / 100.0)), 2),
+            "high": round(final * (1 + 1.64 * pct / 100.0), 2),
+        }
+        ci90_source = "heuristic"
 
     return {
         "crop": label,
@@ -190,6 +210,8 @@ def estimate_credits(
         "uncertainty_pct": pct,
         "credits_tco2e": round(final, 2),
         "ci90": ci90,
+        "ci90_source": ci90_source,
+        "formula_version": FORMULA_VERSION,
     }
 
 
@@ -215,23 +237,32 @@ _quick_scan_cache: dict = {}
 _QUICK_SCAN_TTL = 600  # seconds — same composite inputs give identical outputs
 
 
-def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float) -> dict:
+def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float, features: dict = None) -> dict:
     import time as _time
 
-    key = (round(float(area_hectares), 4), str(crop).strip().lower(), round(float(ndvi), 4))
+    # Cache key includes features hash if provided
+    if features:
+        import hashlib
+        feat_str = "|".join(f"{k}={features.get(k, 0):.4f}" for k in sorted(features.keys()))
+        feat_hash = hashlib.md5(feat_str.encode()).hexdigest()[:8]
+    else:
+        feat_hash = "nofeat"
+    key = (round(float(area_hectares), 4), str(crop).strip().lower(), round(float(ndvi), 4), feat_hash)
+    
     hit = _quick_scan_cache.get(key)
     if hit and _time.time() - hit[0] < _QUICK_SCAN_TTL:
         import logging
         logging.getLogger("carbonx.credit_engine").info("quick_scan cache hit")
         return dict(hit[1])
-    result = _quick_scan_estimate_uncached(area_hectares, crop, ndvi)
+    result = _quick_scan_estimate_uncached(area_hectares, crop, ndvi, features)
     if len(_quick_scan_cache) > 512:
         _quick_scan_cache.clear()
     _quick_scan_cache[key] = (_time.time(), result)
     return dict(result)
 
 
-def _quick_scan_estimate_uncached(area_hectares: float, crop: str, ndvi: float) -> dict:
+def _quick_scan_estimate_uncached(area_hectares: float, crop: str, ndvi: float, 
+                                   features: dict = None) -> dict:
     """Canonical carbon estimate for enrollment scans.
 
     THE single source of truth — /analyze must use this, never its own
@@ -239,15 +270,42 @@ def _quick_scan_estimate_uncached(area_hectares: float, crop: str, ndvi: float) 
     quality (satellite scan exists; no photo/geotag/FPO check yet), so the
     preview is deliberately conservative: farmers see earnings *rise* as
     their evidence quality improves.
+    
+    If features are provided, attempt to get ML quantiles for CI90.
     """
     quality = evidence_quality(
         has_photo=False, geotag_ok=False, fpo_or_registry=False,
         ndvi_current=True, baseline_known=False,
     )
-    est = estimate_credits(area_hectares, crop, ndvi, quality_score=quality["score"])
+    
+    # Try to get model quantiles for CI90
+    model_quantiles = None
+    model_source = None
+    if features:
+        try:
+            from app.services.ml_service import predict_soc
+            soc_pred = predict_soc(features)
+            if soc_pred.get("ml_source") != "unavailable":
+                # SOC quantiles are per hectare; scale by area
+                area = max(0.01, float(area_hectares or 0))
+                model_quantiles = {
+                    "p10": soc_pred.get("p10", 0) * area,
+                    "p50": soc_pred.get("p50", 0) * area,
+                    "p90": soc_pred.get("p90", 0) * area,
+                }
+                model_source = soc_pred.get("ml_source")
+        except Exception:
+            pass
+    
+    est = estimate_credits(
+        area_hectares, crop, ndvi, 
+        quality_score=quality["score"],
+        model_quantiles=model_quantiles,
+        model_source=model_source,
+    )
     est["evidence_quality"] = quality["score"]
     est["note"] = ("Scan-only preview at scan-only evidence quality — "
-                   "add photo, geotag and FPO verification to reduce the deduction.")
+                    "add photo, geotag and FPO verification to reduce the deduction.")
     return est
 
 

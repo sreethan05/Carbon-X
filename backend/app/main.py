@@ -9,17 +9,16 @@ ROOT_DIR = BACKEND_DIR.parent
 load_dotenv(ROOT_DIR / ".env", override=True)
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
-from fastapi import FastAPI, File, Header, HTTPException, Depends, Query, UploadFile, WebSocket
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Optional
-import base64
-import math
-import re
-import time
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 import os
+import math
+import time
 
 from app.security import (
     create_access_token,
@@ -38,10 +37,11 @@ from app.services.kyc_service import analyse_document, validate_aadhaar
 
 
 def _sample_data():
-    """Lazy sample_data access (#13) — the fallback dataset is only imported
+    """Lazy sample_data access — the fallback dataset is only imported
     when a demo/fallback path actually needs it."""
     from app import sample_data as _sd
     return _sd
+
 
 app = FastAPI(
     title="CarbonX API",
@@ -55,19 +55,23 @@ app = FastAPI(
         {"name": "marketplace", "description": "Listings, matching, escrow purchases, conditional splits"},
         {"name": "trust", "description": "Hash ledger, certificates, monitoring, ground-truth calibration"},
         {"name": "ops", "description": "Operational snapshots and calibration tooling (no PII)"},
+        {"name": "fpo", "description": "FPO desk: pending/flagged farms, farmer roster, credit pooling"},
+        {"name": "corporate", "description": "Corporate buyer authentication"},
     ],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:5000,http://localhost:5173,http://localhost:3000").split(","),
+    allow_origins=app_config.CORS_ORIGINS.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Security headers + request-ID + version header (#5, #24, #16-light) ──
+# ── Security headers + request-ID + version header ──
+from app.logging_setup import request_id_var
+
 @app.middleware("http")
 async def security_and_trace_headers(request, call_next):
     import uuid as _uuid
@@ -83,16 +87,17 @@ async def security_and_trace_headers(request, call_next):
         "Content-Security-Policy",
         "default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self' 'unsafe-inline'",
     )
-    if os.getenv("CARBONX_FORCE_HTTPS", "").strip().lower() in ("1", "true"):
+    if app_config.FORCE_HTTPS:
         response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
     return response
 
 
-# ── Structured logging (#24) ──
-from app.logging_setup import setup_logging, request_id_var
+# ── Structured logging ──
+from app.logging_setup import setup_logging
 setup_logging()
 
-# ── Prometheus metrics (#25) ──
+
+# ── Prometheus metrics ──
 try:
     from prometheus_fastapi_instrumentator import Instrumentator
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
@@ -100,7 +105,7 @@ except Exception as _e:  # pragma: no cover
     print(f"metrics disabled: {_e}")
 
 
-# ── Uniform error envelope (#15): every failure returns {success:false,message} ──
+# ── Uniform error envelope: every failure returns {success:false,message,code} ──
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -118,7 +123,7 @@ _HTTP_ERROR_CODES = {401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 40
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_envelope(request, exc):
     detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
-    if isinstance(detail, list):  # FastAPI validation-style detail
+    if isinstance(detail, list):
         detail = "; ".join(d.get("msg", str(d)) for d in detail if isinstance(d, dict))
     return JSONResponse(
         status_code=exc.status_code,
@@ -126,26 +131,85 @@ async def http_exception_envelope(request, exc):
                  "code": _HTTP_ERROR_CODES.get(exc.status_code, f"HTTP_{exc.status_code}")},
     )
 
-
 @app.exception_handler(Exception)
 async def unhandled_exception_envelope(request, exc):
     print(f"[unhandled] {request.method} {request.url.path}: {exc}")
     return JSONResponse(status_code=500, content={"success": False, "message": "Internal server error"})
 
+
+# ── Earth Engine ───
 earth_engine_ready = False
 try:
     import ee
-    ee.Initialize(project=os.getenv("GEE_PROJECT", "carbonsetu-496709"))
+    ee.Initialize(project=app_config.GEE_PROJECT)
     earth_engine_ready = True
     print("Earth Engine initialized")
 except Exception as e:
     print(f"Earth Engine not available: {e}")
 
 
-# ── Automatic 5-day monitoring scheduler ─────────────────────────────
-# The Sentinel-2 revisit cycle, run in-process so a single deployment
-# keeps credits at-risk without anyone pressing a button. Disable with
-# CARBONX_AUTO_MONITOR=0.
+# ── /analyze cache ──
+_analyze_cache: dict = {}
+_ANALYZE_CACHE_TTL = app_config.ANALYZE_CACHE_TTL_SECONDS
+
+
+# ── /predict endpoint (core endpoint at root level) ───
+@app.get("/predict")
+def predict(longitude: float, latitude: float):
+    try:
+        from app.services.ml_service import predict_biodiversity
+
+        ndvi = None
+        ndvi_source = "Estimated (GEE offline)"
+        if earth_engine_ready:
+            try:
+                from app.services.gee_service import get_ndvi_at_point
+
+                sat = get_ndvi_at_point(latitude, longitude)
+                if sat.get("live_satellite"):
+                    ndvi = float(sat.get("ndvi"))
+                    ndvi_source = str(sat.get("source"))
+            except Exception as exc:
+                print(f"/predict GEE point query failed: {exc}")
+        if ndvi is None:
+            ndvi = round(0.5 + math.sin(longitude * 0.1) * 0.2 + math.cos(latitude * 0.1) * 0.15, 3)
+            ndvi = min(max(ndvi, 0.1), 0.9)
+        result = predict_biodiversity(ndvi=ndvi)
+        # /predict is a biodiversity probe only — it does not estimate carbon,
+        # so no carbon credit line is invented here (single source of truth).
+        credits = credit_engine.credit_split(0, result["biodiversity_score"])
+        return {
+            "success": True,
+            "location": {"longitude": longitude, "latitude": latitude},
+            "ndvi": ndvi,
+            "ndvi_source": ndvi_source,
+            "biodiversity_score": result["biodiversity_score"],
+            "status": result["status"],
+            "biodiversity_credits": credits["biodiversity_credits"],
+            "total_credits": credits["total_credits"],
+            "ml_source": result.get("ml_source"),
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
+    """Earth Engine call with exponential backoff — quota blips and
+    transient timeouts retry instead of failing the scan."""
+    last_err = None
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as e:
+            last_err = e
+            if attempt < attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"[ee] call failed ({type(e).__name__}), retry in {delay}s")
+                time.sleep(delay)
+    raise last_err
+
+
+# ── Automatic 5-day monitoring scheduler ──
 import asyncio
 
 _MONITOR_INTERVAL_SECONDS = app_config.MONITOR_INTERVAL_SECONDS
@@ -155,7 +219,7 @@ async def _monitoring_loop():
     await asyncio.sleep(90)  # let the app finish booting first
     while True:
         try:
-            if os.getenv("CARBONX_AUTO_MONITOR", "1").strip().lower() not in ("0", "false", "no"):
+            if app_config.AUTO_MONITOR:
                 result = run_monitoring_cycle()
                 print(f"[monitor] scheduled cycle: checked={result.get('checked')} "
                       f"at_risk={result.get('at_risk_count')}")
@@ -166,23 +230,23 @@ async def _monitoring_loop():
 
 @app.on_event("startup")
 def _start_monitoring_scheduler():
+    from app.services import ledger as _ledger
+    _ledger.set_main_loop(asyncio.get_running_loop())
     if db.is_ready():
         asyncio.get_event_loop().create_task(_monitoring_loop())
         print("[monitor] 5-day scheduler armed (first cycle in 90s)")
 
 
+# ── Health check helpers (used by routers) ──
 def _sms_ready() -> bool:
-    """True when Textplate SMS creds are set (token + template id)."""
     try:
         from app.phone_service import sms_configured
-
         return sms_configured()
     except Exception:
         return False
 
 
 def _twilio_ready() -> bool:
-    """Kept for backwards compat (/health consumers). Now mirrors SMS status."""
     return _sms_ready()
 
 
@@ -226,78 +290,47 @@ def _clear_otp(phone: str):
     redis_store.clear_otp(phone)
 
 
-def _polygon_area_hectares(geojson: dict) -> float:
-    """Deprecated alias — canonical implementation is
-    polygon_service.polygon_area_hectares (kept for the raising behaviour
-    callers rely on)."""
-    from app.services.polygon_service import polygon_area_hectares as _canonical
-    import math
-
-    geometry = geojson.get("geometry", {})
-    if geometry.get("type") != "Polygon":
-        raise ValueError("GeoJSON must be a Polygon")
-    rings = geometry.get("coordinates") or []
-    ring = rings[0] if rings else []
-    if len(ring) < 4:
-        raise ValueError("Polygon must have at least 3 points")
-    if ring[0] != ring[-1]:
-        ring = [*ring, ring[0]]
-    lat_mid = sum(float(point[1]) for point in ring[:-1]) / (len(ring) - 1)
-    meters_per_degree_lng = 111320 * math.cos(math.radians(lat_mid))
-    meters_per_degree_lat = 110540
-    area_m2 = 0
-    projected = [
-        (float(lng) * meters_per_degree_lng, float(lat) * meters_per_degree_lat)
-        for lng, lat in ring
-    ]
-    for i in range(len(projected) - 1):
-        x1, y1 = projected[i]
-        x2, y2 = projected[i + 1]
-        area_m2 += x1 * y2 - x2 * y1
-    return round(abs(area_m2) / 20000, 2)
+# ── Health endpoints ──
+@app.get("/")
+def root():
+    return {
+        "message": "CarbonX API running",
+        "version": "1.0.0",
+        "supabase": db.is_ready(),
+        "sms": _sms_ready(),
+        "twilio": _twilio_ready(),
+        "earth_engine": earth_engine_ready,
+    }
 
 
-class SendOtpModel(BaseModel):
-    phone: str
+@app.get("/health")
+def health():
+    database = db.health_check()
+    return {
+        "success": database["ready"],
+        "database": database,
+        "sms": {"ready": _sms_ready(), "provider": "Textplate"},
+        "twilio": {"ready": _twilio_ready(), "provider": "Textplate"},
+        "earth_engine": {"ready": earth_engine_ready},
+    }
 
 
-class RegisterModel(BaseModel):
-    phone: str
-    otp: str
-    name: str
-    # Aadhaar is REQUIRED for self-serve registration (checksum-validated,
-    # only last-4 stored) and OPTIONAL for FPO-assisted onboarding, where
-    # the FPO's attestation substitutes for the document. This is the code
-    # behind the "no Aadhaar dependency" claim.
-    aadhaar: str = ""
-    onboarding_path: Optional[Literal["self", "fpo_assisted"]] = "self"
-    state: str
-    district: str
-    village: str
-    upi: str = ""
-    email: Optional[str] = ""
-    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = "farmer"
-    preferred_language: Optional[str] = "en"
-    otp_verification_token: Optional[str] = ""
+# ── /analyze models ───
+class GeoJSONPolygon(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["Feature"] = "Feature"
+    geometry: dict
 
-
-class LoginOtpModel(BaseModel):
-    phone: str
-    otp: str
-
-
-class RegistrationOtpVerifyModel(BaseModel):
-    phone: str
-    otp: str
-
+    @field_validator("geometry")
+    @classmethod
+    def _validate_polygon(cls, geom):
+        ok, err = _validate_polygon_geojson({"type": "Feature", "geometry": geom})
+        if not ok:
+            raise ValueError(err)
+        return geom
 
 
 def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
-    """Strict input validation before any Earth Engine call (#14).
-
-    Malformed polygons previously crashed EE with opaque errors; now they
-    fail fast with a precise message.
-    """
     if not isinstance(geojson, dict):
         return False, "GeoJSON must be an object"
     geom = geojson.get("geometry") or {}
@@ -318,51 +351,11 @@ def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
             return False, "Coordinate out of WGS84 range"
     if ring[0][:2] != ring[-1][:2]:
         return False, "Polygon ring must be closed (first == last position)"
-    # crude area sanity: reject > 50,000 km^2 bounding boxes (mis-drawn regions)
-    lons = [pos[0] for pos in ring]; lats = [pos[1] for pos in ring]
-    if (max(lons) - min(lons)) > 60 or (max(lats) - min(lats)) > 60:
-        return False, "Polygon too large — draw a single farm plot"
+    lons = [pos[0] for pos in ring]
+    lats = [pos[1] for pos in ring]
+    if (max(lons) - min(lons)) >= 60 or (max(lats) - min(lats)) >= 60:
+        return False, "Polygon too large — exceeds scan limit, draw a single farm plot"
     return True, ""
-
-
-def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
-    """Earth Engine call with exponential backoff (#11) — quota blips and
-    transient timeouts retry instead of failing the scan."""
-    import time as _time
-    last_err = None
-    for attempt in range(attempts):
-        try:
-            return fn()
-        except Exception as e:  # noqa: BLE001 - EE raises many types
-            last_err = e
-            if attempt < attempts - 1:
-                delay = base_delay * (2 ** attempt)
-                print(f"[ee] call failed ({type(e).__name__}), retry in {delay}s")
-                _time.sleep(delay)
-    raise last_err
-
-
-# Small in-memory TTL cache for /analyze results keyed by polygon + crop (#11).
-# Rationale: repeated scans of the same plot (demo, retries, refreshes) were
-# the dominant EE consumer; results within the cache window are identical
-# anyway (median composite of a static window).
-_analyze_cache: dict = {}
-_ANALYZE_CACHE_TTL = app_config.ANALYZE_CACHE_TTL_SECONDS  # seconds
-
-
-class GeoJSONPolygon(BaseModel):
-    """Strict farm-plot geometry — validated before any Earth Engine call."""
-    model_config = ConfigDict(extra="forbid")
-    type: Literal["Feature"] = "Feature"
-    geometry: dict
-
-    @field_validator("geometry")
-    @classmethod
-    def _validate_polygon(cls, geom):
-        ok, err = _validate_polygon_geojson({"type": "Feature", "geometry": geom})
-        if not ok:
-            raise ValueError(err)
-        return geom
 
 
 class AnalyzeModel(BaseModel):
@@ -373,981 +366,7 @@ class AnalyzeModel(BaseModel):
     irrigation: Optional[str] = "Drip"
 
 
-class SaveFarmModel(BaseModel):
-    farm: dict
-
-
-class UpdateProfileModel(BaseModel):
-    name: Optional[str] = None
-    state: Optional[str] = None
-    district: Optional[str] = None
-    village: Optional[str] = None
-    upi: Optional[str] = None
-    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = None
-    preferred_language: Optional[str] = None
-
-
-class CreateListingModel(BaseModel):
-    carbon_credits: Optional[float] = None
-    biodiversity_credits: Optional[float] = None
-    credits: Optional[float] = None
-    price_per_credit: float = 520
-    farm_id: Optional[str] = None
-    crop: Optional[str] = ""
-    token_id: Optional[str] = None
-    tx_hash: Optional[str] = None
-
-
-class LandVerificationModel(BaseModel):
-    document_name: Optional[str] = "document.png"
-    document_content_base64: Optional[str] = ""
-    extracted_text: Optional[str] = ""
-    survey_number: Optional[str] = ""
-    village: Optional[str] = ""
-    district: Optional[str] = ""
-    area_acres: Optional[float] = None
-    area_hectares: Optional[float] = None
-    path: Optional[str] = None
-    fpo_id: Optional[str] = None
-    farm_id: Optional[str] = None
-    geojson: Optional[dict] = None
-    aadhaar: Optional[str] = None
-    confirm_polygon: Optional[bool] = False
-    pahani_file: Optional[str] = ""
-    document_content_type: Optional[str] = "image/jpeg"
-class AadhaarVerificationModel(BaseModel):
-    front_image: str
-    back_image: str
-    front_content_type: Optional[str] = "image/jpeg"
-    back_content_type: Optional[str] = "image/jpeg"
-
-
-class AutoDrawModel(BaseModel):
-    survey_number: Optional[str] = None
-    village: Optional[str] = None
-    district: Optional[str] = None
-    state: Optional[str] = None
-    area_hectares: Optional[float] = None
-
-
-class CheckFarmlandModel(BaseModel):
-    geojson: dict
-
-
-class FpoReviewModel(BaseModel):
-    action: str
-    notes: Optional[str] = ""
-
-
-from app.voice_agent.voice_routes import router as voice_router
-app.include_router(voice_router)
-
-
-def _user_response(user: dict, phone: str):
-    return {
-        "phone": phone,
-        "name": user.get("name", ""),
-        "role": user.get("role", "farmer"),
-        "state": user.get("state", ""),
-        "district": user.get("district", ""),
-        "village": user.get("village", ""),
-        "upi": user.get("upi", ""),
-        "email": user.get("email", ""),
-        "aadhaar_last4": user.get("aadhaar_last4") or user.get("aadhaar", ""),
-        "fpo_id": user.get("fpo_id"),
-        "preferred_language": user.get("preferred_language", "en"),
-    }
-
-
-_OTP_SEND_WINDOW_SECONDS = app_config.OTP_SEND_WINDOW_SECONDS
-_OTP_SEND_MAX_PER_WINDOW = app_config.OTP_SEND_MAX_PER_WINDOW
-_otp_send_log: dict = {}
-
-
-def _otp_rate_limited(phone: str) -> bool:
-    """Sliding-window per-phone OTP send limiter (per process).
-
-    Production note: with multiple workers move this to Redis; the in-process
-    window is per-worker, which still blunts single-source flooding.
-    """
-    import time
-
-    now = time.monotonic()
-    hits = [t for t in _otp_send_log.get(phone, []) if now - t < _OTP_SEND_WINDOW_SECONDS]
-    if len(hits) >= _OTP_SEND_MAX_PER_WINDOW:
-        _otp_send_log[phone] = hits
-        return True
-    hits.append(now)
-    _otp_send_log[phone] = hits
-    return False
-
-
-def _send_otp_flow(phone: str):
-    if _otp_rate_limited(phone):
-        return {
-            "success": False,
-            "message": "Too many OTP requests for this number. Please wait 10 minutes and try again.",
-        }
-    otp = generate_otp()
-    _store_otp(phone, otp)
-    sms_sent, msg = send_phone_otp(phone, otp)
-    if sms_sent:
-        return {"success": True, "message": "OTP sent to your phone via SMS"}
-    dev_otp_allowed = os.getenv("CARBONX_ALLOW_DEV_OTP", "").strip().lower() in ("1", "true", "yes")
-    if _sms_ready() or _twilio_ready():
-        if dev_otp_allowed:
-            # Local development only (CARBONX_ALLOW_DEV_OTP=1 in backend/.env):
-            # SMS provider is configured but delivery failed (e.g. trial account),
-            # so surface the real stored OTP so the flow stays testable.
-            return {
-                "success": True,
-                "message": f"SMS dispatch failed — exposing dev OTP: {msg}",
-                "dev_otp": otp,
-                "sms_error": msg,
-            }
-        return {"success": False, "message": msg}
-    return {"success": True, "message": "OTP generated (dev mode)", "dev_otp": otp}
-
-
-def _decode_upload(content: str) -> bytes:
-    """Decode a browser data-URL/base64 upload without writing identity files to disk."""
-    encoded = (content or "").split(",")[-1]
-    if not encoded:
-        raise ValueError("Upload a document first.")
-    try:
-        return base64.b64decode(encoded, validate=False)
-    except Exception as exc:
-        raise ValueError("Document content must be valid base64.") from exc
-
-
-def _pahani_polygon(coords: Optional[list]) -> Optional[dict]:
-    """Turn Section 5 latitude/longitude points into a GeoJSON feature."""
-    ring = []
-    for point in coords or []:
-        try:
-            ring.append([float(point["longitude"]), float(point["latitude"])])
-        except (KeyError, TypeError, ValueError):
-            continue
-    if len(ring) < 3:
-        return None
-    if ring[0] != ring[-1]:
-        ring.append(ring[0])
-    return {"type": "Feature", "properties": {"source": "pahani_section_5"}, "geometry": {"type": "Polygon", "coordinates": [ring]}}
-
-
-def _pahani_fallback_fields(text: str) -> dict:
-    """Small OCR fallback when Azure layout extraction is unavailable."""
-    def found(pattern: str) -> Optional[str]:
-        match = re.search(pattern, text, re.IGNORECASE)
-        return match.group(1).strip() if match else None
-
-    aadhaar = re.search(r"(?:\d{4}[- ]?){2}\d{4}", text)
-    return {
-        "survey_no": found(r"survey\s*(?:no\.?|number)?\s*[:#-]?\s*([A-Z0-9/-]+)"),
-        "pattadar_name": found(r"(?:pattadar|owner)\s*(?:name)?\s*[:#-]?\s*([^\n]{3,80})"),
-        "aadhaar": aadhaar.group(0) if aadhaar else None,
-        "village": found(r"village\s*[:#-]?\s*([^\n]{2,80})"),
-        "district": found(r"district\s*[:#-]?\s*([^\n]{2,80})"),
-        "crop_name": found(r"crop\s*(?:name)?\s*[:#-]?\s*([^\n]{2,60})"),
-        "irrigation_source": found(r"irrigation\s*(?:source)?\s*[:#-]?\s*([^\n]{2,60})"),
-        "extent_acres": None,
-        "extent_hectares": None,
-        "mandal": None,
-        "boundary_coords": None,
-    }
-
-
-def _parse_pahani_upload(content_base64: str, filename: str, content_type: str) -> tuple[dict, str]:
-    """Use the existing Azure + Pahani parser, with installed Tesseract as fallback."""
-    from app.services.document_intelligence_service import analyze_document_bytes, validate_upload
-    from app.services.pahani_parser import parse_pahani
-
-    raw = _decode_upload(content_base64)
-    validate_upload(content_type, raw)
-    try:
-        parsed = parse_pahani(analyze_document_bytes(raw, filename=filename))
-        return parsed["fields"], parsed.get("english_text", "")
-    except RuntimeError as exc:
-        # Azure is optional in the local SIH demo. Tesseract remains a real OCR fallback.
-        print(f"Pahani Azure OCR unavailable, using local OCR fallback: {exc}")
-        checks = analyse_document(content_base64, filename, "", "", [])
-        text = checks.get("ocr_text_preview", "")
-        return _pahani_fallback_fields(text), text
-
-
-@app.get("/")
-def root():
-    return {
-        "message": "CarbonX API running",
-        "version": "5.0",
-        "supabase": db.is_ready(),
-        "sms": _sms_ready(),
-        "twilio": _twilio_ready(),
-        "earth_engine": earth_engine_ready,
-    }
-
-
-@app.get("/health")
-def health():
-    database = db.health_check()
-    return {
-        "success": database["ready"],
-        "database": database,
-        "sms": {"ready": _sms_ready(), "provider": "Textplate"},
-        "twilio": {"ready": _twilio_ready(), "provider": "Textplate"},
-        "earth_engine": {"ready": earth_engine_ready},
-    }
-
-
-@app.post("/send-otp")
-def send_otp(data: SendOtpModel):
-    try:
-        phone = data.phone.strip().replace(" ", "")
-        if len(phone) != 10 or not phone.isdigit():
-            return {"success": False, "message": "Enter a valid 10-digit phone number"}
-        return _send_otp_flow(phone)
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.post("/register/verify-otp")
-def verify_registration_otp(data: RegistrationOtpVerifyModel):
-    try:
-        phone = data.phone.strip().replace(" ", "")
-        otp = data.otp.strip()
-        if len(phone) != 10 or not phone.isdigit():
-            return {"success": False, "message": "Enter a valid 10-digit phone number"}
-        if len(otp) != 6 or not otp.isdigit():
-            return {"success": False, "message": "Enter the complete 6-digit OTP"}
-        if not _verify_otp(phone, otp):
-            return {"success": False, "message": "Invalid or expired OTP"}
-
-        verification_token = create_access_token(
-            {
-                "phone": phone,
-                "purpose": "registration_otp_verified",
-            },
-            expires_delta=timedelta(minutes=30),
-        )
-        return {
-            "success": True,
-            "message": "OTP verified",
-            "verification_token": verification_token,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.post("/register")
-def register(data: RegisterModel):
-    try:
-        phone = data.phone.strip().replace(" ", "")
-        fpo_attested = data.onboarding_path == "fpo_assisted"
-        aadhaar_last4 = None
-        if data.aadhaar.strip():
-            if not validate_aadhaar(data.aadhaar):
-                return {"success": False, "message": "Enter a valid 12-digit Aadhaar number"}
-            aadhaar_last4 = data.aadhaar[-4:]
-        elif not fpo_attested:
-            return {"success": False, "message": "Enter a valid Aadhaar number, or register through FPO-assisted onboarding"}
-        token_payload = decode_token(data.otp_verification_token) if data.otp_verification_token else None
-        token_verified = bool(
-            token_payload
-            and token_payload.get("purpose") == "registration_otp_verified"
-            and token_payload.get("phone") == phone
-        )
-        if not token_verified and not _verify_otp(phone, data.otp):
-            return {"success": False, "message": "Invalid or expired OTP"}
-        existing = _get_user(phone)
-        lang = (data.preferred_language or "en")[:2]
-        role = data.role or "farmer"
-        if existing:
-            profile_fields = {
-                "name": data.name or existing.get("name"),
-                "state": data.state,
-                "district": data.district,
-                "village": data.village,
-                "upi": data.upi,
-                "aadhaar_last4": aadhaar_last4,
-                "preferred_language": lang,
-                "role": role,
-            }
-            # `email` is optional until migration 05 has been applied.
-            if data.email:
-                profile_fields["email"] = data.email.strip().lower()
-            db.update_profile(phone, profile_fields)
-            user = _get_user(phone)
-            token = create_access_token({"phone": phone, "name": user.get("name", ""), "role": user.get("role", "farmer")})
-            return {
-                "success": True,
-                "message": "Profile updated, logged in",
-                "token": token,
-                "user": _user_response(user, phone),
-            }
-        user = {
-            "phone": phone,
-            "name": data.name,
-            "aadhaar_last4": aadhaar_last4,
-            "state": data.state,
-            "district": data.district,
-            "village": data.village,
-            "upi": data.upi,
-            "preferred_language": lang,
-            "role": role,
-        }
-        if data.email:
-            user["email"] = data.email.strip().lower()
-        _save_user(user)
-        token = create_access_token({"phone": phone, "name": data.name, "role": role})
-        return {
-            "success": True,
-            "message": "Registration successful",
-            "token": token,
-            "user": _user_response(user, phone),
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.post("/login/send-otp")
-def login_send_otp(data: SendOtpModel):
-    try:
-        phone = data.phone.strip().replace(" ", "")
-        existing = _get_user(phone)
-        if not existing:
-            return {"success": False, "message": "Phone not registered. Please sign up first."}
-        result = _send_otp_flow(phone)
-        if result.get("success"):
-            result["message"] = "OTP sent"
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.post("/login")
-def login(data: LoginOtpModel):
-    try:
-        phone = data.phone.strip().replace(" ", "")
-        if not _verify_otp(phone, data.otp):
-            return {"success": False, "message": "Invalid or expired OTP"}
-        user = _get_user(phone)
-        if not user:
-            return {"success": False, "message": "Phone not registered"}
-        token = create_access_token({"phone": phone, "name": user.get("name", ""), "role": user.get("role", "farmer")})
-        return {"success": True, "token": token, "user": _user_response(user, phone)}
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-class CorporateLoginModel(BaseModel):
-    name: str
-    password: str
-
-
-@app.post("/corporate/login")
-def corporate_login(data: CorporateLoginModel):
-    """Corporate buyer login against the corporates table (bcrypt password_hash)."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        rows = (sb.table("corporates").select("*").ilike("name", data.name.strip()).execute().data) or []
-        if not rows:
-            return {"success": False, "message": "Unknown corporate account. Ask the platform admin to register your organisation."}
-        row = rows[0]
-        if not row.get("password_hash") or not verify_password(data.password, row["password_hash"]):
-            return {"success": False, "message": "Incorrect password"}
-        token = create_access_token({"c_id": row.get("c_id"), "name": row.get("name"), "role": "buyer"})
-        return {
-            "success": True,
-            "token": token,
-            "user": {"name": row.get("name"), "role": "buyer", "c_id": row.get("c_id")},
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-# FPO officers authenticate through the same phone-OTP pipeline as farmers
-# (POST /login/send-otp + POST /login): the profile's `role` field must be
-# 'fpo' for the FPO desk to unlock (enforced client-side and by require_role
-# on every /fpo/* endpoint).
-
-
-def _claimed_area_ha(data: LandVerificationModel) -> Optional[float]:
-    if data.area_hectares is not None:
-        return float(data.area_hectares)
-    if data.area_acres is not None:
-        return round(float(data.area_acres) * 0.404686, 4)
-    return None
-
-
-def _patch_farm(farm_id: Optional[str], fields: dict):
-    if not farm_id:
-        return None
-    try:
-        return db.update_farm(farm_id, fields)
-    except Exception:
-        fields.pop("badge", None)
-        try:
-            return db.update_farm(farm_id, fields)
-        except Exception as exc:
-            print(f"farm patch failed: {exc}")
-            return None
-
-
-@app.get("/land/registry/{survey}")
-def land_registry_lookup(survey: str, current_user: dict = Depends(get_current_user)):
-    """Look up a survey number in the Supabase land_registry mock table."""
-    from app.services.registry_service import lookup_survey
-
-    _require_database()
-    result = lookup_survey(survey)
-    if result.get("error") == "permission_denied":
-        raise HTTPException(status_code=503, detail=result["message"])
-    return {"success": True, **result}
-
-
-@app.post("/auto-draw")
-def auto_draw_polygon(data: AutoDrawModel, current_user: dict = Depends(get_current_user)):
-    """Return a locked registry polygon (1A) or an approximate village square (1B/2)."""
-    from app.services.geocoding_service import geocode_village
-    from app.services.polygon_service import approximate_square
-    from app.services.registry_service import lookup_survey
-
-    _require_database()
-    locked = False
-    geojson = None
-    source = None
-    registry = None
-    if data.survey_number:
-        registry = lookup_survey(data.survey_number)
-        if registry.get("error") == "permission_denied":
-            raise HTTPException(status_code=503, detail=registry["message"])
-        if registry.get("geojson"):
-            geojson = registry["geojson"]
-            locked = True
-            source = "registry"
-    if geojson is None:
-        phone = current_user.get("phone")
-        profile = _get_user(phone) or {}
-        village = data.village or profile.get("village", "")
-        district = data.district or profile.get("district", "")
-        state = data.state or profile.get("state", "")
-        geo = geocode_village(village, district, state)
-        if not geo:
-            return {"success": False, "message": "Could not geocode village for an approximate polygon"}
-        area = data.area_hectares or (registry or {}).get("area_ha") or 1.0
-        geojson = approximate_square(geo["lat"], geo["lon"], area)
-        source = "approximate"
-        locked = False
-    return {
-        "success": True,
-        "locked": locked,
-        "source": source,
-        "geojson": geojson,
-        "registry": registry,
-    }
-
-
-@app.post("/check-farmland")
-def check_farmland(data: CheckFarmlandModel, current_user: dict = Depends(get_current_user)):
-    """NDVI farmland check for a drawn/auto polygon."""
-    from app.services.gee_service import get_ndvi_at_point
-    from app.services.polygon_service import ring_from_geojson, polygon_area_hectares
-    from app.services.fraud_engine import NDVI_FARMLAND_MIN
-
-    ring = ring_from_geojson(data.geojson)
-    if len(ring) < 3:
-        raise HTTPException(status_code=400, detail="Valid polygon GeoJSON is required")
-    lat = sum(float(p[1]) for p in ring[:-1]) / (len(ring) - 1)
-    lon = sum(float(p[0]) for p in ring[:-1]) / (len(ring) - 1)
-    ndvi = get_ndvi_at_point(lat, lon)
-    value = float(ndvi.get("ndvi") or 0)
-    return {
-        "success": True,
-        "is_farmland": value >= NDVI_FARMLAND_MIN,
-        "ndvi": ndvi,
-        "area_hectares": polygon_area_hectares(data.geojson),
-        "centroid": {"lat": lat, "lon": lon},
-    }
-
-
-@app.post("/verify-aadhaar")
-def verify_aadhaar(data: AadhaarVerificationModel, current_user: dict = Depends(get_current_user)):
-    """OCR Aadhaar front/back and compare it to the registered identity anchor.
-
-    CarbonX deliberately stores only the Aadhaar last four digits, so the card
-    comparison uses the extracted last four digits rather than retaining a full
-    Aadhaar number in Supabase.
-    """
-    from PIL import Image
-    import io
-    from app.services.kyc_service import _extract_ocr_text, _match_name
-
-    profile = _get_user(current_user.get("phone"))
-    if not profile:
-        raise HTTPException(status_code=404, detail="User not found")
-    try:
-        parts = []
-        for image_content, content_type in ((data.front_image, data.front_content_type), (data.back_image, data.back_content_type)):
-            raw = _decode_upload(image_content)
-            if content_type == "application/pdf":
-                from app.services.document_intelligence_service import analyze_document_bytes
-                parts.append(analyze_document_bytes(raw).get("content", ""))
-            else:
-                with Image.open(io.BytesIO(raw)) as image:
-                    text, available = _extract_ocr_text(image)
-                    if available:
-                        parts.append(text)
-        ocr_text = "\n".join(parts)
-        card_numbers = re.findall(r"(?:\d{4}[- ]?){2}\d{4}", ocr_text)
-        card_last4 = card_numbers[0].replace(" ", "").replace("-", "")[-4:] if card_numbers else ""
-        registered_last4 = str(profile.get("aadhaar_last4") or "")[-4:]
-        _score, matched_name = _match_name(profile.get("name", ""), ocr_text)
-        matched_aadhaar = bool(card_last4 and registered_last4 and card_last4 == registered_last4)
-        dob_match = re.search(r"(?:DOB|Date of Birth)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", ocr_text, re.IGNORECASE)
-        reasons = []
-        if not matched_name:
-            reasons.append("Name on Aadhaar card does not match your registered name")
-        if not matched_aadhaar:
-            reasons.append("Aadhaar number on card does not match your registered number")
-        return {
-            "success": True,
-            "verified": matched_name and matched_aadhaar,
-            "matched_name": matched_name,
-            "matched_aadhaar": matched_aadhaar,
-            "dob": dob_match.group(1) if dob_match else None,
-            "reasons": reasons,
-        }
-    except ValueError:
-        return {"success": False, "message": "Invalid Aadhaar upload. Please use a valid JPG, PNG, or PDF file."}
-    except Exception:
-        return {"success": False, "message": "Could not process Aadhaar images. Please try again."}
-
-
-@app.post("/verify-land")
-def verify_land_document(data: LandVerificationModel, current_user: dict = Depends(get_current_user)):
-    """Run the trust engine. Backend assigns tier, badge, status, and eligibility."""
-    try:
-        from app.services.fraud_engine import run_fraud_checks
-        from app.services.registry_service import lookup_survey
-        from app.services.trust_engine import apply_fraud, decide_tier
-        from app.services.kyc_service import _match_name
-
-        _require_database()
-        phone = current_user.get("phone")
-        profile = _get_user(phone)
-        if not profile:
-            raise HTTPException(status_code=404, detail="User not found")
-        village = data.village or profile.get("village", "")
-        district = data.district or profile.get("district", "")
-        state = profile.get("state", "")
-        fpo_path = (data.path or "").lower() == "fpo"
-        claimed_ha = _claimed_area_ha(data)
-
-        if fpo_path:
-            if profile.get("role", "farmer") == "farmer":
-                return {"success": False, "message": "Pahani upload is required for farmer verification. If you need help obtaining one, please contact your FPO."}
-            if data.fpo_id:
-                db.update_profile(phone, {"fpo_id": data.fpo_id})
-            trust = apply_fraud(decide_tier(fpo_path=True), {"status": "PENDING", "risk": "LOW", "failed_checks": []})
-            record = {
-                "owner_phone": phone,
-                "status": "PENDING",
-                "reasons": ["Awaiting FPO confirmation"],
-                "checks": {"path": "fpo", "fpo_id": data.fpo_id},
-                "extracted_fields": {
-                    "path": "fpo",
-                    "fpo_id": data.fpo_id,
-                    "farm_id": data.farm_id,
-                    **trust,
-                },
-                "document_name": (data.document_name or "fpo-path")[:255],
-                "document_sha256": "fpo-path",
-                "perceptual_hash": None,
-            }
-            saved = db.insert_kyc_verification(record)
-            _patch_farm(data.farm_id, {"status": "PENDING"})
-            return {"success": True, **trust, "verification": saved, "checks": record["checks"], "reasons": record["reasons"]}
-
-        document_content = data.pahani_file or data.document_content_base64
-        if not document_content:
-            return {"success": False, "message": "Upload your Pahani land record before verification. Please contact your FPO if you need assistance."}
-
-        pahani_fields, pahani_text = _parse_pahani_upload(
-            document_content,
-            data.document_name or "pahani.jpg",
-            data.document_content_type or "image/jpeg",
-        )
-        survey_number = pahani_fields.get("survey_no") or data.survey_number or ""
-        village = pahani_fields.get("village") or village
-        district = pahani_fields.get("district") or district
-        parsed_area_ha = pahani_fields.get("extent_hectares")
-        if not parsed_area_ha and pahani_fields.get("extent_acres"):
-            parsed_area_ha = round(float(pahani_fields["extent_acres"]) * 0.404686, 4)
-        claimed_ha = parsed_area_ha or claimed_ha
-        pahani_polygon = _pahani_polygon(pahani_fields.get("boundary_coords"))
-
-        checks = analyse_document(
-            document_content,
-            data.document_name,
-            profile.get("name", ""),
-            f"{pahani_text} {data.extracted_text or ''}",
-            db.get_document_hashes(),
-            village=village,
-            district=district,
-            state=state,
-        )
-        registry = lookup_survey(survey_number) if survey_number else {"found": False}
-        if registry.get("error") == "permission_denied":
-            registry = {"found": False, "survey_number": survey_number, "message": registry.get("message")}
-
-        ocr_text = f"{checks.get('ocr_text_preview') or ''} {pahani_text} {data.extracted_text or ''}"
-        document_owner = pahani_fields.get("pattadar_name") or ""
-        document_aadhaar = str(pahani_fields.get("aadhaar") or "").replace(" ", "").replace("-", "")
-        registered_last4 = str(profile.get("aadhaar_last4") or "")[-4:]
-        _name_score, name_ok = _match_name(profile.get("name", ""), document_owner or ocr_text)
-        aadhaar_ok = bool(document_aadhaar and registered_last4 and document_aadhaar[-4:] == registered_last4)
-        village_ok = bool(pahani_fields.get("village") and profile.get("village") and pahani_fields["village"].strip().lower() == profile["village"].strip().lower())
-        district_ok = bool(pahani_fields.get("district") and profile.get("district") and pahani_fields["district"].strip().lower() == profile["district"].strip().lower())
-        three_way_failures = []
-        if not name_ok:
-            three_way_failures.append("pahani_owner_name_mismatch")
-        if not aadhaar_ok:
-            three_way_failures.append("pahani_aadhaar_mismatch")
-        if not village_ok or not district_ok:
-            three_way_failures.append("pahani_location_mismatch")
-        geojson = pahani_polygon or data.geojson or registry.get("geojson")
-        decision = decide_tier(
-            fpo_path=False,
-            survey_number=survey_number,
-            registry=registry,
-            owner_name=profile.get("name", ""),
-            ocr_owner=document_owner or ocr_text,
-            claimed_area_ha=claimed_ha or registry.get("area_ha"),
-        )
-        fraud = run_fraud_checks(
-            aadhaar=data.aadhaar or profile.get("aadhaar_last4") or "",
-            checks=checks,
-            owner_name=profile.get("name", ""),
-            ocr_text=ocr_text,
-            village=village,
-            geojson=geojson,
-            other_farm_geojsons=db.farm_geojsons_except(phone) if geojson else [],
-            claimed_area_ha=claimed_ha or registry.get("area_ha"),
-            skip_ndvi=True,
-        )
-        if three_way_failures:
-            fraud["failed_checks"] = list(dict.fromkeys([*fraud.get("failed_checks", []), *three_way_failures]))
-            fraud["status"] = "FLAGGED"
-            fraud["risk"] = "HIGH"
-        trust = apply_fraud(decision, fraud)
-        reasons = list(trust["failed_checks"])
-        record = {
-            "owner_phone": phone,
-            "status": trust["status"],
-            "reasons": reasons,
-            "checks": {**checks, "registry": registry, "fraud": fraud, "trust": trust},
-            "extracted_fields": {
-                "survey_number": survey_number,
-                "village": village,
-                "district": district,
-                "area_acres": pahani_fields.get("extent_acres") or data.area_acres,
-                "area_hectares": claimed_ha,
-                "owner_name": document_owner,
-                "crop": pahani_fields.get("crop_name"),
-                "irrigation": pahani_fields.get("irrigation_source"),
-                "mandal": pahani_fields.get("mandal"),
-                "pahani_fields": pahani_fields,
-                "polygon_geojson": geojson,
-                "ocr_text_preview": checks.get("ocr_text_preview", ""),
-                "geocoded_location": checks.get("geocoded_location"),
-                "satellite_ndvi": checks.get("satellite_ndvi") or {},
-                "farm_id": data.farm_id,
-                "confirm_polygon": data.confirm_polygon,
-                **trust,
-            },
-            "document_name": (data.document_name or "document")[:255],
-            "document_sha256": checks["document_sha256"],
-            "perceptual_hash": checks["perceptual_hash"] or None,
-        }
-        saved = db.insert_kyc_verification(record)
-        farm_fields = {"status": trust["status"]}
-        if trust.get("badge"):
-            farm_fields["badge"] = trust["badge"]
-        _patch_farm(data.farm_id, farm_fields)
-        return {
-            "success": True,
-            **trust,
-            "checks": checks,
-            "reasons": reasons,
-            "registry": registry,
-            "fraud": fraud,
-            "verification": saved,
-            "polygon_geojson": geojson,
-            "extracted": {
-                "survey_no": survey_number,
-                "owner_name": document_owner,
-                "area_acres": pahani_fields.get("extent_acres") or data.area_acres,
-                "area_hectares": claimed_ha,
-                "crop": pahani_fields.get("crop_name"),
-                "irrigation": pahani_fields.get("irrigation_source"),
-                "village": village,
-                "mandal": pahani_fields.get("mandal"),
-                "district": district,
-            },
-        }
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        return {"success": False, "message": str(exc)}
-    except Exception as exc:
-        return {"success": False, "message": str(exc)}
-
-
-@app.get("/kyc/status/{phone}")
-def get_kyc_status(phone: str, current_user: dict = Depends(get_current_user)):
-    """Return the latest KYC verification record for a farmer."""
-    try:
-        _require_database()
-        record = db.get_kyc_status(phone)
-        if not record:
-            return {"success": True, "status": "PENDING", "message": "No KYC verification found."}
-        extracted = record.get("extracted_fields") or {}
-        return {
-            "success": True,
-            "status": record.get("status"),
-            "tier": extracted.get("tier"),
-            "badge": extracted.get("badge"),
-            "risk": extracted.get("risk"),
-            "failed_checks": extracted.get("failed_checks") or record.get("reasons") or [],
-            "marketplace_eligible": extracted.get("marketplace_eligible"),
-            "credits_blocked": extracted.get("credits_blocked"),
-            "verification": record,
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        return {"success": False, "message": str(exc)}
-
-
-@app.get("/fpos")
-def list_fpos(current_user: dict = Depends(get_current_user)):
-    _require_database()
-    return {"success": True, "fpos": db.list_fpos()}
-
-
-@app.get("/fpo/farms")
-def fpo_farms(
-    status: str = Query("PENDING"),
-    current_user: dict = Depends(require_role("fpo", "verifier", "admin")),
-):
-    """Pending confirmations or flagged farms for FPO review."""
-    _require_database()
-    reviewer = _get_user(current_user.get("phone")) or {}
-    fpo_id = reviewer.get("fpo_id")
-    phones = None
-    if fpo_id:
-        phones = [p.get("phone") for p in db.list_profiles_by_fpo(fpo_id) if p.get("phone")]
-    farms = db.list_farms_by_status(status, owner_phones=phones)
-    return {"success": True, "status": status, "farms": farms}
-
-
-@app.post("/fpo/confirm/{farm_id}")
-def fpo_confirm_farm(farm_id: str, current_user: dict = Depends(require_role("fpo", "verifier", "admin"))):
-    """Confirm a PENDING FPO-path farm. Badge becomes FPO; satellite scan can start."""
-    from app.services.trust_engine import fpo_confirmed_result
-
-    _require_database()
-    farm = db.get_farm(farm_id)
-    if not farm:
-        raise HTTPException(status_code=404, detail="Farm not found")
-    trust = fpo_confirmed_result()
-    updated = _patch_farm(farm_id, {"status": trust["status"], "badge": trust["badge"]})
-    db.insert_kyc_verification({
-        "owner_phone": farm.get("owner_phone"),
-        "status": trust["status"],
-        "reasons": [],
-        "checks": {"reviewed_by": current_user.get("phone"), "action": "confirm"},
-        "extracted_fields": {**trust, "farm_id": farm_id, "reviewed_by": current_user.get("phone")},
-        "document_name": "fpo-confirm",
-        "document_sha256": f"fpo-confirm-{farm_id}",
-        "perceptual_hash": None,
-    })
-    return {"success": True, **trust, "farm": updated or farm}
-
-
-@app.post("/fpo/review/{farm_id}")
-def fpo_review_farm(
-    farm_id: str,
-    data: FpoReviewModel,
-    current_user: dict = Depends(require_role("fpo", "verifier", "admin")),
-):
-    """Approve or reject a FLAGGED farm. Approve sets badge FPO."""
-    from app.services.trust_engine import fpo_confirmed_result
-
-    _require_database()
-    farm = db.get_farm(farm_id)
-    if not farm:
-        raise HTTPException(status_code=404, detail="Farm not found")
-    action = (data.action or "").strip().lower()
-    if action not in ("approve", "reject"):
-        raise HTTPException(status_code=400, detail="action must be approve or reject")
-    if action == "approve":
-        trust = fpo_confirmed_result()
-        status, badge = trust["status"], trust["badge"]
-    else:
-        trust = {
-            "tier": None,
-            "badge": None,
-            "risk": "HIGH",
-            "status": "FLAGGED",
-            "failed_checks": ["fpo_rejected"],
-            "marketplace_eligible": False,
-            "credits_blocked": True,
-        }
-        status, badge = "FLAGGED", None
-    fields = {"status": status}
-    if badge:
-        fields["badge"] = badge
-    updated = _patch_farm(farm_id, fields)
-    db.insert_kyc_verification({
-        "owner_phone": farm.get("owner_phone"),
-        "status": status,
-        "reasons": [data.notes] if data.notes else [],
-        "checks": {"reviewed_by": current_user.get("phone"), "action": action},
-        "extracted_fields": {**trust, "farm_id": farm_id, "reviewed_by": current_user.get("phone"), "notes": data.notes},
-        "document_name": f"fpo-review-{action}",
-        "document_sha256": f"fpo-review-{action}-{farm_id}",
-        "perceptual_hash": None,
-    })
-    return {"success": True, **trust, "action": action, "farm": updated or farm}
-
-
-@app.post("/documents/analyze")
-def analyze_document_image(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """Extract text from an uploaded document image via Azure Document Intelligence.
-
-    Uses the ``prebuilt-layout`` model (see app/services/document_intelligence_service.py).
-    Requires a logged-in user (Bearer token). Accepts an image (jpeg/png/webp/...)
-    or PDF and returns the extracted text as JSON. If Azure cannot be reached,
-    returns the retry-or-send-to-FPO fallback payload.
-    """
-    from app.services.document_intelligence_service import (
-        analyze_document_bytes,
-        azure_unavailable_response,
-        validate_upload,
-    )
-
-    try:
-        file_bytes = file.file.read()
-    finally:
-        file.file.close()
-    filename = file.filename
-    content_type = file.content_type
-
-    try:
-        validate_upload(content_type, file_bytes)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    try:
-        return analyze_document_bytes(file_bytes, filename=filename)
-    except RuntimeError as exc:
-        msg = str(exc)
-        if "not configured" in msg or "not installed" in msg:
-            raise HTTPException(status_code=503, detail=msg)
-        return azure_unavailable_response(msg)
-
-
-@app.post("/documents/parse-pahani")
-def parse_pahani_document(
-    file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
-):
-    """OCR a Pahani (Adangal) record and return structured fields as JSON.
-
-    Runs Azure Document Intelligence, filters out Telugu-script content, and
-    extracts layout-aware fields (survey no, pattadar, extents, coords, ...).
-    Fields absent from the image come back as null and are listed in
-    ``missing_fields``. Requires a logged-in user (Bearer token). If Azure
-    cannot be reached, returns the retry-or-send-to-FPO fallback payload.
-    """
-    from app.services.document_intelligence_service import (
-        analyze_document_bytes,
-        azure_unavailable_response,
-        validate_upload,
-    )
-    from app.services.pahani_parser import parse_pahani
-
-    try:
-        file_bytes = file.file.read()
-    finally:
-        file.file.close()
-
-    try:
-        validate_upload(file.content_type, file_bytes)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    try:
-        azure_result = analyze_document_bytes(file_bytes, filename=file.filename)
-    except RuntimeError as exc:
-        msg = str(exc)
-        if "not configured" in msg or "not installed" in msg:
-            raise HTTPException(status_code=503, detail=msg)
-        return azure_unavailable_response(msg)
-
-    parsed = parse_pahani(azure_result)
-    return {
-        "success": True,
-        "model": azure_result.get("model"),
-        "filename": file.filename,
-        "fields": parsed["fields"],
-        "missing_fields": parsed["missing_fields"],
-        "english_text": parsed["english_text"],
-    }
-
-
-@app.get("/me")
-def get_me(current_user: dict = Depends(get_current_user)):
-    phone = current_user.get("phone")
-    user = _get_user(phone)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    farms = _get_user_farms(phone)
-    kyc = db.get_kyc_status(phone) if db.is_ready() else None
-    return {"success": True, "user": _user_response(user, phone), "farms": farms, "kyc": kyc}
-
-
-@app.patch("/profile")
-def update_profile(data: UpdateProfileModel, current_user: dict = Depends(get_current_user)):
-    try:
-        phone = current_user.get("phone")
-        fields = {k: v for k, v in data.model_dump().items() if v is not None}
-        if not fields:
-            return {"success": False, "message": "No fields to update"}
-        if "preferred_language" in fields:
-            fields["preferred_language"] = fields["preferred_language"][:2]
-        updated = db.update_profile(phone, fields)
-        if not updated:
-            return {"success": False, "message": "Profile update failed"}
-        return {"success": True, "user": _user_response(updated, phone)}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
+# ── /analyze endpoint (core endpoint at root level) ───
 @app.post("/analyze")
 def analyze(data: AnalyzeModel):
     try:
@@ -1372,7 +391,7 @@ def analyze(data: AnalyzeModel):
                 return {"success": False,
                         "message": f"Parcel area {approx_area:,.0f} ha exceeds the {max_area:,} ha scan limit — redraw the boundary"}
         except Exception:
-            pass  # shape problems surface in the branch-specific extraction
+            pass
         if earth_engine_ready:
             import ee
             coordinates = geojson["geometry"]["coordinates"]
@@ -1397,9 +416,6 @@ def analyze(data: AnalyzeModel):
             ).values().get(0).getInfo())
             area_hectares = round(_with_ee_backoff(lambda: polygon.area().getInfo()) / 10000, 2)
 
-            # Real model features — same derivation as the training pipeline
-            # (extract_features.py): spectral indices + band means + time-series
-            # variance across the cloud-filtered collection.
             try:
                 B4, B8, B3, B11 = (image.select("B4"), image.select("B8"),
                                    image.select("B3"), image.select("B11"))
@@ -1425,28 +441,6 @@ def analyze(data: AnalyzeModel):
                 print(f"[analyze] real feature extraction failed: {e}")
                 real_features = None
 
-            # EVI/feature-stack reductions are independent EE queries — run
-            # them concurrently instead of serially (#7).
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                evi_future = pool.submit(lambda: _with_ee_backoff(lambda: evi.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
-                ).values().get(0).getInfo()))
-                area_future = pool.submit(lambda: _with_ee_backoff(lambda: polygon.area().getInfo()) / 10000)
-                feat_future = pool.submit(lambda: stack.reduceRegion(
-                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
-                ).getInfo())
-                try:
-                    s2_scene = _with_ee_backoff(lambda: collection.first().get("system:index").getInfo())
-                except Exception:
-                    s2_scene = None
-                evi_value = round(evi_future.result(), 3)
-                area_hectares = round(area_future.result(), 2)
-                feat_values = feat_future.result()
-                real_features = {k: feat_values.get(k) for k in
-                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
-                if any(v is None for v in real_features.values()):
-                    real_features = None
             try:
                 from app.services.ml_service import predict_biodiversity
                 ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
@@ -1455,10 +449,12 @@ def analyze(data: AnalyzeModel):
             except Exception:
                 biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
             satellite_source = "Google Earth Engine · Sentinel-2 SR"
+            try:
+                s2_scene = collection.first().get("system:index").getInfo()
+            except Exception:
+                s2_scene = None
 
-            # Canonical carbon estimate — credit_engine is the single source
-            # of truth for carbon math (scan-only evidence quality here).
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
+            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value, features=real_features)
             scan_est["formula_version"] = app_config.FORMULA_VERSION
             carbon_tonnes = scan_est["credits_tco2e"]
         else:
@@ -1467,6 +463,7 @@ def analyze(data: AnalyzeModel):
             seed = hash(str(coords)) % 1000
             ndvi_value = round(0.45 + (seed % 40) / 100.0, 3)
             evi_value = round(ndvi_value * 0.85, 3)
+            real_features = None
             s2_scene = None
             try:
                 from app.services.ml_service import predict_biodiversity
@@ -1520,1381 +517,73 @@ def analyze(data: AnalyzeModel):
         return {"success": False, "message": str(e)}
 
 
-@app.post("/save-farm")
-def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user)):
-    try:
-        phone = current_user.get("phone")
-        farm = data.farm
-        geojson = farm.get("geojson")
-        if not geojson or not geojson.get("geometry"):
-            return {"success": False, "message": "Farm boundary (GeoJSON) is required"}
-        area_hectares = float(farm.get("area_hectares") or _polygon_area_hectares(geojson))
-        carbon = float(farm.get("carbon_tonnes") or 0)
-        bio_score = float(farm.get("biodiversity_score") or 0)
-        credits = credit_engine.credit_split(carbon, bio_score)
-        path = (farm.get("path") or "").lower()
-        fpo_path = path == "fpo"
-        if fpo_path and farm.get("fpo_id"):
-            db.update_profile(phone, {"fpo_id": farm.get("fpo_id")})
-        latest = db.get_kyc_status(phone) if db.is_ready() else None
-        extracted = (latest or {}).get("extracted_fields") or {}
-        if fpo_path or extracted.get("path") == "fpo" and (latest or {}).get("status") == "PENDING":
-            status = "PENDING"
-            badge = None
-            credits_blocked = True
-        elif latest and latest.get("status") in ("FLAGGED", "PENDING", "VERIFIED"):
-            status = latest.get("status")
-            badge = extracted.get("badge")
-            credits_blocked = bool(extracted.get("credits_blocked")) or status in ("PENDING", "FLAGGED")
-        else:
-            status = farm.get("status") or "Verified"
-            badge = farm.get("badge")
-            credits_blocked = status in ("PENDING", "FLAGGED")
-        if credits_blocked:
-            credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
+# ── Include routers ──
+from app.routes.auth_router import router as auth_router
+from app.routes.farms_router import router as farms_router
+from app.routes.marketplace_router import router as marketplace_router
+from app.routes.trust_router import router as trust_router
+from app.routes.ops_router import router as ops_router
+from app.routes.fpo_router import router as fpo_router
+from app.routes.corporate_router import router as corporate_router
 
-        # Trust Engine Stage 1 (server-side): declared crop vs NDVI signature.
-        # A mismatch pauses the record for FPO/KVK review — never auto-rejects.
-        stage1 = credit_engine.stage1_verification(farm.get("crop_type"), farm.get("ndvi"))
-        if not stage1["match"] and status not in ("PENDING", "FLAGGED"):
-            status = "PENDING"
-            credits_blocked = True
-            credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
-
-        record = {
-            "owner_phone": phone,
-            "name": farm.get("name", "My Farm"),
-            "crop_type": farm.get("crop_type", "Mixed Crop"),
-            "irrigation": farm.get("irrigation", "Drip"),
-            "geojson": geojson,
-            "area_hectares": area_hectares,
-            "ndvi": farm.get("ndvi", 0),
-            "evi": farm.get("evi", 0),
-            "carbon_tonnes": 0 if credits_blocked else carbon,
-            "biodiversity_score": bio_score,
-            "biodiversity_credits": credits["biodiversity_credits"],
-            "total_credits": credits["total_credits"],
-            "tree_cover": farm.get("tree_cover", 0),
-            "soil_moisture": farm.get("soil_moisture", 0),
-            "vegetation_health": farm.get("vegetation_health", ""),
-            "ai_confidence": farm.get("ai_confidence", 0),
-            "satellite_source": farm.get("satellite_source", ""),
-            "status": status,
-            "token_id": farm.get("token_id"),
-        }
-        if farm.get("ci90_low") is not None:
-            record["credits_ci90_low"] = farm["ci90_low"]
-        if farm.get("ci90_high") is not None:
-            record["credits_ci90_high"] = farm["ci90_high"]
-        if badge:
-            record["badge"] = badge
-        saved = db.insert_farm_safe(record)
-        if not saved or not saved.get("id"):
-            return {"success": False, "message": "Failed to save farm to database"}
-        # Anchor the credit's evidence snapshot at enrollment (tamper-evident chain).
-        ledger.ensure_genesis(saved["id"], {
-            "farm": record["name"],
-            "crop": record["crop_type"],
-            "area_hectares": record["area_hectares"],
-            "ndvi": record["ndvi"],
-            "status": status,
-            "badge": badge,
-            "stage1": stage1["status"],
-            "formula_version": app_config.FORMULA_VERSION,
-            "s2_scene": farm.get("s2_scene"),
-        })
-        return {
-            "success": True,
-            "message": "Farm saved",
-            "farm": saved,
-            "credits_blocked": credits_blocked,
-            "badge": badge,
-            "stage1": stage1,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+app.include_router(auth_router)
+app.include_router(farms_router)
+app.include_router(marketplace_router)
+app.include_router(trust_router)
+app.include_router(ops_router)
+app.include_router(fpo_router)
+app.include_router(corporate_router)
 
 
-@app.get("/marketplace/listings")
-def marketplace_listings(
-    status: Optional[str] = Query(
-        "Active",
-        description="Filter by listing status. Use 'all' to return every status (Active, Sold, Expired, ...).",
-    ),
-    crop: Optional[str] = Query(None, description="Partial, case-insensitive match on crop, e.g. ?crop=rice"),
-    location: Optional[str] = Query(None, description="Partial, case-insensitive match on location, e.g. ?location=khammam"),
-    farmer_phone: Optional[str] = Query(None, description="Exact farmer phone, e.g. ?farmer_phone=9876543210"),
-    farm_id: Optional[str] = Query(None, description="Exact farm UUID"),
-    listing_model: Optional[str] = Query(None, description="Partial match on listing model, e.g. ?listing_model=fixed"),
-    min_price: Optional[float] = Query(None, description="Minimum price_per_credit (inclusive)"),
-    max_price: Optional[float] = Query(None, description="Maximum price_per_credit (inclusive)"),
-    min_credits: Optional[float] = Query(None, description="Minimum total_credits (inclusive)"),
-    max_credits: Optional[float] = Query(None, description="Maximum total_credits (inclusive)"),
-    search: Optional[str] = Query(None, description="Free-text search across farmer_name, crop and location"),
-    sort: str = Query(
-        "created_at",
-        description=f"Sort column. One of: {', '.join(sorted(db.LISTING_SORT_COLUMNS))}",
-    ),
-    order: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction: asc or desc"),
-    limit: int = Query(50, ge=1, le=200, description="Page size (max 200)"),
-    offset: int = Query(0, ge=0, description="Page offset for pagination"),
-    cursor: Optional[str] = Query(None, description="Opaque cursor from a previous response's next_cursor (preferred over offset)"),
-):
-    try:
-        query_kwargs = {
-            "status": status,
-            "crop": crop,
-            "location": location,
-            "farmer_phone": farmer_phone,
-            "farm_id": farm_id,
-            "listing_model": listing_model,
-            "min_price": min_price,
-            "max_price": max_price,
-            "min_credits": min_credits,
-            "max_credits": max_credits,
-            "search": search,
-            "sort": sort,
-            "order": order,
-            "limit": limit,
-            "offset": offset,
-        }
-        if cursor:
-            try:
-                import base64 as _b64
-                query_kwargs["offset"] = int(_b64.urlsafe_b64decode(cursor.encode()).decode())
-            except Exception:
-                return {"success": False, "message": "Invalid cursor", "code": "BAD_CURSOR"}
-        applied = {k: v for k, v in query_kwargs.items() if v is not None}
-
-        result = None
-        source = "live_db"
-        if db.is_ready():
-            try:
-                result = db.get_listings_filtered(**query_kwargs)
-            except Exception as e:
-                print(f"[marketplace/listings] LIVE DB query failed ({e}) — serving FALLBACK sample data")
-                result = None
-        else:
-            print("[marketplace/listings] LIVE DB not configured — serving FALLBACK sample data")
-        if result is None:
-            source = "fallback"
-            from app import sample_data
-            from app import sample_data
-            result = sample_data.filter_listings(market_store.all_rows(), **query_kwargs)
-
-        print(
-            f"[marketplace/listings] source={'LIVE DB' if source == 'live_db' else 'FALLBACK sample data'} "
-            f"| matched={result['total']} | returned={len(result['listings'])} | filters={applied or 'default'}"
-        )
-        response = {
-            "success": True,
-            "source": source,
-            "total": result["total"],
-            "count": len(result["listings"]),
-            "filters": applied,
-            "listings": result["listings"],
-        }
-        next_offset = query_kwargs["offset"] + limit
-        if next_offset < result["total"] and result["listings"]:
-            import base64 as _b64
-            response["next_cursor"] = _b64.urlsafe_b64encode(str(next_offset).encode()).decode()
-        return response
-    except Exception as e:
-        return {"success": False, "message": str(e), "source": "error", "total": 0, "count": 0, "listings": []}
+# ── Voice agent ──
+from app.voice_agent.voice_routes import router as voice_router
+app.include_router(voice_router)
 
 
-@app.post("/marketplace/listings")
-def create_listing(data: CreateListingModel, current_user: dict = Depends(get_current_user)):
-    try:
-        _require_database()
-        phone = current_user.get("phone")
-        user = _get_user(phone)
-        if not user:
-            return {"success": False, "message": "User not found"}
-        if data.farm_id:
-            from app.services.trust_engine import farm_may_list
-
-            farm = db.get_farm(data.farm_id)
-            if farm and farm.get("owner_phone") != phone:
-                return {"success": False, "message": "Farm does not belong to this user"}
-            latest = db.get_kyc_status(phone)
-            badge = ((latest or {}).get("extracted_fields") or {}).get("badge") or (farm or {}).get("badge")
-            ok, reason = farm_may_list(farm, badge)
-            if not ok:
-                return {"success": False, "message": reason}
-        c_credits = data.carbon_credits
-        b_credits = data.biodiversity_credits
-        if c_credits is None and b_credits is None and data.credits is not None:
-            c_credits = round(float(data.credits) * 0.8, 2)
-            b_credits = round(float(data.credits) * 0.2, 2)
-        else:
-            c_credits = float(c_credits or 0)
-            b_credits = float(b_credits or 0)
-        total = round(c_credits + b_credits, 2)
-        listing = {
-            "farmer_phone": phone,
-            "farmer_name": user.get("name", "Farmer"),
-            "location": f"{user.get('village', '')}, {user.get('district', '')}".strip(", "),
-            "crop": data.crop or "Mixed Crop",
-            "size_label": "",
-            "carbon_credits": c_credits,
-            "biodiversity_credits": b_credits,
-            "total_credits": total,
-            "price_per_credit": data.price_per_credit,
-            "listing_model": "Fixed Price",
-            "status": "Active",
-            "farm_id": data.farm_id,
-            "token_id": data.token_id,
-            "tx_hash": data.tx_hash,
-            "image_url": "https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=400",
-        }
-        saved = db.insert_listing(listing)
-        if not saved or not saved.get("id"):
-            return {"success": False, "message": "Failed to save listing"}
-        if data.farm_id and data.token_id:
-            db.update_farm(data.farm_id, {"token_id": data.token_id})
-        return {"success": True, "listing": saved}
-    except HTTPException:
-        raise
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+# ── WebSocket: live ledger updates ──
+_ledger_ws_subscribers: dict[str, set[WebSocket]] = {}
 
 
-class BidModel(BaseModel):
-    bid_amount: float
-    bidder_name: Optional[str] = "Corporate Buyer"
-
-
-@app.post("/marketplace/listings/{listing_id}/bid")
-def place_bid(listing_id: str, data: BidModel, current_user: dict = Depends(get_current_user)):
-    """Place a bid on a listing: validates against the current bid and persists it."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        rows = (sb.table("marketplace_listings").select("*").eq("id", listing_id).execute().data) or []
-        if not rows:
-            return {"success": False, "message": "Listing not found"}
-        listing = rows[0]
-        if str(listing.get("status") or "Active").lower() != "active":
-            return {"success": False, "message": f"Bidding closed (listing status: {listing.get('status')})"}
-        current = float(listing.get("current_bid") or 0)
-        base = float(listing.get("price_per_credit") or 0)
-        amount = float(data.bid_amount or 0)
-        if amount <= 0:
-            return {"success": False, "message": "Bid amount must be greater than zero"}
-        floor = current if current > 0 else base
-        if amount <= floor:
-            return {"success": False, "message": f"Bid must exceed the current standing bid of ₹{floor:,.0f}"}
-        sb.table("marketplace_listings").update({
-            "current_bid": amount,
-            "bids_count": int(listing.get("bids_count") or 0) + 1,
-        }).eq("id", listing_id).execute()
-        return {
-            "success": True,
-            "message": "Bid placed successfully",
-            "listing_id": listing_id,
-            "bid_amount": amount,
-            "bidder_name": data.bidder_name or current_user.get("name"),
-            "previous_bid": current,
-            "bids_count": int(listing.get("bids_count") or 0) + 1,
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.api_route("/predict", methods=["GET", "POST"])
-def predict(longitude: float, latitude: float):
-    try:
-        from app.services.ml_service import predict_biodiversity
-
-        ndvi = None
-        ndvi_source = "Estimated (GEE offline)"
-        if earth_engine_ready:
-            try:
-                from app.services.gee_service import get_ndvi_at_point
-
-                sat = get_ndvi_at_point(latitude, longitude)
-                if sat.get("live_satellite"):
-                    ndvi = float(sat.get("ndvi"))
-                    ndvi_source = str(sat.get("source"))
-            except Exception as exc:
-                print(f"/predict GEE point query failed: {exc}")
-        if ndvi is None:
-            import math
-
-            ndvi = round(0.5 + math.sin(longitude * 0.1) * 0.2 + math.cos(latitude * 0.1) * 0.15, 3)
-            ndvi = min(max(ndvi, 0.1), 0.9)
-        result = predict_biodiversity(ndvi=ndvi)
-        # /predict is a biodiversity probe only — it does not estimate carbon,
-        # so no carbon credit line is invented here (single source of truth).
-        credits = credit_engine.credit_split(0, result["biodiversity_score"])
-        return {
-            "success": True,
-            "location": {"longitude": longitude, "latitude": latitude},
-            "ndvi": ndvi,
-            "ndvi_source": ndvi_source,
-            "biodiversity_score": result["biodiversity_score"],
-            "status": result["status"],
-            "ml_source": result.get("source"),
-            "biodiversity_credits": credits["biodiversity_credits"],
-            "total_credits": credits["total_credits"],
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-# Additional Endpoints required by SIH 2026 Spec
-
-@app.get("/farm/{farm_id}/ndvi-history")
-def get_farm_ndvi_history(farm_id: str):
-    """Seasonal NDVI progression anchored on the farm's real satellite record."""
-    farm = db.get_farm(farm_id) if db.is_ready() else None
-    if not farm:
-        return {"success": False, "message": "Farm not found", "history": [], "recommendations": []}
-
-    base_ndvi = float(farm.get("ndvi") or 0)
-    months = [
-        ("Kharif", "Jun", 110), ("Kharif", "Aug", 210), ("Kharif", "Oct", 85),
-        ("Rabi", "Dec", 20), ("Rabi", "Feb", 15),
-    ]
-    history = []
-    for year in (2023, 2024):
-        for season, month, rainfall in months:
-            # deterministic seasonal variation around the farm's measured NDVI
-            offset = {"Jun": -0.12, "Aug": 0.04, "Oct": 0.08, "Dec": -0.10, "Feb": 0.02}[month]
-            ndvi = round(min(max(base_ndvi + offset + (0.02 if year == 2024 else 0.0), 0.05), 0.95), 2)
-            history.append({
-                "season": f"{season} {year}" if season == "Kharif" else f"Rabi {year - 1}-{str(year)[2:]}",
-                "month": month,
-                "ndvi": ndvi,
-                "rainfall_mm": rainfall,
-            })
-
-    return {
-        "success": True,
-        "farm_id": farm_id,
-        "farm_name": farm.get("name"),
-        "measured_ndvi": base_ndvi,
-        "source": "derived from farm satellite record (Sentinel-2 NDVI)" if farm.get("ndvi") else "no satellite record",
-        "history": history,
-        "recommendations": [
-            "Adopt zero-tillage to increase yield by +0.50 credits/acre",
-            "Maintain cover crops during Rabi interval to avoid soil carbon loss",
-            "Drip fertigation recommended for Kharif cotton block",
-        ],
-    }
-
-
-@app.get("/fpo/farmers")
-def get_fpo_farmers(current_user: Optional[dict] = Depends(get_current_user_optional)):
-    """Real member roster: profiles (optionally scoped to the caller's FPO) with aggregated farm stats."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable", "farmers": []}
-    try:
-        fpo_id = (current_user or {}).get("fpo_id")
-        query = sb.table("profiles").select("*")
-        if fpo_id:
-            query = query.eq("fpo_id", fpo_id)
-        profiles = (query.execute().data) or []
-        farms = (sb.table("farms").select("owner_phone,area_hectares,total_credits,status,badge,crop_type").execute().data) or []
-        farms_by_phone: dict = {}
-        for f in farms:
-            farms_by_phone.setdefault(f.get("owner_phone"), []).append(f)
-
-        farmers = []
-        for p in profiles:
-            pfarms = farms_by_phone.get(p.get("phone"), [])
-            active = [f for f in pfarms if str(f.get("status", "")).lower() not in ("flagged",)]
-            farmers.append({
-                "id": p.get("id"),
-                "name": p.get("name") or "Unnamed Farmer",
-                "phone": p.get("phone"),
-                "village": p.get("village"),
-                "district": p.get("district"),
-                "fpo_id": p.get("fpo_id"),
-                "farm_count": len(pfarms),
-                "acres": round(sum(float(f.get("area_hectares") or 0) for f in active), 2),
-                "credits": round(sum(float(f.get("total_credits") or 0) for f in active), 2),
-                "badge": next((f.get("badge") for f in pfarms if f.get("badge")), None) or ("REGISTRY" if pfarms else "NONE"),
-                "status": "FLAGGED" if any(str(f.get("status", "")).lower() == "flagged" for f in pfarms) else ("VERIFIED" if pfarms else "PENDING"),
-            })
-        return {
-            "success": True,
-            "fpo_id": fpo_id,
-            "total_farmers": len(farmers),
-            "total_acreage": round(sum(f["acres"] for f in farmers), 2),
-            "pooled_credits": round(sum(f["credits"] for f in farmers), 2),
-            "farmers": farmers,
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e), "farmers": []}
-
-
-class FpoOnboardModel(BaseModel):
-    name: str
-    phone: str
-    survey_number: str
-    acreage: float
-    mandal: str
-    village: str
-    geojson: Optional[dict] = None
-
-
-@app.post("/fpo/onboard")
-def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
-    """Onboard a farmer under FPO attestation: upserts the profile and creates an attested farm."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        phone = re.sub(r"\D", "", data.phone or "")
-        if len(phone) > 10:
-            phone = phone[-10:]
-        if len(phone) != 10:
-            return {"success": False, "message": "Enter a valid 10-digit phone number"}
-        if data.acreage is None or data.acreage <= 0:
-            return {"success": False, "message": "Acreage must be greater than zero"}
-
-        fpo_id = (current_user or {}).get("fpo_id")
-        if not fpo_id:
-            fpos = (sb.table("fpos").select("id").limit(1).execute().data) or []
-            fpo_id = fpos[0].get("id") if fpos else None
-
-        existing = db.get_profile(phone)
-        profile_fields = {
-            "phone": phone,
-            "name": data.name,
-            "role": "farmer",
-            "village": data.village,
-            "fpo_id": fpo_id,
-        }
-        if existing:
-            db.update_profile(phone, {k: v for k, v in profile_fields.items() if v})
-            profile = db.get_profile(phone)
-        else:
-            db.upsert_profile(profile_fields)
-            profile = db.get_profile(phone)
-
-        farm_record = {
-            "owner_phone": phone,
-            "name": f"{data.name}'s Parcel ({data.survey_number})",
-            "crop_type": "Mixed Crop",
-            "area_hectares": data.acreage,
-            "status": "Verified",
-            "badge": "FPO",
-            "fpo_id": fpo_id,
-            "satellite_source": "FPO attestation",
-        }
-        if data.geojson and data.geojson.get("geometry"):
-            farm_record["geojson"] = data.geojson
-            farm_record["area_hectares"] = data.acreage or _polygon_area_hectares(data.geojson)
-        saved_farm = db.insert_farm_safe(farm_record)
-
-        return {
-            "success": True,
-            "message": f"Farmer {data.name} onboarded under FPO attestation",
-            "badge": "FPO",
-            "farmer": {
-                "id": (profile or {}).get("id"),
-                "name": data.name,
-                "phone": phone,
-                "survey": data.survey_number,
-                "acres": data.acreage,
-                "badge": "FPO",
-                "status": "VERIFIED",
-            },
-            "farm_id": (saved_farm or {}).get("id"),
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.get("/fpo/pending")
-def get_fpo_pending():
-    """Farms awaiting verification review, joined with their owner profiles."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable", "pending": []}
-    try:
-        farms = (sb.table("farms").select("*").ilike("status", "pending").execute().data) or []
-        phones = list({f.get("owner_phone") for f in farms if f.get("owner_phone")})
-        owners = {}
-        if phones:
-            owners = {p.get("phone"): p for p in (sb.table("profiles").select("phone,name,village").in_("phone", phones).execute().data or [])}
-        pending = [{
-            "id": f.get("id"),
-            "name": (owners.get(f.get("owner_phone")) or {}).get("name") or "Unknown Farmer",
-            "phone": f.get("owner_phone"),
-            "village": f.get("geojson", {}).get("properties", {}).get("village") or (owners.get(f.get("owner_phone")) or {}).get("village"),
-            "farm_name": f.get("name"),
-            "crop": f.get("crop_type"),
-            "acres": f.get("area_hectares"),
-            "date": (f.get("created_at") or "")[:10],
-        } for f in farms]
-        return {"success": True, "pending": pending}
-    except Exception as e:
-        return {"success": False, "message": str(e), "pending": []}
-
-
-@app.get("/fpo/flagged")
-def get_fpo_flagged():
-    """Ground-truth audit list: farms flagged by the fraud engine."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable", "flagged": []}
-    try:
-        farms = (sb.table("farms").select("*").ilike("status", "flagged").execute().data) or []
-        phones = list({f.get("owner_phone") for f in farms if f.get("owner_phone")})
-        owners = {}
-        if phones:
-            owners = {p.get("phone"): p for p in (sb.table("profiles").select("phone,name,village").in_("phone", phones).execute().data or [])}
-        flagged = [{
-            "id": f.get("id"),
-            "farmer_name": (owners.get(f.get("owner_phone")) or {}).get("name") or "Unknown Farmer",
-            "farm_name": f.get("name"),
-            "village": (owners.get(f.get("owner_phone")) or {}).get("village"),
-            "claimed_acres": f.get("area_hectares"),
-            "issue": "Flagged by fraud engine — ownership/geometry discrepancy",
-            "status": "FLAGGED",
-            "date": (f.get("updated_at") or f.get("created_at") or "")[:10],
-        } for f in farms]
-        return {"success": True, "flagged": flagged}
-    except Exception as e:
-        return {"success": False, "message": str(e), "flagged": []}
-
-
-def _cert_id_for_listing(listing_id: str) -> str:
-    """Deterministic certificate id derived from the listing id."""
-    return f"CX-{datetime.now(timezone.utc).year}-CERT-{listing_id.replace('-', '')[:8].upper()}"
-
-
-class MarketplaceBuyModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    listing_id: str
-    credits: float
-    unit_price: Optional[float] = None
-    buyer_name: Optional[str] = "Corporate Buyer"
-
-
-def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
-    """Proven FPO involvement: live farms carry fpo_id; sample data names the FPO."""
-    if farm and farm.get("fpo_id"):
-        fpos = db.list_fpos() if db.is_ready() else []
-        match = next((f for f in fpos if f.get("id") == farm.get("fpo_id")), None)
-        return (match or {}).get("name") or "Linked FPO"
-    if farm and farm.get("fpo"):
-        return farm["fpo"]
-    return market_store.fpo_for_phone(farmer_phone)
-
-
-def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update) -> dict:
-    """Shared escrow -> conditional split -> ledger -> auto-retire pipeline.
-
-    `apply_update(fields)` persists listing mutations (live DB or demo store).
-    Purchase = retirement in one step: the buyer's money lands in the platform
-    escrow, the conditional split is computed and recorded, and the credits are
-    permanently retired with a batch hash — no resale ambiguity.
-    """
-    available = float(listing.get("total_credits") or 0)
-    unit_price = float(listing.get("price_per_credit") or 0)
-    gross = round(credits * unit_price, 2)
-    farm_id = listing.get("farm_id") or ""
-    fpo_name = _resolve_fpo_link(None, listing.get("farmer_phone") or "")
-    if not fpo_name and farm_id and db.is_ready():
-        farm = db.get_farm(farm_id) or {}
-        fpo_name = _resolve_fpo_link(farm, listing.get("farmer_phone") or "")
-
-    split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
-    escrow_ref = "ESC-" + uuid.uuid4().hex[:12].upper()
-    batch_hash = None
-    partial = credits < available - 1e-6
-
-    updates = {"tx_hash": escrow_ref, "current_bid": gross, "bids_count": int(listing.get("bids_count") or 0) + 1}
-    if partial:
-        updates["total_credits"] = round(available - credits, 4)
-    else:
-        updates["status"] = "Retired"  # purchase = retirement, one step
-    apply_update(updates)
-
-    cert_id = _cert_id_for_listing(listing.get("id"))
-    sale_event = ledger.append_event(farm_id, "SALE", {
-        "listing_id": listing.get("id"),
-        "buyer": buyer_name,
-        "credits": credits,
-        "unit_price": unit_price,
-        "gross_inr": gross,
-        "escrow_ref": escrow_ref,
-        "certificate_id": cert_id,
-    })
-    split_event = ledger.append_event(farm_id, "SPLIT", {
-        "escrow_ref": escrow_ref,
-        "model": split["model"],
-        "farmer_inr": split["farmer_amount_inr"],
-        "fpo_inr": split["fpo_amount_inr"],
-        "platform_inr": split["platform_amount_inr"],
-    })
-    batch_hash = split_event["hash"]
-    ledger.append_event(farm_id, "RETIRE", {
-        "certificate_id": cert_id,
-        "credits_retired": credits,
-        "escrow_ref": escrow_ref,
-        "batch_hash": batch_hash,
-        "buyer": buyer_name,
-    })
-
-    return {
-        "success": True,
-        "message": "Purchase complete — escrowed, split paid, credits retired",
-        "certificate_id": cert_id,
-        "listing_id": listing.get("id"),
-        "farm_id": farm_id,
-        "buyer_name": buyer_name,
-        "escrow_ref": escrow_ref,
-        "batch_hash": batch_hash,
-        "ledger_tail": sale_event["hash"],
-        "retired": not partial,
-        "credits_purchased": credits,
-        "credits_remaining": round(available - credits, 4),
-        "gross_amount": gross,
-        "unit_price": unit_price,
-        "split": split,
-        "farmer_name": listing.get("farmer_name"),
-        "farmer_phone": listing.get("farmer_phone"),
-        "crop": listing.get("crop"),
-        "location": listing.get("location"),
-        "source": listing.get("_source", "live_db"),
-    }
-
-
-@app.post("/marketplace/buy")
-def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
-    """Purchase credits from a live listing: escrow -> conditional split ->
-    hash-anchored ledger events -> instant retirement + certificate."""
-    buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
-
-    if not db.is_ready():
-        # Demo mode: run the full flow against the in-memory sample store.
-        listing = market_store.get(data.listing_id)
-        if not listing:
-            return {"success": False, "message": "Listing not found"}
-        if str(listing.get("status") or "Active").lower() not in ("active", ""):
-            return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
-        available = float(listing.get("total_credits") or 0)
-        if available <= 0:
-            return {"success": False, "message": "This listing has no purchasable credits left"}
-        credits = round(min(float(data.credits or available), available), 4)
-        if credits <= 0:
-            return {"success": False, "message": "Credit quantity must be greater than zero"}
-        listing["_source"] = "demo_store"
-        return _purchase_flow(listing, credits, buyer, lambda fields: market_store.update(data.listing_id, fields))
-
-    try:
-        sb = db._client()
-        rows = (sb.table("marketplace_listings").select("*").eq("id", data.listing_id).execute().data) or []
-        if not rows:
-            return {"success": False, "message": "Listing not found"}
-        listing = rows[0]
-        if str(listing.get("status") or "Active").lower() not in ("active", ""):
-            return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
-        available = float(listing.get("total_credits") or 0)
-        if available <= 0:
-            return {"success": False, "message": "This listing has no purchasable credits left"}
-        credits = round(min(float(data.credits or available), available), 4)
-        if credits <= 0:
-            return {"success": False, "message": "Credit quantity must be greater than zero"}
-        # Never write ledger events against a phantom farm: the listing's
-        # farm must exist before the purchase pipeline runs.
-        farm_id = listing.get("farm_id")
-        if farm_id and not db.get_farm(farm_id):
-            return {"success": False, "message": "Listing references an unknown farm — purchase rejected"}
-        return _purchase_flow(listing, credits, buyer, lambda fields: sb.table("marketplace_listings").update(fields).eq("id", data.listing_id).execute())
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-class AutoMatchModel(BaseModel):
-    target_volume: float
-    priority: Optional[str] = "lowest_price" # nearest, highest_ndvi, lowest_price
-    filters: Optional[dict] = None
-
-
-@app.post("/marketplace/auto-match")
-def auto_match_bulk(data: AutoMatchModel):
-    """Greedy fill auto-match over Active listings until the target volume is met.
-
-    Every matched line previews the farmer's 70% floor — the buyer sees exactly
-    whose credits they are buying and what the farmer keeps before paying.
-    """
-    rows_source = None
-    if not db.is_ready():
-        rows_source = [r for r in market_store.all_rows() if r.get("status") == "Active"]
-    listings = rows_source
-    if listings is None:
-        sb = db._client()
+async def _ledger_broadcast(farm_id: str, event: dict):
+    subscribers = _ledger_ws_subscribers.get(farm_id)
+    if not subscribers:
+        return
+    import json as _json
+    msg = _json.dumps(event, default=str)
+    dead = set()
+    for ws in subscribers:
         try:
-            listings = (sb.table("marketplace_listings").select("*").eq("status", "Active").execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e), "matched_farms": []}
-    listings = [l for l in listings if float(l.get("total_credits") or 0) > 0]
-    farm_ids = list({l.get("farm_id") for l in listings if l.get("farm_id")})
-    farms_by_id = {}
-    if farm_ids and db.is_ready():
-        sb = db._client()
-        farms_by_id = {f.get("id"): f for f in (sb.table("farms").select("id,name,badge,ndvi").in_("id", farm_ids).execute().data or [])}
-
-    if data.priority == "highest_ndvi":
-        listings.sort(key=lambda l: float((farms_by_id.get(l.get("farm_id")) or {}).get("ndvi") or 0), reverse=True)
-    else:  # lowest_price (default)
-        listings.sort(key=lambda l: float(l.get("price_per_credit") or 0))
-
-    volume = float(data.target_volume or 0)
-    matched = []
-    for l in listings:
-        if volume <= 0:
-            break
-        take = min(volume, float(l.get("total_credits") or 0))
-        farm = farms_by_id.get(l.get("farm_id")) or {}
-        badge = farm.get("badge") or "DOCUMENT"
-        line_gross = round(take * float(l.get("price_per_credit") or 0), 2)
-        fpo_name = _resolve_fpo_link(farm or None, l.get("farmer_phone") or "")
-        line_split = split_engine.compute_split(line_gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
-        matched.append({
-            "listing_id": l.get("id"),
-            "farm": farm.get("name") or l.get("location") or "Telangana Parcel",
-            "farmer": l.get("farmer_name") or "Marketplace Farmer",
-            "survey": l.get("location"),
-            "crop": l.get("crop"),
-            "credits": round(take, 2),
-            "rate": float(l.get("price_per_credit") or 0),
-            "badge": badge,
-            "badge_color": "emerald" if badge == "REGISTRY" else ("forest" if badge == "REGISTRY_DOC" else "amber"),
-            "farmer_share_inr": line_split["farmer_amount_inr"],
-            "fpo_name": fpo_name or None,
-        })
-        volume -= take
-
-    gross = round(sum(m["credits"] * m["rate"] for m in matched), 2)
-    overall_split = split_engine.compute_split(
-        gross, fpo_involved=any(m.get("fpo_name") for m in matched)
-    )
-    return {
-        "success": True,
-        "target_volume": float(data.target_volume or 0),
-        "total_matched": round(sum(m["credits"] for m in matched), 2),
-        "gross_value": gross,
-        "farmer_total_inr": overall_split["farmer_amount_inr"],
-        "fpo_total_inr": overall_split["fpo_amount_inr"],
-        "platform_total_inr": overall_split["platform_amount_inr"],
-        "split_model": overall_split["model"],
-        "matched_farms": matched,
-    }
-
-
-@app.get("/certificates")
-def list_certificates():
-    """Escrow certificate ledger, derived from purchased (Retired) listings."""
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
-        rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).order("updated_at", desc=True).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e), "certificates": []}
-    certificates = []
-    for r in rows:
-        farm_id = r.get("farm_id") or ""
-        chain = ledger.summary(farm_id) if farm_id else {}
-        retired = str(r.get("status")).lower() == "retired"
-        certificates.append({
-            "id": _cert_id_for_listing(r.get("id")),
-            "listing_id": r.get("id"),
-            "issued_to": "Corporate Buyer",
-            "farmer_name": r.get("farmer_name"),
-            "crop": r.get("crop"),
-            "volume_mt": r.get("total_credits"),
-            "value_inr": r.get("current_bid"),
-            "source_parcels": [f"{r.get('location') or 'Telangana'} ({r.get('crop') or 'Mixed Crop'})"],
-            "issued_date": (r.get("updated_at") or r.get("created_at") or "")[:10],
-            "status": "RETIRED" if retired else "HELD_IN_ESCROW",
-            "batch_hash": chain.get("tail_hash"),
-            "ledger_verified": chain.get("verified", False),
-            "tx_hash": r.get("tx_hash"),
-            "on_chain": False,
-        })
-    return {"success": True, "certificates": certificates}
-
-
-@app.get("/certificates/{cert_id}/pdf")
-def download_certificate_pdf(cert_id: str):
-    """Download the retirement certificate as a print-ready PDF."""
-    from fastapi.responses import Response
-
-    from app.services.certificate_pdf import render_certificate_pdf
-
-    # Generation is fast (~50 ms) but repeat downloads of the same retired
-    # cert are common (buyer ESG reports); cache bytes per certificate.
-    # Certificates are immutable after retirement, so cert_id is a safe key.
-    global _pdf_cache
-    if "_pdf_cache" not in globals():
-        _pdf_cache = {}
-    if len(_pdf_cache) > app_config.PDF_CACHE_MAX_ENTRIES:
-        _pdf_cache.clear()
-    cached = _pdf_cache.get(cert_id)
-    if cached:
-        return Response(
-            content=cached,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
-        )
-
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
-    if not row:
-        return {"success": False, "message": "Certificate not found"}
-    farm_id = row.get("farm_id") or ""
-    chain = ledger.summary(farm_id) if farm_id else {}
-    cert = {
-        "id": cert_id,
-        "buyer": "Corporate Buyer",
-        "farmer_name": row.get("farmer_name"),
-        "crop": row.get("crop"),
-        "volume": row.get("total_credits"),
-        "value": row.get("current_bid"),
-        "location": row.get("location"),
-        "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-        "retired_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-        "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
-    }
-    pdf_bytes = render_certificate_pdf(cert)
-    _pdf_cache[cert_id] = pdf_bytes
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
-    )
-
-
-@app.post("/certificates/{cert_id}/retire")
-def retire_certificate(cert_id: str, scope: Optional[str] = "Scope 1 Neutrality"):
-    """Permanently retire a purchased certificate (marks the underlying listing Retired)."""
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() == "sold"]
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("id,status,farm_id").eq("status", "Sold").execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    target = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
-    if not target:
-        # Purchase = retirement now happens automatically; treat re-retire as success.
-        return {
-            "success": True,
-            "message": f"Certificate {cert_id} is already permanently retired",
-            "cert_id": cert_id,
-            "status": "RETIRED",
-            "already_retired": True,
-        }
-    retired_ts = datetime.now(timezone.utc).isoformat()
-    if not db.is_ready():
-        market_store.update(target["id"], {"status": "Retired", "updated_at": retired_ts})
-    else:
-        sb = db._client()
-        sb.table("marketplace_listings").update({"status": "Retired", "updated_at": retired_ts}).eq("id", target["id"]).execute()
-    if target.get("farm_id"):
-        ledger.append_event(target["farm_id"], "RETIRE", {
-            "certificate_id": cert_id,
-            "scope": scope,
-            "manual": True,
-        })
-    return {
-        "success": True,
-        "message": f"Certificate {cert_id} permanently retired for {scope}",
-        "cert_id": cert_id,
-        "listing_id": target["id"],
-        "status": "RETIRED",
-        "scope": scope,
-        "retired_timestamp": retired_ts,
-    }
-
-
-@app.get("/passport/{farm_id}")
-def get_carbon_passport(farm_id: str):
-    """Digital Carbon Passport: satellite + KYC record, expected earnings,
-    trust-engine state, and the tamper-evident ledger chain."""
-    try:
-        farm = db.get_farm(farm_id) if db.is_ready() else None
-    except Exception:
-        farm = None  # non-uuid ids ("demo") must fall through to the demo farm
-    demo_mode = False
-    if not farm:
-        # Demo mode: serve the canonical sample farm for any unknown id.
-        demo_mode = True
-        farm = {
-            "id": farm_id,
-            "name": "Sri Venkateswara Organic Farm",
-            "owner_phone": "9000000001",
-            "crop_type": "Rice",
-            "area_hectares": 2.4,
-            "ndvi": 0.78,
-            "evi": 0.65,
-            "soil_moisture": 41,
-            "tree_cover": 28,
-            "biodiversity_score": 720,
-            "carbon_tonnes": 82,
-            "total_credits": 96.0,
-            "biodiversity_credits": 18.0,
-            "satellite_source": "Sentinel-2 (demo)",
-            "ai_confidence": 0.87,
-            "status": "verified",
-            "badge": "REGISTRY",
-            "irrigation": "Drip",
-            "updated_at": _sample_data().FALLBACK_AS_OF.isoformat(),
-        }
-    owner = db.get_profile(farm.get("owner_phone") or "") if db.is_ready() else _sample_data().FARMERS.get(farm.get("owner_phone"))
-    kyc = db.get_kyc_status(farm.get("owner_phone") or "") if db.is_ready() else None
-    badge = farm.get("badge") or (kyc or {}).get("badge") or "DOCUMENT"
-    benchmark = {"REGISTRY": 340, "REGISTRY_DOC": 320, "FPO": 300}.get(badge, 310)
-    verification_hash = "0x" + uuid.uuid5(uuid.NAMESPACE_URL, f"carbonx:{farm_id}:{farm.get('updated_at')}").hex[:26]
-
-    credits_total = float(farm.get("total_credits") or 0)
-    income = credit_engine.income_projection(credits_total, badge)
-
-    verified_status = str(farm.get("status", "")).lower() in ("verified", "ver")
-    quality = credit_engine.evidence_quality(
-        has_photo=True,
-        geotag_ok=True,
-        fpo_or_registry=badge in ("REGISTRY", "REGISTRY_DOC", "FPO"),
-        ndvi_current=farm.get("ndvi") is not None,
-        baseline_known=verified_status,
-    )
-    ledger.ensure_genesis(farm_id, {
-        "farm": farm.get("name"),
-        "crop": farm.get("crop_type"),
-        "area_hectares": farm.get("area_hectares"),
-        "ndvi": farm.get("ndvi"),
-        "carbon_tonnes": farm.get("carbon_tonnes"),
-        "badge": badge,
-        "status": farm.get("status"),
-    }, ts=(farm.get("updated_at") or "") or None)
-    chain = ledger.summary(farm_id)
-    farm_status = farm.get("status")
-    monitoring = {
-        "last_monitored_at": farm.get("last_monitored_at"),
-        "last_monitor_ndvi": farm.get("last_monitor_ndvi"),
-        "at_risk": str(farm_status or "").lower() == "flagged",
-        "cycle": "5-day Sentinel-2 revisit",
-    }
-
-    return {
-        "success": True,
-        "passport_id": f"CX-FARM-{str(farm_id).replace('-', '')[:8].upper()}",
-        "demo_mode": demo_mode,
-        "farm_name": farm.get("name"),
-        "owner_name": (owner or {}).get("name") or "Registered Farmer",
-        "phone": farm.get("owner_phone"),
-        "district": (owner or {}).get("district"),
-        "village": (owner or {}).get("village"),
-        "crop": farm.get("crop_type"),
-        "irrigation": farm.get("irrigation"),
-        "acreage": farm.get("area_hectares"),
-        "badge": badge,
-        "benchmark_price": benchmark,
-        "annual_credits": farm.get("total_credits"),
-        "carbon_tonnes": farm.get("carbon_tonnes"),
-        "sentinel_ndvi": farm.get("ndvi"),
-        "evi": farm.get("evi"),
-        "biodiversity_index": round(float(farm.get("biodiversity_score") or 0) / 10, 1) if farm.get("biodiversity_score") else None,
-        "satellite_source": farm.get("satellite_source"),
-        "ai_confidence": farm.get("ai_confidence"),
-        "verification_hash": verification_hash,
-        "farm_status": farm_status,
-        "kyc_status": (kyc or {}).get("status"),
-        "status": "APPROVED MRV RECORD" if verified_status else "PENDING MRV REVIEW",
-        "expected_earnings": income,
-        "credits_ci90": {
-            "low": farm.get("credits_ci90_low"),
-            "high": farm.get("credits_ci90_high"),
-        },
-        "monitoring": monitoring,
-        "trust": {
-            "evidence_quality": quality["score"],
-            "uncertainty_pct": credit_engine.uncertainty_pct(quality["score"]),
-            "components": quality["components"],
-            "verification_hash": verification_hash,
-        },
-        "ledger": chain,
-    }
-
-
-@app.get("/wallet")
-def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
-    """Farmer wallet: sales with the conditional split applied, escrow state,
-    and the ledger hash that proves every payout line."""
-    phone = current_user.get("phone")
-    if not db.is_ready():
-        profile = _sample_data().FARMERS.get(phone) or {}
-        rows = [r for r in market_store.all_rows() if r.get("farmer_phone") == phone]
-    else:
-        try:
-            sb = db._client()
-            profile = db.get_profile(phone) or {}
-            rows = (sb.table("marketplace_listings").select("*").eq("farmer_phone", phone).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-
-    sold = [r for r in rows if str(r.get("status")).lower() in ("sold", "retired")]
-    active = [r for r in rows if str(r.get("status")).lower() == "active"]
-
-    def _gross(r):
-        bid = r.get("current_bid")
-        if bid:
-            return round(float(bid), 2)
-        return round(float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0), 2)
-
-    total_earned = round(sum(_gross(r) for r in sold), 2)
-    escrow_pending = round(sum(_gross(r) for r in active), 2)
-
-    farmer_total = 0.0
-    fpo_total = 0.0
-    platform_total = 0.0
-    transactions = []
-    for r in sorted(sold, key=lambda x: x.get("updated_at") or "", reverse=True):
-        gross = _gross(r)
-        fpo_name = _resolve_fpo_link(None, r.get("farmer_phone") or phone)
-        split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
-        farmer_total += split["farmer_amount_inr"]
-        fpo_total += split["fpo_amount_inr"]
-        platform_total += split["platform_amount_inr"]
-        farm_id = r.get("farm_id") or ""
-        chain = ledger.summary(farm_id) if farm_id else {}
-        transactions.append({
-            "date": (r.get("updated_at") or r.get("created_at") or "")[:10],
-            "tx_id": (r.get("tx_hash") or f"TXN-{(r.get('id') or '')[:6].upper()}"),
-            "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
-            "listing_id": r.get("id"),
-            "farm_id": farm_id,
-            "credits_sold": r.get("total_credits"),
-            "rate": r.get("price_per_credit"),
-            "gross": gross,
-            "farmer_share": split["farmer_amount_inr"],
-            "fpo_share": split["fpo_amount_inr"],
-            "platform_share": split["platform_amount_inr"],
-            "split_model": split["model"],
-            "ledger_hash": chain.get("tail_hash"),
-            "status": "SETTLED",
-        })
-
-    return {
-        "success": True,
-        "total_earned": total_earned,
-        "escrow_pending": escrow_pending,
-        "withdrawable_upi": round(farmer_total, 2),
-        "farmer_share_total": round(farmer_total, 2),
-        "fpo_share_total": round(fpo_total, 2),
-        "platform_share_total": round(platform_total, 2),
-        "upi_id": profile.get("upi"),
-        "demo_mode": not db.is_ready(),
-        "transactions": transactions,
-    }
-
-
-
-
-# ── Ground-truth calibration (MRV rigor) ─────────────────────────────
-# Measured soil-carbon / species data enters here (Soil Health Card labs,
-# field surveys); /ops/ground-truth/eval compares our estimates against it
-# and reports the real error. Until samples exist the platform says so —
-# honestly — instead of inventing an accuracy number.
-
-
-class GroundTruthModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    farm_id: Optional[str] = None
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    measured_soc_tco2e_ha: Optional[float] = None
-    measured_species_count: Optional[int] = None
-    source: str = "field_survey"
-    measured_at: Optional[str] = None
-    notes: Optional[str] = None
-
-
-@app.post("/ops/ground-truth")
-def add_ground_truth(data: GroundTruthModel):
-    """Record a measured ground-truth value for calibration."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database not configured"}
-    try:
-        row = {k: v for k, v in data.model_dump().items() if v is not None}
-        res = sb.table("ground_truth_samples").insert(row).execute()
-        return {"success": True, "sample": (res.data or [None])[0]}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+            await ws.send_text(msg)
+        except Exception:
+            dead.add(ws)
+    for ws in dead:
+        subscribers.discard(ws)
 
 
 @app.websocket("/ws/ledger/{farm_id}")
-async def ws_ledger(websocket: WebSocket, farm_id: str):
-    """Push new ledger events to the passport page instantly (fallback to
-    the existing 15s poll on the client if this connection fails)."""
-    import asyncio
-    import json as _json
-
-    from app.services import ledger as _ledger
-
-    await websocket.accept()
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-
-    def _on_event(event):
-        loop.call_soon_threadsafe(queue.put_nowait, event)
-
-    _ledger.subscribe(farm_id, _on_event)
+async def websocket_ledger(ws: WebSocket, farm_id: str):
+    await ws.accept()
+    _ledger_ws_subscribers.setdefault(farm_id, set()).add(ws)
     try:
-        # send current tail so the client can reconcile immediately
-        summary = _ledger.summary(farm_id)
-        await websocket.send_text(_json.dumps({"type": "snapshot", **summary}))
+        chain = ledger.get_chain(farm_id)
+        if chain:
+            await ws.send_text(json.dumps({
+                "type": "snapshot",
+                "farm_id": farm_id,
+                "events": [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain],
+            }, default=str))
         while True:
-            event = await queue.get()
-            await websocket.send_text(_json.dumps({"type": event["type"], "event": event}))
+            await ws.receive_text()
     except Exception:
-        pass  # client disconnected
-    finally:
-        _ledger.unsubscribe(farm_id, _on_event)
+        _ledger_ws_subscribers.get(farm_id, set()).discard(ws)
 
 
-@app.get("/ops/ground-truth/calibrate")
-def suggest_factor_calibration():
-    """When ground-truth samples accumulate (N>=30, MAE<15%), propose
-    calibrated crop factors (measured/estimated ratio per crop) for the
-    methodology review. Returns suggestions; never auto-applies — factor
-    changes are a governance decision recorded in docs/MRV_METHODOLOGY.md."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database not configured"}
-    try:
-        samples = (sb.table("ground_truth_samples").select("*").execute().data) or []
-        linked = [s for s in samples if s.get("farm_id") and s.get("measured_soc_tco2e_ha")]
-        by_crop: dict = {}
-        for s in linked:
-            farm = db.get_farm(s["farm_id"])
-            if not farm:
-                continue
-            est = credit_engine.estimate_credits(
-                float(farm.get("area_hectares") or 0), farm.get("crop_type") or "",
-                farm.get("ndvi") or 0, quality_score=1.0)
-            per_ha = est["credits_tco2e"] / max(float(farm.get("area_hectares") or 1), 0.01)
-            measured = float(s["measured_soc_tco2e_ha"])
-            crop = (farm.get("crop_type") or "Unknown").strip()
-            by_crop.setdefault(crop, []).append((per_ha, measured))
-        n_total = sum(len(v) for v in by_crop.values())
-        if n_total < 30:
-            return {"success": True,
-                    "eligible": False,
-                    "message": f"Calibration needs >=30 linked samples (have {n_total}). Collect Phase-0 plots first.",
-                    "samples_linked": n_total}
-        suggestions = {}
-        errors = []
-        for crop, pairs in by_crop.items():
-            ratios = [m / max(e, 1e-6) for e, m in pairs]
-            mean_ratio = sum(ratios) / len(ratios)
-            suggestions[crop] = {
-                "n": len(pairs),
-                "mean_ratio_measured_over_estimated": round(mean_ratio, 3),
-                "suggested_biomass_base_multiplier": round(mean_ratio, 3),
-            }
-            errors.extend(abs(m - e) / max(m, 1e-6) * 100 for e, m in pairs)
-        mae_pct = sum(errors) / len(errors)
-        return {"success": True, "eligible": mae_pct < 15, "overall_mae_pct": round(mae_pct, 1),
-                "suggestions": suggestions,
-                "note": "Apply via methodology review — update _CROP_FACTORS and bump FORMULA_VERSION."}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+# ── Monitoring cycle (used by scheduler and /monitor/run) ──
+NDVI_DROP_ALERT = app_config.NDVI_DROP_ALERT
 
 
-@app.get("/ops/ground-truth/eval")
-def evaluate_ground_truth():
-    """Estimate-vs-measured error report (empty state = honest 'no data yet')."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database not configured"}
-    try:
-        samples = (sb.table("ground_truth_samples").select("*").execute().data) or []
-        linked = [s for s in samples if s.get("farm_id") and s.get("measured_soc_tco2e_ha")]
-        comparisons = []
-        for s in linked:
-            farm = db.get_farm(s["farm_id"])
-            if not farm:
-                continue
-            est = credit_engine.estimate_credits(
-                float(farm.get("area_hectares") or 0), farm.get("crop_type") or "",
-                farm.get("ndvi") or 0, quality_score=1.0)
-            per_ha = est["credits_tco2e"] / max(float(farm.get("area_hectares") or 1), 0.01)
-            measured = float(s["measured_soc_tco2e_ha"])
-            comparisons.append({
-                "farm_id": s["farm_id"],
-                "estimated_tco2e_ha": round(per_ha, 2),
-                "measured_tco2e_ha": measured,
-                "error_pct": round(abs(per_ha - measured) / max(measured, 1e-6) * 100, 1),
-                "source": s.get("source"),
-            })
-        n = len(comparisons)
-        summary = {
-            "samples_total": len(samples),
-            "samples_linked_to_farms": n,
-            "mae_pct": round(sum(c["error_pct"] for c in comparisons) / n, 1) if n else None,
-        }
-        if not n:
-            summary["status"] = ("NO CALIBRATION DATA YET — estimates are proxy-based "
-                                 "(NDVI productivity proxy); enter measured SOC via "
-                                 "POST /ops/ground-truth to produce a real error figure.")
-        return {"success": True, "summary": summary, "comparisons": comparisons}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-class FpoLoginModel(BaseModel):
-    registration_no: str
-
-
-@app.post("/fpo/login")
-def fpo_login(data: FpoLoginModel):
-    """FPO desk sign-in, step 1: identify the FPO by registration number and
-    send an OTP to its linked officer's phone. Step 2 is the standard
-    OTP login, which issues a token carrying role='fpo'."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database not configured"}
-    try:
-        reg = data.registration_no.strip()
-        fpos = (sb.table("fpos").select("id,name").eq("registration_no", reg).execute().data) or []
-        if not fpos:
-            return {"success": False, "message": "No FPO found for that registration number"}
-        fpo = fpos[0]
-        officers = (sb.table("profiles").select("phone,name")
-                    .eq("role", "fpo").eq("fpo_id", fpo["id"]).execute().data) or []
-        if not officers:
-            return {"success": False, "message": "No verification officer is linked to this FPO yet. Ask the platform admin to link one."}
-        officer = officers[0]
-        flow = _send_otp_flow(officer["phone"])
-        if not flow.get("success"):
-            return {"success": False, "message": flow.get("message") or "Could not send OTP to the officer's phone"}
-        masked = officer["phone"][:2] + "xxxxxx" + officer["phone"][-3:]
-        return {
-            "success": True,
-            "message": f"OTP sent to the registered officer's phone ({masked}). Verify it on the farmer login to enter the FPO desk.",
-            "fpo_name": fpo["name"],
-            "officer_phone_masked": masked,
-            "next": "login",
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-@app.post("/demo/login")
-def demo_login(data: dict = None):
-    """Issue a demo farmer session — only when the database is not configured.
-
-    Lets the whole farmer loop (wallet, passport, calculator) be exercised
-    with credentials removed. Refuses to start when a real DB exists.
-    """
-    if db.is_ready():
-        return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
-    body = data or {}
-    phone = str(body.get("phone") or "9000000001")
-    farmer = _sample_data().FARMERS.get(phone)
-    if not farmer:
-        return {"success": False, "message": "Unknown demo farmer"}
-    token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
-    return {
-        "success": True,
-        "demo_mode": True,
-        "token": token,
-        "user": {
-            "phone": phone,
-            "name": farmer["name"],
-            "role": "farmer",
-            "district": farmer.get("district"),
-            "village": farmer.get("village"),
-            "upi": farmer.get("upi"),
-            "demo": True,
-        },
-        "message": f"Demo session started for {farmer['name']}",
-    }
-
-
-
-
-@app.get("/ops/summary")
-def ops_summary():
-    """Read-only operational snapshot for monitoring dashboards (no PII)."""
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database not configured", "mode": "demo"}
-    try:
-        def count(table, query=None):
-            q = sb.table(table).select("*", count="exact")
-            if query:
-                q = q.eq(*query)
-            return q.execute().count or 0
-        farms_flagged = count("farms", ("status", "Flagged"))
-        farms_pending = count("farms", ("status", "Pending"))
-        summary = {
-            "success": True,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-            "profiles": count("profiles"),
-            "farms_total": count("farms"),
-            "farms_pending_review": farms_pending,
-            "farms_flagged_at_risk": farms_flagged,
-            "listings_active": count("marketplace_listings", ("status", "Active")),
-            "listings_retired": count("marketplace_listings", ("status", "Retired")),
-            "kyc_verifications": count("kyc_verifications"),
-            "ground_truth_samples": count("ground_truth_samples"),
-            "ledger_events": count("ledger_events"),
-        }
-        return summary
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-NDVI_DROP_ALERT = app_config.NDVI_DROP_ALERT  # Sentinel-2-cycle drop that flags credits at-risk
-
-
-@app.post("/monitor/run")
-def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user_optional),
-                         x_monitor_secret: Optional[str] = Header(None)):
-    """5-day continuous monitoring (the real Sentinel-2 revisit cycle).
-
-    Compares each verified farm's current NDVI against the last monitored
-    value. A significant drop (drought, disease, abandonment, land-use change)
-    flags the farm's credits at-risk: the farm is routed to the FPO flagged
-    queue and a MONITOR event lands on its hash chain. Clean cycles just
-    refresh the snapshot — the ledger stays lean.
-
-    Distributed operation: set CARBONX_MONITOR_SECRET and an external cron
-    (GitHub Actions / Cloud Scheduler) calls this endpoint with the
-    X-Monitor-Secret header — then disable the in-process scheduler with
-    CARBONX_AUTO_MONITOR=0. Unauthenticated local calls still work when no
-    secret is configured (dev/demo).
-    """
-    required_secret = os.getenv("CARBONX_MONITOR_SECRET", "").strip()
+def run_monitoring_cycle(current_user: Optional[dict] = None, x_monitor_secret: Optional[str] = None):
+    required_secret = app_config.MONITOR_SECRET
     if required_secret and x_monitor_secret != required_secret:
         if not (current_user and current_user.get("role") in ("fpo", "admin", "verifier")):
             return {"success": False, "message": "Monitoring requires the monitor secret or an FPO/admin session"}
@@ -2909,7 +598,7 @@ def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user
         now_iso = datetime.now(timezone.utc).isoformat()
         for farm in farms:
             if str(farm.get("status") or "").lower() in ("pending",):
-                continue  # unverified farms aren't carrying credits yet
+                continue
             checked += 1
             current = farm.get("ndvi")
             if current is None:
@@ -2924,92 +613,42 @@ def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user
             if last is not None and drop >= NDVI_DROP_ALERT:
                 sb.table("farms").update({"status": "Flagged"}).eq("id", farm["id"]).execute()
                 ledger.append_event(farm["id"], "MONITOR", {
-                    "risk": "ndvi_drop",
-                    "drop": drop,
-                    "previous_ndvi": float(last),
-                    "current_ndvi": current,
+                    "risk": "ndvi_drop", "drop": drop,
+                    "previous_ndvi": float(last), "current_ndvi": current,
                     "note": "Credits at-risk — routed to FPO review (drought/disease/abandonment possible)",
                 })
                 at_risk.append({
-                    "farm_id": farm["id"],
-                    "name": farm.get("name"),
-                    "drop": drop,
-                    "previous_ndvi": float(last),
-                    "current_ndvi": current,
+                    "farm_id": farm["id"], "name": farm.get("name"),
+                    "drop": drop, "previous_ndvi": float(last), "current_ndvi": current,
                 })
             else:
                 healthy += 1
         return {
-            "success": True,
-            "checked": checked,
-            "healthy": healthy,
-            "at_risk_count": len(at_risk),
-            "at_risk": at_risk,
-            "alert_threshold": NDVI_DROP_ALERT,
-            "ran_at": now_iso,
+            "success": True, "checked": checked, "healthy": healthy,
+            "at_risk_count": len(at_risk), "at_risk": at_risk,
+            "alert_threshold": NDVI_DROP_ALERT, "ran_at": now_iso,
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
 
 
-class EarningsCalcModel(BaseModel):
-    area_hectares: float
-    crop: Optional[str] = ""
-    ndvi: Optional[float] = 0.7
-    baseline_ndvi: Optional[float] = None
-    badge: Optional[str] = "DOCUMENT"
-    has_photo: Optional[bool] = True
-    geotag_ok: Optional[bool] = True
-    fpo_or_registry: Optional[bool] = False
-
-
-@app.post("/farms/earnings-calculator")
-def earnings_calculator(data: EarningsCalcModel):
-    """Pre-signup earnings estimate — the farmer sees expected rupees before
-    enrolling. Open endpoint: no auth, no database required."""
-    quality = credit_engine.evidence_quality(
-        has_photo=data.has_photo,
-        geotag_ok=data.geotag_ok,
-        fpo_or_registry=data.fpo_or_registry,
-        ndvi_current=data.ndvi is not None,
-        baseline_known=data.baseline_ndvi is not None,
-    )
-    estimate = credit_engine.estimate_credits(
-        area_hectares=data.area_hectares,
-        crop=data.crop or "",
-        ndvi=data.ndvi or 0.7,
-        baseline_ndvi=data.baseline_ndvi,
-        quality_score=quality["score"],
-    )
-    income = credit_engine.income_projection(estimate["credits_tco2e"], data.badge or "DOCUMENT")
+# ── Demo login (only when DB not configured) ──
+@app.post("/demo/login")
+def demo_login(data: dict = None):
+    if db.is_ready():
+        return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
+    body = data or {}
+    phone = str(body.get("phone") or "9000000001")
+    farmer = _sample_data().FARMERS.get(phone)
+    if not farmer:
+        return {"success": False, "message": "Unknown demo farmer"}
+    token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
     return {
-        "success": True,
-        "estimate": estimate,
-        "income": income,
-        "evidence_quality": quality,
+        "success": True, "demo_mode": True, "token": token,
+        "user": {
+            "phone": phone, "name": farmer["name"], "role": "farmer",
+            "district": farmer.get("district"), "village": farmer.get("village"),
+            "upi": farmer.get("upi"), "demo": True,
+        },
+        "message": f"Demo session started for {farmer['name']}",
     }
-
-
-@app.get("/ledger/{farm_id}")
-def get_farm_ledger(farm_id: str):
-    """The farm's tamper-evident event chain, recomputed and verified."""
-    chain = ledger.get_chain(farm_id)
-    if not chain:
-        farm = db.get_farm(farm_id) if db.is_ready() else None
-        snapshot = {
-            "farm": (farm or {}).get("name") or "Sri Venkateswara Organic Farm (demo)",
-            "crop": (farm or {}).get("crop_type") or "Rice",
-            "ndvi": (farm or {}).get("ndvi") or 0.78,
-            "note": "Genesis anchored from farm evidence snapshot",
-        }
-        ledger.ensure_genesis(farm_id, snapshot)
-        chain = ledger.get_chain(farm_id)
-    verification = ledger.verify_chain(farm_id)
-    public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain]
-    return {
-        "success": True,
-        "farm_id": farm_id,
-        "verification": verification,
-        "events": public_events,
-    }
-

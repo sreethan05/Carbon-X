@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timezone
-from typing import List, Optional, TypedDict
+from typing import List, Optional, TypedDict, Any
 
 
 class ListingRow(TypedDict, total=False):
@@ -64,6 +64,83 @@ class ProfileRow(TypedDict, total=False):
     preferred_language: Optional[str]
     created_at: str
     updated_at: str
+
+
+class FpoRow(TypedDict, total=False):
+    id: str
+    name: str
+    registration_no: str
+    created_at: str
+    updated_at: str
+
+
+class CorporateRow(TypedDict, total=False):
+    c_id: str
+    name: str
+    password_hash: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class KycVerificationRow(TypedDict, total=False):
+    id: str
+    owner_phone: str
+    status: str
+    reasons: Any
+    checks: Any
+    extracted_fields: Any
+    document_name: str
+    document_sha256: str
+    perceptual_hash: Optional[str]
+    created_at: str
+
+
+class LedgerEventRow(TypedDict, total=False):
+    id: str
+    entity_id: str
+    seq: int
+    event_type: str
+    payload: Any
+    payload_json: str
+    ts: str
+    prev_hash: str
+    hash: str
+
+
+class GroundTruthSampleRow(TypedDict, total=False):
+    id: str
+    farm_id: Optional[str]
+    latitude: Optional[float]
+    longitude: Optional[float]
+    measured_soc_tco2e_ha: Optional[float]
+    measured_species_count: Optional[int]
+    source: str
+    measured_at: Optional[str]
+    notes: Optional[str]
+    created_at: str
+
+
+class LandRegistryRow(TypedDict, total=False):
+    id: str
+    survey_number: str
+    owner_name: str
+    area_ha: float
+    village: str
+    mandal: str
+    district: str
+    tier: str
+    registry_geometry_available: bool
+    geojson: Optional[dict]
+    created_at: str
+    updated_at: str
+
+
+class FpoMemberRow(TypedDict, total=False):
+    id: str
+    fpo_id: str
+    farmer_phone: str
+    joined_at: str
+
 
 _supabase = None
 _ready = False
