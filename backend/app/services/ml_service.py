@@ -46,59 +46,54 @@ def _load_models():
         _model_loaded = True
         return False
 
-def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0) -> dict:
-    """
-    Predict biodiversity score from vegetation indices.
-    Returns dict with score (0-100), confidence, and status label.
-    """
-    if evi is None:
-        evi = ndvi * 0.85
+FEATURE_ORDER = ["NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR"]
 
-    # Feature vector matching training schema:
-    # ['NDVI', 'NDWI', 'SAVI', 'NDVI_STD', 'B4', 'B8', 'B11', 'B8_VAR']
+
+def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, features: dict = None) -> dict:
+    """Predict a biodiversity score for a plot.
+
+    features: OPTIONAL dict of real Sentinel-2 features (NDVI, NDWI, SAVI,
+    NDVI_STD, B4, B8, B11, B8_VAR) as computed by the Earth Engine pipeline —
+    the same derivation used in training. When they are not available we DO
+    NOT fabricate them: a model fed synthetic stand-ins for real satellite
+    features produces garbage with a confident face. The NDVI-only heuristic
+    is used instead, clearly labelled.
+    """
     nd = float(ndvi or 0.45)
-    ndwi = round(nd * 0.4 - 0.45, 4)
-    savi = round(nd * 1.4 + 0.05, 4)
-    ndvi_std = round(0.06 + (nd * 0.05), 4)
-    b4 = round(1500 + (1 - nd) * 800)
-    b8 = round(2500 + nd * 1800)
-    b11 = round(2800 + (1 - nd) * 700)
-    b8_var = round(500000 + nd * 300000)
 
-    features = np.array([[nd, ndwi, savi, ndvi_std, b4, b8, b11, b8_var]])
-
-    if _load_models() and _model is not None and _feature_scaler is not None:
+    model_ready = _load_models() and _model is not None and _feature_scaler is not None
+    if model_ready and features:
         try:
-            scaled = _feature_scaler.transform(features)
+            vector = [float(features[k]) for k in FEATURE_ORDER]
+            scaled = _feature_scaler.transform(np.array([vector]))
             raw_score = float(_model.predict(scaled)[0])
             if _score_scaler is not None:
                 bio_score = round(float(_score_scaler.transform([[raw_score]])[0][0]), 1)
             else:
                 bio_score = round(min(max(raw_score * 100, 0), 100), 1)
-            bio_score = min(max(bio_score, 10.0), 98.0)
-            source = "ML GradientBoosting"
+            bio_score = min(max(bio_score, 5.0), 98.0)
+            return _package(bio_score, nd, source=f"ML {type(_model).__name__} (real Sentinel-2 features)")
+        except KeyError as e:
+            print(f"ML predict: missing feature {e} — falling back to heuristic")
         except Exception as e:
             print(f"ML predict error: {e}")
-            bio_score = _heuristic_score(nd)
-            source = "Heuristic fallback"
-    else:
-        bio_score = _heuristic_score(nd)
-        source = "Heuristic (model unavailable)"
 
+    source = "Heuristic (NDVI-only)" if not model_ready else "Heuristic (real features unavailable)"
+    return _package(_heuristic_score(nd), nd, source=source)
+
+
+def _package(bio_score: float, ndvi: float, source: str) -> dict:
     status = (
         "Excellent" if bio_score >= 80
         else "Good" if bio_score >= 60
         else "Moderate" if bio_score >= 40
         else "Low"
     )
-
-    confidence = round(min(75 + ndvi * 30, 99.5), 1)
-
     return {
-        "biodiversity_score": bio_score,
+        "biodiversity_score": round(float(bio_score), 1),
         "status": status,
-        "confidence": confidence,
-        "source": source
+        "confidence": round(min(75 + ndvi * 30, 99.5), 1),
+        "source": source,
     }
 
 def _heuristic_score(ndvi: float) -> float:
