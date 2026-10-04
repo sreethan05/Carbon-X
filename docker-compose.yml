@@ -1,13 +1,101 @@
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: carbonx-redis-4000
+  # ── React Frontend (Nginx SPA + Reverse Proxy) ──
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: carbonx-frontend
     restart: unless-stopped
     ports:
-      - "4000:6379"
+      - "5000:80"
+    depends_on:
+      backend-py:
+        condition: service_healthy
+      backend-bc:
+        condition: service_healthy
+    networks:
+      - carbonx-network
+
+  # ── Python FastAPI Backend ──
+  backend-py:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: carbonx-backend-py
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
+      - GEE_PROJECT=${GEE_PROJECT:-carbonx-507617}
+      - CORS_ORIGINS=http://localhost:5000,http://localhost:80,http://frontend:80
+      - CARBONX_ALLOW_DEV_OTP=${CARBONX_ALLOW_DEV_OTP:-1}
+    volumes:
+      - carbonx_ledger_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - carbonx-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Node.js Blockchain Microservice ──
+  backend-bc:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.node
+    container_name: carbonx-backend-bc
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - RPC_URL=${RPC_URL:-}
+      - CARBON_CREDIT_ADDRESS=${CARBON_CREDIT_ADDRESS:-}
+      - MARKETPLACE_ADDRESS=${MARKETPLACE_ADDRESS:-}
+      - MINTER_PRIVATE_KEY=${MINTER_PRIVATE_KEY:-}
+    networks:
+      - carbonx-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ── Redis Cache & Rate-Limiting ──
+  redis:
+    image: redis:7-alpine
+    container_name: carbonx-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
     volumes:
       - carbonx_redis_data:/data
-    command: redis-server --appendonly yes
+    networks:
+      - carbonx-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  carbonx-network:
+    name: carbonx-network
+    driver: bridge
 
 volumes:
   carbonx_redis_data:
+    name: carbonx_redis_data
+  carbonx_ledger_data:
+    name: carbonx_ledger_data
