@@ -322,7 +322,7 @@ export default function FarmOwnershipVerification() {
               {!isProcessingPipeline && !pipelineDone && (
                 <button
                   onClick={runPipeline}
-                  className="w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
                 >
                   <ScanLine className="w-4 h-4" />
                   <span>Run Automated Trust Engine Check</span>
@@ -385,7 +385,7 @@ export default function FarmOwnershipVerification() {
             {searchDone && registryResult && (
               <button
                 onClick={proceedToMapping}
-                className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-6"
+                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-6"
               >
                 <span>Proceed to Satellite Boundary Mapping</span>
                 <ArrowRight className="w-4 h-4" />

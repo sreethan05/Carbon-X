@@ -115,15 +115,15 @@ export default function SatellitePreview() {
       <div className="max-w-2xl w-full space-y-6">
 
         {/* HUD Scanner Box */}
-        <div className="bg-[#1B4332] text-white border border-emerald-900 rounded-2xl p-8 text-center relative overflow-hidden shadow-xl">
+        <div className="bg-[#0C2A18] text-white border border-emerald-900 rounded-2xl p-8 text-center relative overflow-hidden shadow-xl">
           <div className="relative w-24 h-24 mx-auto mb-4">
             <div className="absolute inset-0 bg-emerald-400/20 rounded-full animate-ping" />
-            <div className="absolute inset-0 border-2 border-emerald-400 rounded-full flex items-center justify-center bg-[#1B4332] shadow-inner">
+            <div className="absolute inset-0 border-2 border-emerald-400 rounded-full flex items-center justify-center bg-[#0C2A18] shadow-inner">
               <Satellite className="w-10 h-10 text-emerald-300" />
             </div>
           </div>
 
-          <span className="text-[10px] font-bold uppercase tracking-wider bg-[#2D6A4F] text-[#D1FAE5] border border-emerald-500/40 px-3 py-1 rounded-full inline-block mb-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider bg-[#15803D] text-[#D1FAE5] border border-emerald-500/40 px-3 py-1 rounded-full inline-block mb-2">
             Sentinel-2 Multi-Spectral Scanner
           </span>
           <h1 className="text-2xl font-extrabold font-manrope text-white">Satellite MRV Analysis HUD</h1>
@@ -161,7 +161,7 @@ export default function SatellitePreview() {
           {mrvLocked && result?.stage1 && (
             <div className={`mt-6 inline-flex items-center gap-2 px-5 py-2 rounded-full text-xs font-bold font-mono shadow-md border animate-in fade-in zoom-in duration-200 ${
               result.stage1.status === 'MATCH'
-                ? 'bg-[#2D6A4F] border-emerald-400 text-[#D1FAE5]'
+                ? 'bg-[#15803D] border-emerald-400 text-[#D1FAE5]'
                 : result.stage1.status === 'MISMATCH'
                   ? 'bg-amber-100 border-amber-400 text-amber-900'
                   : 'bg-slate-100 border-slate-300 text-slate-700'

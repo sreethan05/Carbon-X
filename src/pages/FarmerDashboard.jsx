@@ -90,7 +90,7 @@ export default function FarmerDashboard() {
                   onClick={() => setSelectedFarmIndex(idx)}
                   className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
                     selectedFarmIndex === idx
-                      ? 'bg-[#1B4332] text-white border-[#1B4332] shadow-xs'
+                      ? 'bg-[#0C2A18] text-white border-[#0C2A18] shadow-xs'
                       : 'bg-[#F8FAF8] text-slate-700 border-slate-200 hover:bg-emerald-50'
                   }`}
                 >
@@ -110,7 +110,7 @@ export default function FarmerDashboard() {
             </p>
             <button
               onClick={() => navigate('/farmer/land-verification')}
-              className="px-5 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-bold text-xs rounded-xl transition-all shadow-sm inline-flex items-center gap-2"
+              className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white font-bold text-xs rounded-xl transition-all shadow-sm inline-flex items-center gap-2"
             >
               <ShieldCheck className="w-4 h-4" />
               <span>Enroll Your First Parcel</span>
@@ -154,7 +154,7 @@ export default function FarmerDashboard() {
             <div className="pt-2 flex flex-wrap gap-3">
               <button
                 onClick={() => navigate('/farmer/land-verification')}
-                className="px-5 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-2"
+                className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center gap-2"
               >
                 <ShieldCheck className="w-4 h-4" />
                 <span>Complete Verification Flow</span>
@@ -173,7 +173,7 @@ export default function FarmerDashboard() {
                     Live Benchmark
                   </span>
                 </div>
-                <h2 className="text-3xl md:text-4xl font-extrabold font-manrope text-[#1B4332] mt-2">
+                <h2 className="text-3xl md:text-4xl font-extrabold font-manrope text-[#0C2A18] mt-2">
                   ₹{currentFarm.earnings.toLocaleString('en-IN')} <span className="text-sm font-normal text-slate-600">/ year</span>
                 </h2>
                 <p className="text-xs text-slate-600 mt-1 max-w-xl font-medium">
@@ -183,7 +183,7 @@ export default function FarmerDashboard() {
 
               <button
                 onClick={() => navigate('/farmer/wallet')}
-                className="px-6 py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0"
+                className="px-6 py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2 shrink-0"
               >
                 <Wallet className="w-4 h-4 text-emerald-300" />
                 <span>Open Wallet & UPI Ledger</span>
@@ -196,7 +196,7 @@ export default function FarmerDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-2xl p-6 space-y-1">
             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">NDVI Vegetation Index</p>
-            <p className="text-3xl font-extrabold text-[#1B4332] font-manrope">{currentFarm.ndvi} Index</p>
+            <p className="text-3xl font-extrabold text-[#0C2A18] font-manrope">{currentFarm.ndvi} Index</p>
             <p className="text-xs text-slate-500 font-medium pt-1">Sentinel-2 Multi-Spectral Active Vegetation Canopy</p>
           </div>
 

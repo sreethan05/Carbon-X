@@ -134,7 +134,7 @@ export default function EarningsCalculator({ farm }) {
       <button
         onClick={runEstimate}
         disabled={isCalculating}
-        className="w-full sm:w-auto px-6 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+        className="w-full sm:w-auto px-6 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
       >
         {isCalculating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-emerald-300" />}
         <span>{isCalculating ? 'Calculating…' : 'Estimate My Earnings'}</span>

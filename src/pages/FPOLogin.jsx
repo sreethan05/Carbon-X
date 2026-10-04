@@ -160,7 +160,7 @@ export default function FPOLogin() {
               <button
                 type="submit"
                 disabled={isVerifying}
-                className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
               >
                 {isVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 <span>Send Officer 6-Digit OTP</span>
@@ -208,7 +208,7 @@ export default function FPOLogin() {
                   disabled={!canResend}
                   className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
                     canResend
-                      ? 'bg-[#1B4332] text-white hover:bg-[#2D6A4F] shadow-xs'
+                      ? 'bg-[#0C2A18] text-white hover:bg-[#15803D] shadow-xs'
                       : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                   }`}
                 >
@@ -220,7 +220,7 @@ export default function FPOLogin() {
               <button
                 type="submit"
                 disabled={isVerifying}
-                className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {isVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 <span>{isVerifying ? 'Authenticating FPO Officer...' : 'Verify & Access FPO Desk'}</span>

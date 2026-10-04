@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CarbonX — B3 × C3 UI Demo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      ink: '#14201A',
+      panel: '#0D1B14',
+      primary: '#16A34A',
+      primaryd: '#15803D',
+      neon: '#34D399',
+      neonD: '#10B981',
+      cream: '#F6F5EE',
+    },
+    fontFamily: { display: ['Manrope','sans-serif'], body: ['Inter','sans-serif'], mono: ['JetBrains Mono','monospace'] },
+  }}
+}
+</script>
+<style>
+  body { font-family: 'Inter', sans-serif; }
+  .glow-line { filter: drop-shadow(0 0 6px rgba(52,211,153,.45)); }
+</style>
+</head>
+<body class="bg-cream text-slate-900">
+
+<!-- green variant picker -->
+<div class="bg-white border-b border-slate-200 py-5 px-6">
+  <p class="text-center text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Green variant — applied: Kelly (#16A34A)</p>
+  <div class="flex justify-center gap-3 flex-wrap text-[10px] font-bold text-white">
+    <span class="px-4 py-2 rounded-xl" style="background:#059669">G1 · Emerald</span>
+    <span class="px-4 py-2 rounded-xl ring-2 ring-slate-900 ring-offset-2" style="background:#16A34A">G2 · Kelly ✓</span>
+    <span class="px-4 py-2 rounded-xl" style="background:#0D9488">G3 · Viridian</span>
+    <span class="px-4 py-2 rounded-xl" style="background:#14532D">G4 · Forest</span>
+  </div>
+</div>
+
+<!-- preview header -->
+<div class="bg-ink text-white py-8 px-6 text-center">
+  <p class="text-xs font-bold tracking-[0.3em] text-emerald-300 uppercase mb-2">CarbonX UI Demo · B3 × C3</p>
+  <h1 class="font-display text-2xl font-extrabold">Light fintech base × dark smart-farming analytics</h1>
+  <p class="text-sm text-slate-300 mt-1">References shown first, then the same style applied to CarbonX screens</p>
+</div>
+
+<!-- references strip -->
+<div class="max-w-6xl mx-auto px-6 pt-10">
+  <p class="font-mono text-xs text-slate-500 mb-3">THE REFERENCES YOU PICKED</p>
+  <div class="grid grid-cols-2 gap-4">
+    <div class="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+      <span class="inline-block m-2 px-2.5 py-1 rounded-lg bg-slate-900 text-white font-black text-xs">B3</span>
+      <img src="https://cdn.dribbble.com/userupload/47264264/file/still-3bcb48243f0a85793bd0b2b1829ea5e9.png?format=webp&resize=600x450&vertical=center" class="w-full" alt="B3">
+    </div>
+    <div class="rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-sm">
+      <span class="inline-block m-2 px-2.5 py-1 rounded-lg bg-slate-900 text-white font-black text-xs">C3</span>
+      <img src="https://cdn.dribbble.com/userupload/48457903/file/still-62ddd3f8ec37bc454fd26ad55a7f375b.png?format=webp&resize=600x450&vertical=center" class="w-full" alt="C3">
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 01 · LANDING ═══ -->
+<div class="max-w-6xl mx-auto px-6 pt-14">
+  <p class="font-mono text-xs text-slate-500 mb-3">01 · LANDING — B3 light base, C3 data energy</p>
+  <div class="rounded-3xl overflow-hidden shadow-xl bg-white border border-slate-200">
+    <!-- topbar -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center"><span class="text-white text-sm font-black">C</span></div>
+        <span class="font-display font-extrabold">CarbonX</span>
+      </div>
+      <div class="hidden md:flex gap-6 text-xs font-semibold text-slate-600">
+        <span class="text-primary">Marketplace</span><span>Verification</span><span>For Farmers</span><span>For FPOs</span><span>For Buyers</span>
+      </div>
+      <button class="bg-primary text-white text-xs font-bold px-4 py-2 rounded-lg">Launch Portal</button>
+    </div>
+    <!-- hero -->
+    <div class="grid md:grid-cols-2 gap-8 items-center p-8 md:p-12">
+      <div>
+        <span class="inline-flex items-center gap-2 text-[11px] font-bold bg-eco-50 text-emerald-700 border border-emerald-200 rounded-full px-3 py-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Sentinel-2 verified · 5-day MRV cycle
+        </span>
+        <h1 class="font-display text-4xl font-extrabold mt-4 leading-tight text-ink">
+          Your soil stores carbon.<br><span class="text-primary">Now it earns like a crop.</span>
+        </h1>
+        <p class="text-slate-600 mt-4 text-sm md:text-base">India's first farmer-first carbon marketplace. Satellite-verified, hash-anchored, paid with a 70% floor — visible on one screen.</p>
+        <div class="flex gap-3 mt-6">
+          <button class="bg-primary text-white font-bold text-sm px-6 py-3 rounded-xl hover:bg-primaryd transition">Register your farm →</button>
+          <button class="border border-slate-300 font-bold text-sm px-6 py-3 rounded-xl hover:bg-slate-50 transition">Explore credits</button>
+        </div>
+        <div class="flex gap-6 mt-8">
+          <div><p class="font-display text-2xl font-extrabold text-ink">2,847</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">plots monitored</p></div>
+          <div><p class="font-display text-2xl font-extrabold text-ink">18.3k</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">tCO₂e retired</p></div>
+          <div><p class="font-display text-2xl font-extrabold text-neonD">70%</p><p class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">farmer floor ✓</p></div>
+        </div>
+      </div>
+      <!-- C3-style data card in the hero -->
+      <div class="relative">
+        <div class="rounded-2xl bg-panel text-white p-5 shadow-2xl border border-emerald-900/30">
+          <div class="flex items-center justify-between mb-3">
+            <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Live NDVI · Survey 42/Plot A</p>
+            <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-neonD/10 text-neon border border-neon/20">SENTINEL-2 ✓</span>
+          </div>
+          <canvas id="heroChart" height="120"></canvas>
+          <div class="grid grid-cols-3 gap-2 mt-4 text-center">
+            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">NDVI</p><p class="text-sm font-extrabold text-neon">0.78</p></div>
+            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">Soil C</p><p class="text-sm font-extrabold text-white">+0.4 t/ha</p></div>
+            <div class="bg-white/5 rounded-lg py-2 border border-white/5"><p class="text-[9px] font-bold text-slate-500 uppercase">Earnings</p><p class="text-sm font-extrabold text-white">₹12.6k</p></div>
+          </div>
+        </div>
+        <div class="absolute -bottom-4 -left-4 bg-white rounded-xl shadow-lg border border-slate-200 px-4 py-2.5 flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-neonD animate-pulse"></span>
+          <p class="text-[11px] font-bold text-slate-700">Satellite scan verified · 2h ago</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 02 · MARKETPLACE ═══ -->
+<div class="max-w-6xl mx-auto px-6 pt-14">
+  <p class="font-mono text-xs text-slate-500 mb-3">02 · MARKETPLACE — B3 clean product grid</p>
+  <div class="rounded-3xl bg-white shadow-xl border border-slate-200 p-6 md:p-8">
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+      <h2 class="font-display text-xl font-extrabold">Verified Credit Listings</h2>
+      <div class="flex gap-2">
+        <span class="px-3.5 py-1.5 rounded-lg bg-primary text-white text-[11px] font-bold">All</span>
+        <span class="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600">Rice</span>
+        <span class="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600">Cotton</span>
+        <span class="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-600">Millets</span>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5" id="mkGrid"></div>
+  </div>
+</div>
+
+<!-- ═══ 03 · FARMER DASHBOARD (C3 dark analytics panel) ═══ -->
+<div class="max-w-6xl mx-auto px-6 pt-14 pb-16">
+  <p class="font-mono text-xs text-slate-500 mb-3">03 · FARMER DASHBOARD — light app + C3 dark analytics panel</p>
+  <div class="rounded-3xl overflow-hidden shadow-xl border border-slate-200 bg-white">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-primary flex items-center justify-center"><span class="text-white text-xs font-black">VR</span></div>
+        <div><p class="font-display font-extrabold text-sm">Venkat Rao</p><p class="text-[10px] text-slate-400">Bonakal, Khammam · 2 farms</p></div>
+      </div>
+      <span class="px-3 py-1 rounded-lg bg-eco-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">1 Farm VERIFIED ✓ · 1 PENDING</span>
+    </div>
+    <div class="grid md:grid-cols-5 gap-5 p-6">
+      <!-- stat cards (light, B3) -->
+      <div class="md:col-span-2 space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div class="border border-slate-200 rounded-2xl p-4">
+            <p class="text-[10px] font-bold text-slate-400 uppercase">NDVI Index</p>
+            <p class="font-display text-3xl font-extrabold text-ink mt-1">0.78</p>
+            <p class="text-[10px] font-bold text-emerald-600 mt-1">▲ Excellent vegetation</p>
+          </div>
+          <div class="border border-slate-200 rounded-2xl p-4">
+            <p class="text-[10px] font-bold text-slate-400 uppercase">Expected Earnings</p>
+            <p class="font-display text-3xl font-extrabold text-primary mt-1">₹22.8k</p>
+            <p class="text-[10px] font-bold text-slate-400 mt-1">70% floor · per year</p>
+          </div>
+        </div>
+        <div class="border border-slate-200 rounded-2xl p-4">
+          <p class="text-[10px] font-bold text-slate-400 uppercase mb-2">Trust Engine</p>
+          <div class="space-y-2 text-xs font-semibold text-slate-600">
+            <div class="flex justify-between"><span>Practice photo</span><span class="text-emerald-600 font-bold">✓ 0.25</span></div>
+            <div class="flex justify-between"><span>Geotag in boundary</span><span class="text-emerald-600 font-bold">✓ 0.25</span></div>
+            <div class="flex justify-between"><span>Registry verified</span><span class="text-emerald-600 font-bold">✓ 0.25</span></div>
+            <div class="flex justify-between"><span>Baseline NDVI</span><span class="text-amber-600 font-bold">– 0.10</span></div>
+          </div>
+          <div class="mt-3 h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-primary rounded-full" style="width:90%"></div></div>
+          <p class="text-[10px] text-slate-400 mt-1.5">Evidence quality 90% → uncertainty −10%</p>
+        </div>
+        <button class="w-full bg-primary text-white text-xs font-bold py-3 rounded-xl hover:bg-primaryd transition">Open Carbon Passport →</button>
+      </div>
+      <!-- C3 dark analytics panel -->
+      <div class="md:col-span-3 rounded-2xl bg-panel border border-emerald-900/30 p-5 text-white shadow-xl">
+        <div class="flex items-center justify-between mb-3">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">5-Day Satellite Monitoring · Sentinel-2</p>
+          <span class="px-2 py-0.5 rounded-md text-[9px] font-bold bg-neonD/10 text-neon border border-neon/20">LIVE</span>
+        </div>
+        <canvas id="dashChart" height="150"></canvas>
+        <div class="grid grid-cols-4 gap-2 mt-4 text-center">
+          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">NDVI</p><p class="text-sm font-extrabold text-neon">0.78</p></div>
+          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">EVI</p><p class="text-sm font-extrabold text-white">0.65</p></div>
+          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">Soil moisture</p><p class="text-sm font-extrabold text-white">41%</p></div>
+          <div class="bg-white/5 border border-white/5 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-500 uppercase">Next scan</p><p class="text-sm font-extrabold text-white">2d</p></div>
+        </div>
+        <div class="mt-4 bg-white/5 border border-white/10 rounded-xl p-3.5">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-emerald-300 mb-2">Tamper-evident ledger</p>
+          <div class="font-mono text-[11px] space-y-1.5">
+            <div class="flex justify-between"><span class="text-emerald-300">ISSUE</span><span class="text-slate-500">sha 3a7f…9e21</span><span class="text-neon">✓</span></div>
+            <div class="flex justify-between"><span class="text-emerald-300">MONITOR</span><span class="text-slate-500">sha c82e…77b0</span><span class="text-neon">✓</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// hero chart — NDVI trend, neon on dark
+new Chart(document.getElementById('heroChart'), {
+  type: 'line',
+  data: { labels: ['Jun','Jul','Aug','Sep','Oct'], datasets: [{
+    data: [0.52, 0.61, 0.74, 0.70, 0.78],
+    borderColor: '#34D399', borderWidth: 2.5, tension: 0.4, pointRadius: 0,
+    fill: true, backgroundColor: 'rgba(52,211,153,0.10)',
+  }]},
+  options: { plugins: { legend: { display: false } },
+    scales: { x: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { display: false } },
+              y: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+});
+// dashboard chart — bigger, multi-series
+new Chart(document.getElementById('dashChart'), {
+  type: 'line',
+  data: { labels: ['W1','W2','W3','W4','W5','W6','W7','W8'],
+    datasets: [
+      { label: 'NDVI', data: [0.48,0.55,0.62,0.60,0.68,0.72,0.75,0.78], borderColor: '#34D399', borderWidth: 2.5, tension: 0.4, pointRadius: 0, fill: true, backgroundColor: 'rgba(52,211,153,0.06)' },
+      { label: 'EVI', data: [0.38,0.44,0.50,0.49,0.55,0.60,0.63,0.65], borderColor: '#818CF8', borderWidth: 2, tension: 0.4, pointRadius: 0, fill: false },
+    ]},
+  options: { plugins: { legend: { labels: { color: '#94A3B8', font: { size: 9 }, boxWidth: 12 } } },
+    scales: { x: { ticks: { color: '#64748B', font: { size: 9 } }, grid: { display: false } },
+              y: { min: 0.2, max: 1.0, ticks: { color: '#64748B', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } } } }
+});
+
+// marketplace demo cards
+const listings = [
+  { crop: 'Rice — DSR', farmer: 'Venkat Rao', loc: 'Khammam', price: 540, avail: 96, carbon: '78 t', bio: '72', badge: 'REGISTRY ✓', img: 'https://images.unsplash.com/photo-1536304993881-ff6e9eefa2e6?w=600&q=80' },
+  { crop: 'Cotton — Zero-till', farmer: 'Mohan Reddy', loc: 'Karimnagar', price: 495, avail: 118, carbon: '105 t', bio: '52', badge: 'DOCUMENT', img: 'https://images.unsplash.com/photo-1615485290382-441e4d049cb5?w=600&q=80' },
+  { crop: 'Chilli — IPM', farmer: 'Farida Begum', loc: 'Nalgonda', price: 650, avail: 36, carbon: '33 t', bio: '31', badge: 'FPO ✓', img: 'https://images.unsplash.com/photo-1583258292688-d0213dc5a3a8?w=600&q=80' },
+];
+document.getElementById('mkGrid').innerHTML = listings.map(l => `
+  <div class="card-lift rounded-2xl border border-slate-200 overflow-hidden bg-white flex flex-col">
+    <div class="relative h-36 overflow-hidden">
+      <img src="${l.img}" class="absolute inset-0 w-full h-full object-cover" onerror="this.style.display='none'" alt="">
+      <span class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/95 text-emerald-900 shadow-sm">${l.badge}</span>
+    </div>
+    <div class="p-5 flex flex-col gap-3 flex-1">
+      <div class="flex justify-between items-start">
+        <div><h3 class="font-display font-extrabold text-sm">${l.crop}</h3><p class="text-[11px] text-slate-500">${l.farmer} · ${l.loc}</p></div>
+        <div class="text-right"><p class="font-display font-extrabold text-primary">₹${l.price}</p><p class="text-[9px] font-bold text-slate-400 uppercase">per tCO₂e</p></div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Available</p><p class="text-xs font-extrabold">${l.avail}</p></div>
+        <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Carbon</p><p class="text-xs font-extrabold">${l.carbon}</p></div>
+        <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Bio score</p><p class="text-xs font-extrabold">${l.bio}</p></div>
+      </div>
+      <button class="mt-auto w-full bg-primary text-white text-xs font-bold py-2.5 rounded-xl hover:bg-primaryd transition">Buy credits →</button>
+    </div>
+  </div>`).join('');
+</script>
+</body>
+</html>

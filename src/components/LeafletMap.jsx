@@ -204,7 +204,7 @@ export default function LeafletMap({
         {polygonPoints.length > 1 && !polygonClosed && (
           <Polyline
             positions={polygonPoints}
-            pathOptions={{ color: '#1F7A4D', weight: 3, dashArray: '6,4' }}
+            pathOptions={{ color: '#16A34A', weight: 3, dashArray: '6,4' }}
           />
         )}
 
@@ -214,7 +214,7 @@ export default function LeafletMap({
             pathOptions={
               heatmapActive
                 ? { color: '#DC2626', fillColor: '#16A34A', fillOpacity: 0.55, weight: 3 }
-                : { color: readOnly ? '#155435' : '#1F7A4D', fillColor: '#1F7A4D', fillOpacity: 0.3, weight: readOnly ? 4 : 3 }
+                : { color: readOnly ? '#14532D' : '#16A34A', fillColor: '#16A34A', fillOpacity: 0.3, weight: readOnly ? 4 : 3 }
             }
           />
         )}

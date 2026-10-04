@@ -112,7 +112,7 @@ export default function CertificateRetirementPage() {
             <p className="text-sm font-bold text-rose-800">{loadError}</p>
             <button
               onClick={() => navigate('/corporate/dashboard')}
-              className="px-4 py-2 bg-[#1B4332] text-white rounded-lg text-xs font-bold"
+              className="px-4 py-2 bg-[#0C2A18] text-white rounded-lg text-xs font-bold"
             >
               Back to dashboard
             </button>
@@ -166,7 +166,7 @@ export default function CertificateRetirementPage() {
               </div>
 
               {status === 'RETIRED' && (
-                <div className="bg-[#1B4332] text-white border border-emerald-800 rounded-xl p-4 max-w-xl mx-auto text-xs space-y-1">
+                <div className="bg-[#0C2A18] text-white border border-emerald-800 rounded-xl p-4 max-w-xl mx-auto text-xs space-y-1">
                   <p className="font-bold text-emerald-400">PERMANENTLY RETIRED & LOCKED</p>
                   <p>Retired for {selectedScope}{retireTimestamp ? ` on ${new Date(retireTimestamp).toLocaleDateString()}` : ''}</p>
                 </div>
@@ -224,7 +224,7 @@ export default function CertificateRetirementPage() {
                 <a
                   href={`${PY_API_BASE}/certificates/${certId}/pdf`}
                   download={`CarbonX_Certificate_${certId}.pdf`}
-                  className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                  className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
                   <FileDown className="w-4 h-4" />
                   <span>Download PDF Certificate</span>

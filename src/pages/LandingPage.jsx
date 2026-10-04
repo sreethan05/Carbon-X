@@ -20,10 +20,10 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900">
       {/* Full-width Organic Green Header */}
-      <header className="sticky top-0 z-50 bg-[#1B4332] border-b border-emerald-900 text-white px-4 md:px-10 py-3.5 shadow-md">
+      <header className="sticky top-0 z-50 bg-[#0C2A18] border-b border-emerald-900 text-white px-4 md:px-10 py-3.5 shadow-md">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
-            <div className="w-10 h-10 bg-[#2D6A4F] border border-emerald-500 rounded-xl flex items-center justify-center text-white shadow-sm">
+            <div className="w-10 h-10 bg-[#15803D] border border-emerald-500 rounded-xl flex items-center justify-center text-white shadow-sm">
               <Leaf className="w-5 h-5" />
             </div>
             <div>
@@ -33,15 +33,15 @@ export default function LandingPage() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 bg-[#2D6A4F]/60 border border-emerald-600 rounded-xl px-3 py-1.5 text-xs text-white">
+            <div className="flex items-center gap-1.5 bg-[#15803D]/60 border border-emerald-600 rounded-xl px-3 py-1.5 text-xs text-white">
               <Globe className="w-3.5 h-3.5 text-emerald-300" />
               <select
                 value={currentLang}
                 onChange={(e) => changeLanguage(e.target.value)}
                 className="bg-transparent border-none outline-none text-xs font-semibold text-white cursor-pointer"
               >
-                <option value="en" className="bg-[#1B4332] text-white">English</option>
-                <option value="te" className="bg-[#1B4332] text-white">తెలుగు (Telugu)</option>
+                <option value="en" className="bg-[#0C2A18] text-white">English</option>
+                <option value="te" className="bg-[#0C2A18] text-white">తెలుగు (Telugu)</option>
               </select>
             </div>
 
@@ -54,7 +54,7 @@ export default function LandingPage() {
 
             <button
               onClick={() => navigate('/role-selection')}
-              className="text-xs font-bold text-white bg-[#2D6A4F] hover:bg-[#40916C] px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 border border-emerald-500"
+              className="text-xs font-bold text-white bg-[#15803D] hover:bg-[#10B981] px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 border border-emerald-500"
             >
               <span>Launch Portal</span>
               <ArrowRight className="w-4 h-4" />
@@ -64,12 +64,12 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Banner with authentic farmland imagery overlay */}
-      <section className="relative bg-[#1B4332] text-white py-20 px-4 md:px-10 overflow-hidden">
+      <section className="relative bg-gradient-to-br from-indigo-950 via-[#0C2A18] to-indigo-900 text-white py-20 px-4 md:px-10 overflow-hidden">
         <div className="absolute inset-0 z-0 opacity-20 bg-[url('https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#1B4332]/85 via-[#1B4332]/95 to-[#1B4332]" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0C2A18]/85 via-[#0C2A18]/95 to-[#0C2A18]" />
 
         <div className="relative z-10 max-w-5xl mx-auto text-center pt-6">
-          <div className="inline-flex items-center gap-2 bg-[#2D6A4F]/80 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-semibold text-[#D1FAE5] mb-6 shadow-inner">
+          <div className="inline-flex items-center gap-2 bg-[#15803D]/80 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-semibold text-[#D1FAE5] mb-6 shadow-inner">
             <ShieldCheck className="w-4 h-4 text-emerald-300" />
             <span>Registry-Verified Parcels & Sentinel-2 Satellite MRV</span>
           </div>
@@ -92,13 +92,13 @@ export default function LandingPage() {
             </button>
             <button
               onClick={handleFpoClick}
-              className="px-6 py-3.5 bg-[#2D6A4F] hover:bg-[#40916C] text-white border border-emerald-500 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+              className="px-6 py-3.5 bg-[#15803D] hover:bg-[#10B981] text-white border border-emerald-500 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
             >
               <span>FPO Command Center</span>
             </button>
             <button
               onClick={() => navigate('/marketplace')}
-              className="px-6 py-3.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-[#D1FAE5] border border-emerald-600 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
+              className="px-6 py-3.5 bg-[#0C2A18] hover:bg-[#15803D] text-[#D1FAE5] border border-emerald-600 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
             >
               <span>Corporate Marketplace</span>
             </button>
@@ -145,7 +145,7 @@ export default function LandingPage() {
       </section>
 
       {/* Institutional Trust Ribbon */}
-      <section className="bg-[#1B4332] text-emerald-100 py-6 border-y border-emerald-900 mb-16">
+      <section className="bg-[#0C2A18] text-indigo-100 py-6 border-y border-emerald-900/50 mb-16">
         <div className="max-w-7xl mx-auto px-4 md:px-10 flex flex-wrap justify-between items-center gap-6 text-xs font-semibold">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-300" />
@@ -187,7 +187,7 @@ export default function LandingPage() {
             { n: '5', t: 'Sell & Split', d: 'Buyers see the farmer-level breakdown before paying. Escrow splits 70/5/25 or 70/30, purchase = instant retirement, certificate issued.' },
           ].map((s) => (
             <div key={s.n} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all">
-              <div className="w-9 h-9 rounded-full bg-[#1B4332] text-emerald-200 font-extrabold text-sm flex items-center justify-center mb-3 font-manrope">
+              <div className="w-9 h-9 rounded-full bg-[#0C2A18] text-emerald-200 font-extrabold text-sm flex items-center justify-center mb-3 font-manrope">
                 {s.n}
               </div>
               <h3 className="text-sm font-extrabold text-slate-900 font-manrope">{s.t}</h3>
@@ -225,7 +225,7 @@ export default function LandingPage() {
             </div>
             <button
               onClick={() => navigate('/farmer/register')}
-              className="mt-6 w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
             >
               <span>Register / Login as Farmer</span>
               <ArrowRight className="w-4 h-4" />
@@ -245,7 +245,7 @@ export default function LandingPage() {
             </div>
             <button
               onClick={() => navigate('/fpo/dashboard')}
-              className="mt-6 w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
             >
               <span>Access FPO Desk</span>
               <ArrowRight className="w-4 h-4" />
@@ -265,7 +265,7 @@ export default function LandingPage() {
             </div>
             <button
               onClick={() => navigate('/marketplace')}
-              className="mt-6 w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
             >
               <span>Explore Credit Marketplace</span>
               <ArrowRight className="w-4 h-4" />
@@ -275,7 +275,7 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-[#1B4332] text-emerald-100 py-8 border-t border-emerald-900 text-center text-xs">
+      <footer className="bg-[#0C2A18] text-indigo-100 py-8 border-t border-emerald-900/50 text-center text-xs">
         <div className="max-w-7xl mx-auto px-4 md:px-10 flex flex-col sm:flex-row justify-between items-center gap-4">
           <p>CarbonX Platform: Enterprise Institutional AgTech Ecosystem</p>
           <div className="flex gap-4">

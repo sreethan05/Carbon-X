@@ -82,7 +82,7 @@ export default function CorporateDashboard() {
           <div className="flex gap-3">
             <button
               onClick={() => navigate('/marketplace')}
-              className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2"
+              className="px-4 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2"
             >
               <Sparkles className="w-4 h-4 text-emerald-300" />
               <span>Browse Marketplace</span>
@@ -91,7 +91,7 @@ export default function CorporateDashboard() {
         </div>
 
         {/* Net-Zero Progress Bar */}
-        <div className="bg-[#1B4332] text-white border border-emerald-900 shadow-sm rounded-xl p-6 space-y-4">
+        <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-6 space-y-4">
           <div className="flex justify-between items-center">
             <div>
               <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Corporate Decarbonization Progress</p>
@@ -132,7 +132,7 @@ export default function CorporateDashboard() {
             <button
               onClick={handleExportBRSR}
               disabled={isExporting}
-              className="w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+              className="w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <Download className="w-4 h-4" />
               <span>{isExporting ? 'Generating Report...' : 'Download BRSR Report'}</span>
@@ -161,7 +161,7 @@ export default function CorporateDashboard() {
                   <p>No certificates yet.</p>
                   <button
                     onClick={() => navigate('/marketplace')}
-                    className="px-3 py-1.5 bg-[#1B4332] text-white rounded-lg font-bold hover:bg-[#2D6A4F]"
+                    className="px-3 py-1.5 bg-[#0C2A18] text-white rounded-lg font-bold hover:bg-[#15803D]"
                   >
                     Purchase credits on the marketplace
                   </button>

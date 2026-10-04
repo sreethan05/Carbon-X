@@ -218,7 +218,7 @@ export default function Marketplace() {
 
               <button
                 onClick={() => navigate('/marketplace/checkout')}
-                className="px-5 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2"
+                className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2"
               >
                 <ShoppingCart className="w-4 h-4 text-emerald-300" />
                 <span>Bulk Auto-Match Engine</span>
@@ -259,7 +259,7 @@ export default function Marketplace() {
                     <span className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/90 text-emerald-900 border border-emerald-200">
                       {item.badge || 'DOCUMENT'}
                     </span>
-                    <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#1B4332] text-emerald-100">
+                    <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#0C2A18] text-emerald-100">
                       {item.status}
                     </span>
                   </div>
@@ -318,7 +318,7 @@ export default function Marketplace() {
                       <button
                         type="button"
                         onClick={() => handleBuyClick(item)}
-                        className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
+                        className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1"
                       >
                         <span>Buy Credits</span>
                         <ChevronRight className="w-4 h-4" />
@@ -333,7 +333,7 @@ export default function Marketplace() {
 
         {/* Purchase Escrow Confirmation Modal */}
         {checkoutModalItem && (
-          <div className="fixed inset-0 z-50 bg-[#1B4332]/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 max-w-md w-full space-y-4">
               <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                 <h3 className="text-base font-bold text-[#0F172A]">Confirm Credit Escrow Purchase</h3>
@@ -389,7 +389,7 @@ export default function Marketplace() {
                     </button>
                     <button
                       onClick={() => navigate(`/buyer/certificates/${purchaseProof.certificate_id}`)}
-                      className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold shadow-sm"
+                      className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold shadow-sm"
                     >
                       View Certificate
                     </button>
@@ -433,7 +433,7 @@ export default function Marketplace() {
                     <button
                       onClick={handleConfirmPurchase}
                       disabled={isProcessing}
-                      className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
+                      className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
                     >
                       <span>{isProcessing ? 'Executing...' : 'Confirm & Lock Escrow'}</span>
                     </button>

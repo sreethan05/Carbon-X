@@ -441,7 +441,7 @@ export default function DetailedFarmAnalytics() {
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1F2923', borderColor: '#323C34', borderRadius: '12px', color: '#FFF', fontSize: '12px' }}
                 />
-                <Line type="monotone" dataKey="ndvi" stroke="#1F7A4D" strokeWidth={3} dot={{ r: 4, fill: '#1F7A4D' }} />
+                <Line type="monotone" dataKey="ndvi" stroke="#16A34A" strokeWidth={3} dot={{ r: 4, fill: '#16A34A' }} />
                 <Line type="monotone" dataKey="rabi_baseline" stroke="#94A397" strokeWidth={2} strokeDasharray="5 5" />
               </LineChart>
             </ResponsiveContainer>

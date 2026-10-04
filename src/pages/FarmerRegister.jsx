@@ -188,13 +188,13 @@ export default function FarmerRegister() {
         </div>
 
         {/* Voice Assistance Bar */}
-        <div className="bg-[#1B4332] text-white border border-emerald-900 shadow-sm rounded-xl p-4 flex items-center justify-between gap-4">
+        <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={handleMicClick}
               type="button"
               className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${
-                isListening ? 'bg-rose-600 animate-pulse text-white' : 'bg-[#2D6A4F] hover:bg-[#40916C] text-white'
+                isListening ? 'bg-rose-600 animate-pulse text-white' : 'bg-[#15803D] hover:bg-[#10B981] text-white'
               }`}
             >
               <Mic className="w-6 h-6" />
@@ -307,7 +307,7 @@ export default function FarmerRegister() {
 
           <button
             type="submit"
-            className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-4"
+            className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-4"
           >
             <span>Verify Phone & Continue</span>
             <ArrowRight className="w-4 h-4" />
@@ -316,7 +316,7 @@ export default function FarmerRegister() {
 
         {/* OTP Verification Modal */}
         {showOtpModal && (
-          <div className="fixed inset-0 z-50 bg-[#1B4332]/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white border border-slate-200 shadow-xl rounded-xl p-6 max-w-md w-full space-y-4">
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">

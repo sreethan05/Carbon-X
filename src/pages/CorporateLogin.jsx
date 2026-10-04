@@ -104,7 +104,7 @@ export default function CorporateLogin() {
             <button
               type="submit"
               disabled={isVerifying}
-              className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+              className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <span>{isVerifying ? 'Authenticating Corporate...' : 'Sign In to Corporate ESG Desk'}</span>
               <ArrowRight className="w-4 h-4" />
