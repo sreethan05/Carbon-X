@@ -224,7 +224,7 @@ export default function FPODashboard() {
           <button
             onClick={handleRunMonitoring}
             disabled={isMonitoring}
-            className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm whitespace-nowrap flex items-center gap-2"
+            className="px-4 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm whitespace-nowrap flex items-center gap-2"
           >
             {isMonitoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             <span>{isMonitoring ? 'Running cycle…' : 'Run Monitoring Cycle'}</span>
@@ -248,7 +248,7 @@ export default function FPODashboard() {
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
                   active
-                    ? 'bg-[#1B4332] text-white shadow-xs'
+                    ? 'bg-[#0C2A18] text-white shadow-xs'
                     : tab.highlight
                     ? 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
                     : 'text-carbon-800 hover:bg-surface-sage'
@@ -257,7 +257,7 @@ export default function FPODashboard() {
                 <Icon className="w-4 h-4" />
                 <span>{tab.label}</span>
                 {tab.count !== undefined && (
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${active ? 'bg-[#2D6A4F] text-white' : 'bg-surface-sage text-carbon-800'}`}>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${active ? 'bg-[#15803D] text-white' : 'bg-surface-sage text-carbon-800'}`}>
                     {tab.count}
                   </span>
                 )}

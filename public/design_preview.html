@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CarbonX — Design Direction Preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: { extend: {
+    colors: {
+      ink: '#0F172A', primary: '#4F46E5', primaryd: '#4338CA',
+      eco: { 50:'#ECFDF5', 100:'#D1FAE5', 300:'#6EE7B7', 500:'#10B981', 700:'#047857' },
+    },
+    fontFamily: { display: ['Manrope','sans-serif'], body: ['Inter','sans-serif'], mono: ['JetBrains Mono','monospace'] },
+  }}
+}
+</script>
+<style>
+  body { font-family: 'Inter', sans-serif; }
+  .card-lift { transition: all .25s ease; }
+  .card-lift:hover { transform: translateY(-4px); box-shadow: 0 20px 40px -12px rgba(15,23,42,.18); }
+</style>
+</head>
+<body class="bg-stone-100 text-slate-900">
+
+<!-- Preview header -->
+<div class="bg-ink text-white py-10 px-6 text-center">
+  <p class="text-xs font-bold tracking-[0.3em] text-indigo-300 uppercase mb-3">CarbonX · Design Direction Preview</p>
+  <h1 class="font-display text-3xl font-extrabold">Light climate-tech + real photography + dark trust terminal</h1>
+  <p class="text-sm text-slate-300 mt-2 max-w-2xl mx-auto">Three screens, rebuilt against the Dribbble/Behance references. Sections: <span class="text-indigo-300 font-semibold">01 Landing</span> · <span class="text-indigo-300 font-semibold">02 Marketplace</span> · <span class="text-indigo-300 font-semibold">03 Trust Terminal</span></p>
+</div>
+
+<!-- ═══════════ 01 · LANDING HERO ═══════════ -->
+<div class="max-w-6xl mx-auto px-6 pt-14">
+  <p class="font-mono text-xs text-slate-500 mb-4">01 · LANDING — light, real farm photography, indigo + emerald</p>
+  <div class="rounded-3xl overflow-hidden shadow-2xl relative">
+    <img src="https://images.unsplash.com/photo-1500382017468-9049fed747ef?w=1600&q=80" class="absolute inset-0 w-full h-full object-cover" onerror="this.parentNode.style.background='linear-gradient(135deg,#1e1b4b,#4338ca)'" alt="">
+    <div class="absolute inset-0 bg-gradient-to-r from-indigo-950/90 via-indigo-950/70 to-indigo-900/30"></div>
+    <div class="relative p-10 md:p-16 text-white">
+      <span class="inline-flex items-center gap-2 text-[11px] font-bold bg-white/10 border border-white/20 rounded-full px-4 py-1.5 backdrop-blur">
+        <span class="w-2 h-2 rounded-full bg-eco-300"></span> Registry-verified parcels · Sentinel-2 MRV
+      </span>
+      <h1 class="font-display text-4xl md:text-6xl font-extrabold mt-6 leading-tight max-w-2xl">
+        Your soil stores carbon.<br>
+        <span class="text-eco-300">Now it earns like a crop.</span>
+      </h1>
+      <p class="text-indigo-100 mt-5 max-w-xl text-base md:text-lg">Verified every 5 days by satellite. Paid with a 70% floor. Auditable by anyone — no promises, just a ledger.</p>
+      <div class="flex flex-wrap gap-3 mt-8">
+        <button class="bg-white text-indigo-950 font-bold text-sm px-6 py-3 rounded-xl hover:bg-indigo-50 transition">Start farmer onboarding →</button>
+        <button class="border border-white/30 font-bold text-sm px-6 py-3 rounded-xl hover:bg-white/10 transition">Explore the marketplace</button>
+      </div>
+      <!-- KPI chips -->
+      <div class="flex flex-wrap gap-3 mt-10">
+        <div class="bg-white/10 backdrop-blur border border-white/15 rounded-xl px-5 py-3">
+          <p class="text-[10px] uppercase tracking-wider text-indigo-200 font-bold">Monitored plots</p>
+          <p class="text-xl font-display font-extrabold">2,847</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur border border-white/15 rounded-xl px-5 py-3">
+          <p class="text-[10px] uppercase tracking-wider text-indigo-200 font-bold">tCO₂e retired</p>
+          <p class="text-xl font-display font-extrabold">18,340</p>
+        </div>
+        <div class="bg-white/10 backdrop-blur border border-white/15 rounded-xl px-5 py-3">
+          <p class="text-[10px] uppercase tracking-wider text-indigo-200 font-bold">Farmer floor</p>
+          <p class="text-xl font-display font-extrabold text-eco-300">70% ✓</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 02 · MARKETPLACE ═══════════ -->
+<div class="max-w-6xl mx-auto px-6 pt-16">
+  <p class="font-mono text-xs text-slate-500 mb-4">02 · MARKETPLACE — real crop photography, product-grid cards</p>
+  <div class="bg-white rounded-3xl shadow-xl border border-slate-200 p-6 md:p-8">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+      <div>
+        <h2 class="font-display text-2xl font-extrabold">Carbon Credit Marketplace</h2>
+        <p class="text-xs text-slate-500">Verified parcels across Telangana · prices in ₹ per tCO₂e</p>
+      </div>
+      <div class="flex gap-2">
+        <span class="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600">Rice</span>
+        <span class="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600">Cotton</span>
+        <span class="px-4 py-2 rounded-xl bg-primary text-white text-xs font-bold">All crops</span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+      <!-- Card 1: Rice -->
+      <div class="card-lift rounded-2xl border border-slate-200 overflow-hidden bg-white cursor-pointer">
+        <div class="relative h-36">
+          <img src="https://images.unsplash.com/photo-1536304993881-ff6e9eefa2e6?w=600&q=80" class="absolute inset-0 w-full h-full object-cover" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" alt="">
+          <div class="hidden absolute inset-0 bg-gradient-to-br from-emerald-100 to-lime-200 items-center justify-center text-5xl">🌾</div>
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/95 text-indigo-900">REGISTRY ✓</span>
+          <span class="absolute top-3 right-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-ink/80 text-white backdrop-blur">ACTIVE</span>
+        </div>
+        <div class="p-5">
+          <div class="flex justify-between items-start">
+            <div><h3 class="font-display font-extrabold">Rice — DSR</h3><p class="text-[11px] text-slate-500 mt-0.5">Venkat Rao · Khammam</p></div>
+            <div class="text-right"><p class="font-display font-extrabold text-primary text-lg">₹540</p><p class="text-[9px] font-bold text-slate-400 uppercase">per tCO₂e</p></div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 mt-4 text-center">
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Available</p><p class="text-xs font-extrabold">96</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Carbon</p><p class="text-xs font-extrabold">78 t</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Bio score</p><p class="text-xs font-extrabold">72</p></div>
+          </div>
+          <button class="w-full mt-4 bg-primary text-white text-xs font-bold py-2.5 rounded-xl hover:bg-primaryd transition">Buy credits →</button>
+        </div>
+      </div>
+
+      <!-- Card 2: Cotton -->
+      <div class="card-lift rounded-2xl border border-slate-200 overflow-hidden bg-white cursor-pointer">
+        <div class="relative h-36">
+          <img src="https://images.unsplash.com/photo-1615485290382-441e4d049cb5?w=600&q=80" class="absolute inset-0 w-full h-full object-cover" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" alt="">
+          <div class="hidden absolute inset-0 bg-gradient-to-br from-sky-100 to-slate-200 items-center justify-center text-5xl">☁️</div>
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/95 text-indigo-900">DOCUMENT</span>
+          <span class="absolute top-3 right-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-ink/80 text-white backdrop-blur">ACTIVE</span>
+        </div>
+        <div class="p-5">
+          <div class="flex justify-between items-start">
+            <div><h3 class="font-display font-extrabold">Cotton — Zero-till</h3><p class="text-[11px] text-slate-500 mt-0.5">Mohan Reddy · Karimnagar</p></div>
+            <div class="text-right"><p class="font-display font-extrabold text-primary text-lg">₹495</p><p class="text-[9px] font-bold text-slate-400 uppercase">per tCO₂e</p></div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 mt-4 text-center">
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Available</p><p class="text-xs font-extrabold">118</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Carbon</p><p class="text-xs font-extrabold">105 t</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Bio score</p><p class="text-xs font-extrabold">52</p></div>
+          </div>
+          <button class="w-full mt-4 bg-primary text-white text-xs font-bold py-2.5 rounded-xl hover:bg-primaryd transition">Buy credits →</button>
+        </div>
+      </div>
+
+      <!-- Card 3: Chilli -->
+      <div class="card-lift rounded-2xl border border-slate-200 overflow-hidden bg-white cursor-pointer">
+        <div class="relative h-36">
+          <img src="https://images.unsplash.com/photo-1583258292688-d0213dc5a3a8?w=600&q=80" class="absolute inset-0 w-full h-full object-cover" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" alt="">
+          <div class="hidden absolute inset-0 bg-gradient-to-br from-red-100 to-orange-200 items-center justify-center text-5xl">🌶️</div>
+          <span class="absolute top-3 left-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white/95 text-indigo-900">FPO ✓</span>
+          <span class="absolute top-3 right-3 px-2.5 py-1 rounded-lg text-[10px] font-bold bg-ink/80 text-white backdrop-blur">ACTIVE</span>
+        </div>
+        <div class="p-5">
+          <div class="flex justify-between items-start">
+            <div><h3 class="font-display font-extrabold">Chilli — IPM</h3><p class="text-[11px] text-slate-500 mt-0.5">Farida Begum · Nalgonda</p></div>
+            <div class="text-right"><p class="font-display font-extrabold text-primary text-lg">₹650</p><p class="text-[9px] font-bold text-slate-400 uppercase">per tCO₂e</p></div>
+          </div>
+          <div class="grid grid-cols-3 gap-2 mt-4 text-center">
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Available</p><p class="text-xs font-extrabold">36</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Carbon</p><p class="text-xs font-extrabold">33 t</p></div>
+            <div class="bg-slate-50 rounded-lg py-2"><p class="text-[9px] font-bold text-slate-400 uppercase">Bio score</p><p class="text-xs font-extrabold">31</p></div>
+          </div>
+          <button class="w-full mt-4 bg-primary text-white text-xs font-bold py-2.5 rounded-xl hover:bg-primaryd transition">Buy credits →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ 03 · TRUST TERMINAL (dark) ═══════════ -->
+<div class="max-w-6xl mx-auto px-6 pt-16 pb-20">
+  <p class="font-mono text-xs text-slate-500 mb-4">03 · TRUST TERMINAL — the ledger, wallet and certificates go dark "mission-control" (our differentiator)</p>
+  <div class="rounded-3xl overflow-hidden shadow-2xl bg-[#0B1020] border border-indigo-900/40">
+    <div class="flex items-center gap-2 px-6 py-4 border-b border-white/5">
+      <span class="w-3 h-3 rounded-full bg-rose-500/80"></span><span class="w-3 h-3 rounded-full bg-amber-500/80"></span><span class="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+      <span class="ml-3 text-xs font-mono text-slate-400">carbonx://trust-terminal/ledger/venkat-rao</span>
+      <span class="ml-auto px-2.5 py-1 rounded-lg text-[10px] font-bold bg-eco-500/10 text-eco-300 border border-eco-500/20">CHAIN VERIFIED ✓</span>
+    </div>
+    <div class="p-6 md:p-8 grid md:grid-cols-3 gap-5">
+      <!-- payout card -->
+      <div class="md:col-span-2 space-y-4">
+        <div class="bg-white/5 border border-white/10 rounded-2xl p-5">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-3">Credit #042 sold — payout executed</p>
+          <div class="space-y-2.5 font-mono text-sm">
+            <div class="flex justify-between"><span class="text-slate-400">Sale price</span><span class="text-white font-bold">₹1,800</span></div>
+            <div class="flex justify-between"><span class="text-eco-300">Your share (70% floor)</span><span class="text-eco-300 font-bold">₹1,260 → UPI ✓</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">FPO (5%, work proven)</span><span class="text-slate-200">₹90</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Platform (25%)</span><span class="text-slate-200">₹450</span></div>
+          </div>
+        </div>
+        <div class="bg-white/5 border border-white/10 rounded-2xl p-5">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-300 mb-2">Event chain — recomputed live</p>
+          <div class="font-mono text-xs space-y-2">
+            <div class="flex items-center gap-2"><span class="text-indigo-300">ISSUE</span><span class="text-slate-500">sha256 3a7f…9e21</span><span class="text-eco-300 ml-auto">✓</span></div>
+            <div class="flex items-center gap-2"><span class="text-indigo-300">SALE</span><span class="text-slate-500">sha256 81c4…55af</span><span class="text-eco-300 ml-auto">✓</span></div>
+            <div class="flex items-center gap-2"><span class="text-indigo-300">SPLIT</span><span class="text-slate-500">sha256 b4d2…0c7e</span><span class="text-eco-300 ml-auto">✓</span></div>
+            <div class="flex items-center gap-2"><span class="text-indigo-300">RETIRE</span><span class="text-slate-500">sha256 f9a1…d340</span><span class="text-eco-300 ml-auto">✓</span></div>
+          </div>
+        </div>
+      </div>
+      <!-- certificate card -->
+      <div class="bg-gradient-to-br from-ink to-[#141B33] border border-white/10 rounded-2xl p-5 flex flex-col">
+        <p class="text-[10px] font-bold uppercase tracking-wider text-indigo-300">Retirement certificate</p>
+        <p class="font-display font-extrabold text-white text-lg mt-3">CX-2026-CERT-042</p>
+        <p class="text-xs text-slate-400 mt-1">184 tCO₂e · Rice · Khammam</p>
+        <div class="mt-4 space-y-1.5 font-mono text-[10px] text-slate-400">
+          <p>buyer: ESG Corp Ltd</p>
+          <p>batch: sha256 f9a1…d340</p>
+          <p>status: <span class="text-eco-300 font-bold">RETIRED ✓</span></p>
+        </div>
+        <button class="mt-auto pt-4 text-xs font-bold text-white bg-white/10 border border-white/15 rounded-xl py-2.5 hover:bg-white/15 transition">Download PDF ↓</button>
+      </div>
+    </div>
+    <p class="px-8 pb-6 text-[11px] text-slate-500 font-mono">Anyone can recompute this chain — GET /ledger/{farm_id}. Tampering breaks it at the exact event. No blockchain, no gas.</p>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="max-w-6xl mx-auto px-6 pb-16">
+  <div class="bg-white rounded-2xl border border-slate-200 p-6 grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+    <div><p class="text-[10px] font-bold uppercase text-slate-400">Primary</p><div class="w-full h-8 rounded-lg bg-primary mt-2"></div><p class="text-[10px] font-mono mt-1">#4F46E5</p></div>
+    <div><p class="text-[10px] font-bold uppercase text-slate-400">Eco accent</p><div class="w-full h-8 rounded-lg bg-eco-500 mt-2"></div><p class="text-[10px] font-mono mt-1">#10B981</p></div>
+    <div><p class="text-[10px] font-bold uppercase text-slate-400">Dark band</p><div class="w-full h-8 rounded-lg bg-ink mt-2"></div><p class="text-[10px] font-mono mt-1">#0F172A</p></div>
+    <div><p class="text-[10px] font-bold uppercase text-slate-400">Terminal</p><div class="w-full h-8 rounded-lg bg-[#0B1020] mt-2"></div><p class="text-[10px] font-mono mt-1">#0B1020</p></div>
+  </div>
+  <p class="text-center text-xs text-slate-400 mt-6">Approve this direction and it gets implemented across the real pages — landing, marketplace, wallet, passport, certificates.</p>
+</div>
+
+</body>
+</html>

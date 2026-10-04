@@ -177,7 +177,7 @@ export default function FarmMapRegistration() {
 
       {/* Confirmation Modal Overlay */}
       {showConfirmationModal && (
-        <div className="fixed inset-0 z-50 bg-[#1B4332]/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white border border-forest-100 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in duration-150">
             <div className="flex justify-between items-center border-b border-forest-100 pb-3">
               <div className="flex items-center gap-2">

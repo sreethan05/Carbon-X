@@ -11,7 +11,7 @@ export default function CorporateWelcome() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Hero */}
-        <div className="bg-[#1B4332] text-white border border-emerald-900 shadow-sm rounded-xl p-8 relative overflow-hidden">
+        <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-8 relative overflow-hidden">
           <div className="max-w-3xl relative z-10 space-y-4">
             <span className="text-xs font-semibold text-emerald-300 uppercase tracking-wider bg-emerald-950 border border-emerald-700 px-3 py-1 rounded-full">
               Enterprise Buyer Portal Gateway
@@ -34,7 +34,7 @@ export default function CorporateWelcome() {
 
               <button
                 onClick={() => navigate('/marketplace/checkout')}
-                className="px-6 py-3 bg-[#2D6A4F] hover:bg-[#40916C] text-[#D1FAE5] border border-emerald-500 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                className="px-6 py-3 bg-[#15803D] hover:bg-[#10B981] text-[#D1FAE5] border border-emerald-500 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
               >
                 <Sparkles className="w-4 h-4 text-emerald-300" />
                 <span>Run Bulk Auto-Match Engine</span>

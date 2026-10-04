@@ -164,7 +164,7 @@ export default function CarbonWallet() {
               <button
                 onClick={startDemoSession}
                 disabled={isStartingDemo}
-                className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold shadow-sm whitespace-nowrap"
+                className="px-4 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold shadow-sm whitespace-nowrap"
               >
                 {isStartingDemo ? 'Starting...' : 'Start Demo Farmer Session'}
               </button>

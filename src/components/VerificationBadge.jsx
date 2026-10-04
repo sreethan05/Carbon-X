@@ -8,7 +8,7 @@ export const BADGE_DEFINITIONS = {
     tier: 'Tier 1A',
     price: 'INR 340 / credit',
     priceNum: 340,
-    textClass: 'text-[#065F46]',
+    textClass: 'text-[#14532D]',
     bgClass: 'bg-[#ECFDF5]',
     borderClass: 'border-[#A7F3D0]',
     Icon: ShieldCheck,

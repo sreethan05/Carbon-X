@@ -60,7 +60,7 @@ export default function WelcomeTutorial() {
               <div
                 key={idx}
                 className={`h-2 rounded-full transition-all ${
-                  idx === slideIndex ? 'w-6 bg-[#1B4332]' : 'w-2 bg-slate-300'
+                  idx === slideIndex ? 'w-6 bg-[#0C2A18]' : 'w-2 bg-slate-300'
                 }`}
               />
             ))}
@@ -92,7 +92,7 @@ export default function WelcomeTutorial() {
         {/* Next Button */}
         <button
           onClick={handleNext}
-          className="w-full py-3 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+          className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
         >
           <span>{slideIndex < steps.length - 1 ? 'Next Step' : 'Proceed to My Farm'}</span>
           <ArrowRight className="w-4 h-4" />

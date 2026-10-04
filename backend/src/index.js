@@ -22,6 +22,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(PORT, 'localhost', () => {
-  console.log(`CarbonX blockchain backend running on port ${PORT}`);
+const HOST = process.env.HOST || '0.0.0.0';
+
+app.listen(PORT, HOST, () => {
+  console.log(`CarbonX blockchain backend running on http://${HOST}:${PORT}`);
 });
+

@@ -141,7 +141,7 @@ export default function CorporateCreditAnalysis() {
               <button
                 onClick={runAutoMatch}
                 disabled={isMatching}
-                className="mt-3 w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] disabled:opacity-60 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
+                className="mt-3 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2"
               >
                 {isMatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 text-emerald-300" />}
                 <span>{isMatching ? 'Matching Live Listings…' : 'Run Auto-Match on Live Marketplace'}</span>
@@ -207,7 +207,7 @@ export default function CorporateCreditAnalysis() {
         </div>
 
         {/* Escrow Financial Ledger Breakdown */}
-        <div className="bg-[#1B4332] text-white border border-emerald-900 shadow-sm rounded-xl p-6 space-y-4">
+        <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-6 space-y-4">
           <h2 className="text-base font-bold text-white flex items-center gap-2">
             <Layers className="w-5 h-5 text-emerald-400" />
             <span>Escrow Financial Ledger Breakdown</span>
@@ -252,7 +252,7 @@ export default function CorporateCreditAnalysis() {
 
         {/* Payment Gateway Modal */}
         {showCheckoutModal && (
-          <div className="fixed inset-0 z-50 bg-[#1B4332]/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white border border-slate-200 shadow-xl rounded-xl p-6 max-w-md w-full space-y-4">
               <div className="flex justify-between items-center border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">

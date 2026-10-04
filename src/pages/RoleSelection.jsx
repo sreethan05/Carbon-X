@@ -81,7 +81,7 @@ export default function RoleSelection() {
                   <p className="text-[10px] font-mono text-slate-500">{r.scope}</p>
                   <button
                     type="button"
-                    className="w-full py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                    className="w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
                   >
                     <span>Enter Portal</span>
                     <ArrowRight className="w-4 h-4" />
