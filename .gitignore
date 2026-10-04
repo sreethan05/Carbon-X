@@ -54,7 +54,8 @@ __pycache__/
 *.so
 
 # Generated data and model artifacts
-artifacts/
+/artifacts/
+src/artifacts/
 data/
 mlruns/
 uploads/
@@ -64,7 +65,8 @@ temp/
 
 # Local blockchain and deployment artifacts
 blockchain/cache/
-blockchain/artifacts/
+blockchain/artifacts/*
+!blockchain/artifacts/contracts/
 blockchain/typechain-types/
 blockchain/.openzeppelin/
 

@@ -46,6 +46,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Ensure Smart Contract Artifacts Exist
+        run: |
+          mkdir -p blockchain/artifacts/contracts
+
       - name: Build Blockchain Backend Image
         uses: docker/build-push-action@v5
         with:
@@ -55,3 +59,4 @@ jobs:
           tags: carbonx-backend-bc:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
