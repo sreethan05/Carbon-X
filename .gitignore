@@ -77,3 +77,6 @@ Thumbs.db
 *.sln
 *.sw?
 *.local
+
+# Supabase CLI local state
+supabase/.temp/
