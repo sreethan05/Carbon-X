@@ -1,0 +1,13 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: carbonx-redis-4000
+    restart: unless-stopped
+    ports:
+      - "4000:6379"
+    volumes:
+      - carbonx_redis_data:/data
+    command: redis-server --appendonly yes
+
+volumes:
+  carbonx_redis_data:
