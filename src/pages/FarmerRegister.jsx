@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, Volume2, Phone, ShieldCheck, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
+import { Mic, Volume2, Phone, ShieldCheck, ArrowRight, Lock } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { sendOtp, verifyRegistrationOtp, registerUser } from '../services/api';
@@ -12,7 +12,7 @@ export default function FarmerRegister() {
 
   // Voice Assistance Simulation
   const [isListening, setIsListening] = useState(false);
-  const [speechText, setSpeechText] = useState('');
+  const [speechText] = useState('');
 
   // Form State
   const [name, setName] = useState('');
@@ -30,7 +30,7 @@ export default function FarmerRegister() {
   const [otpTimer, setOtpTimer] = useState(600); // 10 minutes timer
   const [timerActive, setTimerActive] = useState(false);
   const [otpError, setOtpError] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [, setIsRegistering] = useState(false);
 
   useEffect(() => {
     let interval = null;

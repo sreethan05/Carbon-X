@@ -107,6 +107,38 @@ profiles (fpo_id) ──→ fpos (id)
 farms (id) ←── marketplace_listings.farm_id
 ```
 
+## Trust & transparency layer (added 2026-10-04)
+
+Core payout/trust services live in `backend/app/services/`:
+
+- `split_engine.py` — conditional split: farmer 70% floor, FPO 5% only when
+  involvement is proven (farm `fpo_id` live / `fpo` on sample farmers),
+  platform keeps the rest (25% with FPO / 30% without). Integer-paise math.
+- `ledger.py` — tamper-evident SHA-256 hash chain per farm
+  (ISSUE → SALE → SPLIT → RETIRE). Persists to `backend/data/ledger.json`
+  (gitignored; `CARBONX_LEDGER_PATH` overrides). `GET /ledger/{farm_id}`
+  returns + verifies the chain.
+- `credit_engine.py` — VM0042-style 5-step estimate (additionality delta,
+  biomass proxy, IPCC-style soil factor, raw total, 10–30% uncertainty
+  deduction from evidence quality). Powers `POST /farms/earnings-calculator`
+  (open, no auth) and the passport `trust` block.
+- `market_store.py` — in-memory listings store seeded from `sample_data`;
+  the fallback for buy/auto-match/wallet/certificates when the DB is off.
+
+Endpoints: `POST /marketplace/buy` now runs escrow → conditional split →
+ledger events → **instant retirement** (full buys mark listings `Retired`,
+not `Sold`) and returns the split lines + `batch_hash`. `/wallet` returns
+`farmer_share_total` / `fpo_share_total` / `platform_share_total` + per-tx
+`ledger_hash`. `/passport/{id}` adds `expected_earnings`, `trust`, `ledger`
+and serves a demo farm for any unknown id when the DB is off.
+`POST /demo/login` issues a demo farmer JWT **only when the DB is
+unconfigured**; the farmer login page shows a demo button in that state.
+
+Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
+`CarbonWallet` has split columns + demo-session entry;
+`DetailedFarmAnalytics` has the Trust Engine & Ledger card;
+`EarningsCalculator` component is on the farmer dashboard.
+
 ## Commands
 
 ```powershell
@@ -116,6 +148,30 @@ npm run lint       # eslint .
 cd backend; uvicorn app.main:app --reload --port 8000   # Python API
 python scripts/seed_marketplace_data.py                 # seed sample marketplace data
 ```
+
+## Running with credentials removed (verified 2026-10-04)
+
+With `VITE_SUPABASE_*`, `SUPABASE_*`, and SMS/OTP provider vars blank, the full
+stack still boots and degrades cleanly (verified end-to-end):
+
+- `GET /health` reports `database.ready=false`, SMS unconfigured; Earth Engine
+  still initializes from this machine's cached `earthengine` credentials.
+- `GET /marketplace/listings` serves fallback sample data (`source=fallback`);
+  the Marketplace UI shows a "SAMPLE DATA (DB offline)" badge.
+- `POST /send-otp` works in dev mode (returns `dev_otp` when
+  `CARBONX_ALLOW_DEV_OTP=1`); `POST /login/send-otp` returns 503 with a clear
+  message (it needs the DB to check the profile exists), and the login UI shows
+  "Failed to send OTP" — expected until Supabase creds are re-added.
+- Node blockchain API (port 3001) starts and returns explicit 503-style errors
+  until `RPC_URL`/contract addresses/private keys are set.
+- CORS: the frontend origin is port **5000**; the `CORS_ORIGINS` default in
+  `backend/app/main.py` and `backend/.env` include 5173/3000/5000 (5000 was
+  missing before 2026-10-04 — direct browser→:8000 calls were blocked).
+- ESLint config ignores `backend`, `blockchain`, `frontend`, `.kilo`; `.kilo/`
+  (leftover AI-tool worktrees) is gitignored too. `src/lib/supabase.js` exports
+  a null-gated client but nothing imports it — frontend auth goes through
+  `/py-api` only. `backend/src/routes/farms.js` routes are not mounted in
+  `backend/src/index.js` and nothing calls them (dead code).
 
 ## Key API endpoint: GET /marketplace/listings
 

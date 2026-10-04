@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, Calendar, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X, Loader2 } from 'lucide-react';
+import { Search, MapPin, Calendar, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getMarketplaceListings, buyCredits } from '../services/api';
 
@@ -11,11 +11,8 @@ export default function Marketplace() {
   const [searchQuery, setSearchQuery] = useState('');
   const [quantities, setQuantities] = useState({});
   const [checkoutModalItem, setCheckoutModalItem] = useState(null);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [purchaseProof, setPurchaseProof] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [checkoutTxHash, setCheckoutTxHash] = useState(null);
-  const [checkoutCertId, setCheckoutCertId] = useState(null);
   const [checkoutError, setCheckoutError] = useState('');
 
   const defaultListings = [
@@ -86,7 +83,6 @@ export default function Marketplace() {
 
   useEffect(() => {
     async function loadListings() {
-      setIsLoading(true);
       try {
         const data = await getMarketplaceListings({ limit: 50 });
         if (data && data.success && Array.isArray(data.listings) && data.listings.length > 0) {
@@ -111,8 +107,6 @@ export default function Marketplace() {
       } catch (err) {
         console.warn('Could not fetch remote listings, using defaults', err);
         setDataSource('fallback');
-      } finally {
-        setIsLoading(false);
       }
     }
     loadListings();
@@ -138,18 +132,8 @@ export default function Marketplace() {
 
   const handleBuyClick = (item) => {
     setCheckoutModalItem(item);
-    setPaymentSuccess(false);
+    setPurchaseProof(null);
     setCheckoutError('');
-  };
-
-  const finishPurchase = (certId) => {
-    setIsProcessing(false);
-    setPaymentSuccess(true);
-    setTimeout(() => {
-      setCheckoutModalItem(null);
-      setPaymentSuccess(false);
-      navigate(`/buyer/certificates/${certId}`);
-    }, 1500);
   };
 
   const handleConfirmPurchase = async () => {
@@ -165,9 +149,8 @@ export default function Marketplace() {
         buyer_name: user?.name || 'Corporate Buyer'
       });
       if (data && data.certificate_id) {
-        setCheckoutTxHash(data.tx_hash);
-        setCheckoutCertId(data.certificate_id);
-        finishPurchase(data.certificate_id);
+        setIsProcessing(false);
+        setPurchaseProof(data);
         return;
       }
       throw new Error((data && data.message) || 'Purchase failed');
@@ -175,8 +158,13 @@ export default function Marketplace() {
       console.warn('Purchase API unavailable', err);
       if (import.meta.env.DEV) {
         // Demo mode (dev builds only): simulated checkout
-        setCheckoutCertId('CX-2026-CERT-00123');
-        finishPurchase('CX-2026-CERT-00123');
+        setIsProcessing(false);
+        setPurchaseProof({
+          demo: true,
+          certificate_id: 'CX-2026-CERT-DEMO01',
+          escrow_ref: 'ESC-DEMO',
+          message: 'Simulated checkout (dev)',
+        });
         return;
       }
       setCheckoutError(err.message || 'Purchase could not be completed. Please try again.');
@@ -330,11 +318,58 @@ export default function Marketplace() {
                 </button>
               </div>
 
-              {paymentSuccess ? (
-                <div className="bg-emerald-50 border border-emerald-200 text-emerald-950 p-4 rounded-xl text-center space-y-2">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-700 mx-auto" />
-                  <p className="font-bold text-sm">Escrow Credit Purchase Complete!</p>
-                  <p className="text-xs text-slate-600">Redirecting to official certificate...</p>
+              {purchaseProof ? (
+                <div className="space-y-3 text-xs">
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-950 p-4 rounded-xl text-center space-y-1">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-700 mx-auto" />
+                    <p className="font-bold text-sm">Purchase complete — credits retired</p>
+                    <p className="text-[11px] text-slate-600">
+                      Escrow {purchaseProof.escrow_ref} · Certificate {purchaseProof.certificate_id}
+                      {purchaseProof.demo ? ' · simulated (dev)' : ''}
+                    </p>
+                  </div>
+
+                  {purchaseProof.split?.lines?.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl p-3 space-y-1.5">
+                      <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">
+                        Transparent payout split ({purchaseProof.split.model})
+                      </p>
+                      {purchaseProof.split.lines.map(line => (
+                        <div key={line.recipient} className="flex justify-between items-center">
+                          <span className="text-slate-600 font-semibold">
+                            {line.recipient} <span className="text-slate-400">· {line.share_pct}%</span>
+                          </span>
+                          <span className="font-mono font-bold text-slate-900">₹{Number(line.amount_inr).toLocaleString('en-IN')}</span>
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-100">
+                        Paid from escrow {purchaseProof.escrow_ref} — the farmer's 70% floor is guaranteed.
+                      </p>
+                    </div>
+                  )}
+
+                  {purchaseProof.batch_hash && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1">
+                      <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">Tamper-evident record</p>
+                      <p className="font-mono text-[10px] text-slate-600 break-all">sha256:{purchaseProof.batch_hash}</p>
+                      <p className="text-[10px] text-slate-500">Anchored to the farm's hash ledger — anyone can recompute this chain.</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => { setCheckoutModalItem(null); setPurchaseProof(null); }}
+                      className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200"
+                    >
+                      Close
+                    </button>
+                    <button
+                      onClick={() => navigate(`/buyer/certificates/${purchaseProof.certificate_id}`)}
+                      className="flex-1 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold shadow-sm"
+                    >
+                      View Certificate
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4 text-xs">

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Globe, Download, FileText, Sparkles, ArrowRight, ShieldCheck, Loader2 } from 'lucide-react';
+import { Download, FileText, Sparkles, ArrowRight, ShieldCheck, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getCertificates } from '../services/api';
 

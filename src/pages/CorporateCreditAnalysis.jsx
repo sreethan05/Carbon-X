@@ -22,6 +22,7 @@ export default function CorporateCreditAnalysis() {
 
   // Greedy fill matched parcels from the live auto-match API
   const [matchedParcels, setMatchedParcels] = useState([]);
+  const [lastProof, setLastProof] = useState(null);
 
   const runAutoMatch = async () => {
     setIsMatching(true);
@@ -34,7 +35,7 @@ export default function CorporateCreditAnalysis() {
         setMatchError((data && data.message) || 'Auto-match failed');
         setMatchedParcels([]);
       }
-    } catch (e) {
+    } catch {
       setMatchError('Auto-match service unreachable. Is the backend running?');
       setMatchedParcels([]);
     } finally {
@@ -44,10 +45,9 @@ export default function CorporateCreditAnalysis() {
 
   useEffect(() => { runAutoMatch(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const totalMatchedCredits = matchedParcels.reduce((acc, item) => acc + (item.credits || 0), 0);
   const grossValue = matchedParcels.reduce((acc, item) => acc + (item.credits || 0) * (item.rate || 0), 0);
-  const facilitationFee = grossValue * 0.02;
-  const netFarmerEscrow = grossValue - facilitationFee;
+  const farmerTotal = matchedParcels.reduce((acc, item) => acc + (item.farmer_share_inr || 0), 0);
+  const fpoPlatformTotal = grossValue - farmerTotal;
 
   const handleExecutePayment = async () => {
     setIsPaying(true);
@@ -55,6 +55,7 @@ export default function CorporateCreditAnalysis() {
     try {
       // Execute real escrow purchases for each allocated parcel
       let lastCert = null;
+      let proof = null;
       for (const parcel of matchedParcels) {
         if (!parcel.listing_id || (parcel.credits || 0) <= 0) continue;
         const res = await buyCredits({
@@ -65,24 +66,21 @@ export default function CorporateCreditAnalysis() {
         });
         if (res && res.certificate_id) {
           lastCert = res.certificate_id;
+          proof = res;
         } else if (res && res.message) {
           console.warn(`Purchase skipped for ${parcel.farm}: ${res.message}`);
         }
       }
       if (lastCert) {
         setLastCertId(lastCert);
+        setLastProof(proof);
         setPaymentDone(true);
-        setTimeout(() => {
-          setShowCheckoutModal(false);
-          setPaymentDone(false);
-          navigate(`/buyer/certificates/${lastCert}`);
-        }, 1800);
       } else {
         setPayError('No purchases completed — the matched parcels may no longer be available. Re-run the auto-match.');
+        setIsPaying(false);
       }
-    } catch (e) {
+    } catch {
       setPayError('Payment execution failed. Please try again.');
-    } finally {
       setIsPaying(false);
     }
   };
@@ -171,13 +169,14 @@ export default function CorporateCreditAnalysis() {
                     <th className="py-2.5 px-4">Badge</th>
                     <th className="py-2.5 px-4">Allocated Volume</th>
                     <th className="py-2.5 px-4">Unit Rate</th>
+                    <th className="py-2.5 px-4">Farmer Keeps (70%)</th>
                     <th className="py-2.5 px-4">Subtotal</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {matchedParcels.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="py-6 px-4 text-center text-slate-500">
+                      <td colSpan="8" className="py-6 px-4 text-center text-slate-500">
                         {isMatching ? 'Matching live listings…' : 'No active listings matched this target. Lower the volume or check back later.'}
                       </td>
                     </tr>
@@ -192,6 +191,9 @@ export default function CorporateCreditAnalysis() {
                         </td>
                         <td className="py-2.5 px-4 font-bold text-emerald-800">{item.credits} MT</td>
                         <td className="py-2.5 px-4 text-slate-900">INR {item.rate}</td>
+                        <td className="py-2.5 px-4 text-emerald-700 font-semibold">
+                          INR {Number(item.farmer_share_inr || 0).toLocaleString('en-IN')}
+                        </td>
                         <td className="py-2.5 px-4 font-extrabold text-slate-900">
                           INR {((item.credits || 0) * (item.rate || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </td>
@@ -220,19 +222,23 @@ export default function CorporateCreditAnalysis() {
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">2% CarbonX Facilitation Fee</p>
-              <p className="text-2xl font-extrabold font-manrope text-rose-300 mt-1">
-                INR {facilitationFee.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Farmer Payouts (70% floor)</p>
+              <p className="text-2xl font-extrabold font-manrope text-emerald-400 mt-1">
+                INR {farmerTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </p>
             </div>
 
             <div>
-              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Automated Farmer Wallet Allocation</p>
-              <p className="text-2xl font-extrabold font-manrope text-emerald-400 mt-1">
-                INR {netFarmerEscrow.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">FPO + Platform Share</p>
+              <p className="text-2xl font-extrabold font-manrope text-amber-300 mt-1">
+                INR {fpoPlatformTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </p>
             </div>
           </div>
+          <p className="text-[11px] text-slate-300">
+            Every farmer keeps a guaranteed 70% of their parcel value; the FPO earns 5% only where its verification
+            involvement is proven — the remainder funds platform operations and satellite monitoring.
+          </p>
 
           <button
             onClick={() => setShowCheckoutModal(true)}
@@ -256,10 +262,54 @@ export default function CorporateCreditAnalysis() {
               </div>
 
               {paymentDone ? (
-                <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-4 rounded-xl text-center space-y-2">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                  <p className="font-bold text-sm">Escrow Settlement Executed!</p>
-                  <p className="text-xs text-slate-600 font-mono">Certificate: {lastCertId}</p>
+                <div className="space-y-3">
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-4 rounded-xl text-center space-y-1">
+                    <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+                    <p className="font-bold text-sm">Escrow settlement executed — credits retired</p>
+                    <p className="text-xs text-slate-600 font-mono">Certificate: {lastCertId}</p>
+                    {lastProof?.escrow_ref && (
+                      <p className="text-[11px] text-slate-500 font-mono">Escrow {lastProof.escrow_ref}</p>
+                    )}
+                  </div>
+
+                  {lastProof?.split && (
+                    <div className="border border-slate-200 rounded-lg p-3 space-y-1 text-xs">
+                      <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">
+                        Payout split executed ({lastProof.split.model})
+                      </p>
+                      {lastProof.split.lines.map(line => (
+                        <div key={line.recipient} className="flex justify-between">
+                          <span className="text-slate-600 font-semibold">{line.recipient} · {line.share_pct}%</span>
+                          <span className="font-mono font-bold text-slate-900">INR {Number(line.amount_inr).toLocaleString('en-IN')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {lastProof?.batch_hash && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                      <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Tamper-evident record</p>
+                      <p className="font-mono text-[10px] text-slate-600 break-all mt-0.5">sha256:{lastProof.batch_hash}</p>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setShowCheckoutModal(false); setPaymentDone(false); runAutoMatch(); }}
+                      className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/buyer/certificates/${lastCertId}`)}
+                      className="flex-1 py-2.5 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 flex items-center justify-center gap-1"
+                    >
+                      <span>View Certificate</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">

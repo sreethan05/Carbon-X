@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Sparkles, TrendingUp, Compass, ArrowLeft, Leaf, Sliders, CheckCircle2 } from 'lucide-react';
+import { Sparkles, TrendingUp, ArrowLeft, Sliders, CheckCircle2, ShieldCheck, Hash } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
 import { getFarmPassport, getNdviHistory } from '../services/api';
@@ -9,15 +9,16 @@ import { getFarmPassport, getNdviHistory } from '../services/api';
 export default function DetailedFarmAnalytics() {
   const navigate = useNavigate();
   const { farmId: routeFarmId } = useParams();
-  const { user, farms } = useAuth();
+  const { farms } = useAuth();
 
   const [passport, setPassport] = useState(null);
   const [trendData, setTrendData] = useState([]);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // Resolve which farm we're looking at: route param first, else the first real farm
-  const farmId = routeFarmId || (farms && farms[0] && farms[0].id) || null;
+  // Resolve which farm we're looking at: route param first, else the first real
+  // farm, else the backend's demo passport (works with the database offline).
+  const farmId = routeFarmId || (farms && farms[0] && farms[0].id) || 'demo';
 
   useEffect(() => {
     let cancelled = false;
@@ -44,7 +45,7 @@ export default function DetailedFarmAnalytics() {
             rabi_baseline: Math.max(0.2, h.ndvi - 0.12),
           })));
         }
-      } catch (e) {
+      } catch {
         if (!cancelled) setLoadError('Analytics service unreachable. Is the backend running?');
       } finally {
         if (!cancelled) setLoading(false);
@@ -223,6 +224,68 @@ export default function DetailedFarmAnalytics() {
                   </span>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Trust Engine & Tamper-Evident Ledger */}
+        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-base font-bold text-carbon-900 flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-primary" />
+                Trust Engine &amp; Tamper-Evident Ledger
+              </h2>
+              <p className="text-xs text-agriText-muted">Evidence quality drives a 10–30% uncertainty deduction; every credit event is hash-chained and publicly recomputable.</p>
+            </div>
+            {passport?.ledger?.verified && (
+              <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                ✓ CHAIN VERIFIED
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-surface-sage/40 border border-forest-200 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-semibold uppercase tracking-wider block">Expected Earnings (70% floor)</span>
+              <span className="text-2xl font-extrabold text-primary font-manrope">
+                ₹{Number(passport?.expected_earnings?.expected_income_inr || currentEarnings).toLocaleString('en-IN')}
+              </span>
+              {passport?.expected_earnings?.range_inr && (
+                <p className="text-[11px] text-agriText-muted">
+                  Sale range ₹{Number(passport.expected_earnings.range_inr.min).toLocaleString('en-IN')} – ₹{Number(passport.expected_earnings.range_inr.max).toLocaleString('en-IN')}
+                </p>
+              )}
+            </div>
+
+            <div className="bg-surface-sage/40 border border-forest-200 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-semibold uppercase tracking-wider block">Evidence Quality &amp; Uncertainty</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-extrabold text-carbon-900 font-manrope">
+                  {passport?.trust ? `${Math.round(passport.trust.evidence_quality * 100)}%` : '—'}
+                </span>
+                <span className="text-xs text-agriText-subtle">quality</span>
+              </div>
+              <p className="text-[11px] text-agriText-muted">
+                Credit deduction: −{passport?.trust?.uncertainty_pct ?? '—'}% (conservative by design)
+              </p>
+            </div>
+
+            <div className="bg-surface-sage/40 border border-forest-200 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-semibold uppercase tracking-wider block flex items-center gap-1">
+                <Hash className="w-3 h-3" /> Ledger Chain
+              </span>
+              <p className="text-sm font-bold text-carbon-900">
+                {passport?.ledger?.events ?? 0} events · {passport?.ledger?.verified ? 'verified' : 'unverified'}
+              </p>
+              {passport?.ledger?.tail_hash && (
+                <p className="font-mono text-[10px] text-agriText-muted break-all" title={`sha256:${passport.ledger.tail_hash}`}>
+                  tail sha256:{String(passport.ledger.tail_hash).slice(0, 16)}…
+                </p>
+              )}
+              {passport?.ledger?.types?.length > 0 && (
+                <p className="text-[10px] text-agriText-subtle">{passport.ledger.types.join(' → ')}</p>
+              )}
             </div>
           </div>
         </div>

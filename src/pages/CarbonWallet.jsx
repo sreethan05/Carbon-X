@@ -1,18 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wallet, ArrowRight, ShieldCheck, CheckCircle2, Building, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Wallet, ArrowRight, CheckCircle2, Building, ArrowLeft, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getWallet } from '../services/api';
+import { getWallet, demoLogin } from '../services/api';
 
 export default function CarbonWallet() {
   const navigate = useNavigate();
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, login, isAuthenticated } = useAuth();
 
   const [totalEarned, setTotalEarned] = useState(0);
   const [pendingEscrow, setPendingEscrow] = useState(0);
   const [withdrawableUpi, setWithdrawableUpi] = useState(0);
+  const [farmerShareTotal, setFarmerShareTotal] = useState(0);
+  const [fpoShareTotal, setFpoShareTotal] = useState(0);
+  const [platformShareTotal, setPlatformShareTotal] = useState(0);
   const [upiId, setUpiId] = useState(user?.upi || '');
   const [loadError, setLoadError] = useState('');
+  const [demoMode, setDemoMode] = useState(false);
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
 
   // Bank Withdrawal Modal State
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -33,7 +38,11 @@ export default function CarbonWallet() {
         setTotalEarned(data.total_earned || 0);
         setPendingEscrow(data.escrow_pending || 0);
         setWithdrawableUpi(data.withdrawable_upi || 0);
+        setFarmerShareTotal(data.farmer_share_total || 0);
+        setFpoShareTotal(data.fpo_share_total || 0);
+        setPlatformShareTotal(data.platform_share_total || 0);
         setUpiId(data.upi_id || user?.upi || '');
+        setDemoMode(!!data.demo_mode);
         setTransactions((data.transactions || []).map((t) => ({
           date: t.date,
           txId: t.tx_id,
@@ -41,19 +50,40 @@ export default function CarbonWallet() {
           creditsSold: t.credits_sold,
           rate: t.rate,
           gross: t.gross,
-          fee2pct: t.fee_2pct,
-          netReceived: t.net_received,
+          farmerShare: t.farmer_share ?? 0,
+          fpoShare: t.fpo_share ?? 0,
+          platformShare: t.platform_share ?? 0,
+          splitModel: t.split_model || '3-way',
+          ledgerHash: t.ledger_hash,
           status: t.status,
         })));
       } else {
-        setLoadError((data && data.message) || 'Could not load wallet data');
+        setLoadError((data && (data.message || data.detail)) || 'Could not load wallet data');
       }
-    } catch (e) {
+    } catch {
       setLoadError('Wallet service unreachable. Please try again.');
     }
   };
 
   useEffect(() => { loadWallet(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startDemoSession = async () => {
+    setIsStartingDemo(true);
+    try {
+      const data = await demoLogin();
+      if (data && data.success && data.token) {
+        await login(data.token, data.user);
+        await refreshUser();
+        await loadWallet();
+      } else {
+        setLoadError((data && data.message) || 'Demo session could not be started');
+      }
+    } catch {
+      setLoadError('Demo session could not be started — is the backend running?');
+    } finally {
+      setIsStartingDemo(false);
+    }
+  };
 
   const handleWithdrawSubmit = (e) => {
     e.preventDefault();
@@ -71,11 +101,12 @@ export default function CarbonWallet() {
         date: new Date().toISOString().split('T')[0],
         txId: `UPI-DEMO-${Math.floor(10000 + Math.random() * 90000)}`,
         source: `Simulated UPI Transfer (${selectedBank}) — demo only`,
-        creditsSold: (amt / 340).toFixed(2),
-        rate: 340,
         gross: amt,
-        fee2pct: amt * 0.02,
-        netReceived: amt * 0.98,
+        farmerShare: amt,
+        fpoShare: 0,
+        platformShare: 0,
+        splitModel: 'UPI payout',
+        ledgerHash: null,
         status: 'DEMO'
       };
 
@@ -105,7 +136,10 @@ export default function CarbonWallet() {
               </span>
             </div>
             <h1 className="text-2xl font-extrabold text-carbon-900 font-manrope">Farmer Carbon Wallet</h1>
-            <p className="text-xs text-agriText-muted mt-0.5">Automated UPI settlements with transparent 2% platform fee breakdown.</p>
+            <p className="text-xs text-agriText-muted mt-0.5">
+              Conditional payout splits — your 70% floor is guaranteed, FPO 5% only when involved.
+              {demoMode && <span className="ml-2 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">DEMO SESSION</span>}
+            </p>
           </div>
 
           <button
@@ -116,6 +150,28 @@ export default function CarbonWallet() {
             <span>Back to Dashboard</span>
           </button>
         </div>
+
+        {/* Auth / error prompt */}
+        {loadError && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div>
+              <p className="text-sm font-bold text-amber-900">Wallet could not load</p>
+              <p className="text-xs text-amber-800 mt-0.5">{loadError}</p>
+              {!isAuthenticated && (
+                <p className="text-xs text-amber-700 mt-1">No database configured? Start a demo farmer session to explore the wallet with sample data.</p>
+              )}
+            </div>
+            {!isAuthenticated && (
+              <button
+                onClick={startDemoSession}
+                disabled={isStartingDemo}
+                className="px-4 py-2.5 bg-[#1B4332] hover:bg-[#2D6A4F] text-white rounded-xl text-xs font-bold shadow-sm whitespace-nowrap"
+              >
+                {isStartingDemo ? 'Starting...' : 'Start Demo Farmer Session'}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Financial Summary Banner */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -141,9 +197,9 @@ export default function CarbonWallet() {
 
           <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col justify-between">
             <div>
-              <p className="text-[11px] font-semibold text-agriText-subtle uppercase tracking-wider">Settled Withdrawable Balance</p>
+              <p className="text-[11px] font-semibold text-agriText-subtle uppercase tracking-wider">Your Share (70% floor)</p>
               <p className="text-3xl font-extrabold text-carbon-900 font-manrope mt-2">
-                ₹{withdrawableUpi.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{farmerShareTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </p>
             </div>
 
@@ -157,12 +213,25 @@ export default function CarbonWallet() {
           </div>
         </div>
 
+        {/* Split composition strip */}
+        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-primary" />
+            <p className="text-xs font-bold text-carbon-900">Conditional split across all settled sales</p>
+          </div>
+          <div className="flex flex-wrap gap-4 text-xs font-semibold">
+            <span className="text-primary">Farmer: ₹{farmerShareTotal.toLocaleString('en-IN')}</span>
+            <span className="text-emerald-700">FPO (5% when involved): ₹{fpoShareTotal.toLocaleString('en-IN')}</span>
+            <span className="text-slate-500">Platform: ₹{platformShareTotal.toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+
         {/* Itemized Transaction Ledger */}
         <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-6">
           <div className="flex justify-between items-center">
             <div>
               <h2 className="text-base font-bold text-carbon-900">Itemized Transaction Ledger</h2>
-              <p className="text-xs text-agriText-muted">Transparent breakdown showing 2% CarbonX platform fee deduction.</p>
+              <p className="text-xs text-agriText-muted">Every payout line, anchored to the tamper-evident hash ledger.</p>
             </div>
 
             <span className="text-xs font-mono font-semibold text-primary bg-surface-sage border border-forest-200 px-3 py-1 rounded-full">
@@ -177,10 +246,10 @@ export default function CarbonWallet() {
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Transaction ID</th>
                   <th className="py-3 px-4">Source / Buyer</th>
-                  <th className="py-3 px-4">Credits Sold</th>
-                  <th className="py-3 px-4">Rate / Unit</th>
-                  <th className="py-3 px-4">2% Fee Deducted</th>
-                  <th className="py-3 px-4">Net Settled Amount</th>
+                  <th className="py-3 px-4">Gross</th>
+                  <th className="py-3 px-4">Your Share</th>
+                  <th className="py-3 px-4">FPO / Platform</th>
+                  <th className="py-3 px-4">Ledger Proof</th>
                   <th className="py-3 px-4">Status</th>
                 </tr>
               </thead>
@@ -189,11 +258,24 @@ export default function CarbonWallet() {
                   <tr key={tx.txId} className="hover:bg-surface-sage/30 transition-colors">
                     <td className="py-3 px-4 text-agriText-muted">{tx.date}</td>
                     <td className="py-3 px-4 font-mono text-carbon-900">{tx.txId}</td>
-                    <td className="py-3 px-4 font-bold text-carbon-900">{tx.source}</td>
-                    <td className="py-3 px-4 text-carbon-800">{tx.creditsSold} MT</td>
-                    <td className="py-3 px-4 text-carbon-800">₹{tx.rate}</td>
-                    <td className="py-3 px-4 text-red-700 font-semibold">- ₹{tx.fee2pct.toFixed(2)}</td>
-                    <td className="py-3 px-4 font-extrabold text-primary">₹{tx.netReceived.toFixed(2)}</td>
+                    <td className="py-3 px-4 font-bold text-carbon-900">
+                      {tx.source}
+                      <span className="ml-2 text-[10px] font-semibold text-agriText-subtle">({tx.splitModel} split)</span>
+                    </td>
+                    <td className="py-3 px-4 text-carbon-800">₹{Number(tx.gross || 0).toLocaleString('en-IN')}</td>
+                    <td className="py-3 px-4 font-extrabold text-primary">₹{Number(tx.farmerShare || 0).toLocaleString('en-IN')}</td>
+                    <td className="py-3 px-4 text-carbon-700">
+                      ₹{Number(tx.fpoShare || 0).toLocaleString('en-IN')} / ₹{Number(tx.platformShare || 0).toLocaleString('en-IN')}
+                    </td>
+                    <td className="py-3 px-4">
+                      {tx.ledgerHash ? (
+                        <span className="font-mono text-[10px] text-agriText-muted" title={`sha256:${tx.ledgerHash}`}>
+                          sha256:{String(tx.ledgerHash).slice(0, 10)}…
+                        </span>
+                      ) : (
+                        <span className="text-agriText-subtle">—</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4">
                       <span className="bg-surface-sage text-primary border border-forest-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
                         {tx.status}
@@ -201,6 +283,13 @@ export default function CarbonWallet() {
                     </td>
                   </tr>
                 ))}
+                {transactions.length === 0 && !loadError && (
+                  <tr>
+                    <td colSpan={8} className="py-6 px-4 text-center text-agriText-muted">
+                      No settled sales yet — list credits on the marketplace to see conditional splits here.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

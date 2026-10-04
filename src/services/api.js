@@ -158,6 +158,20 @@ export async function retireCertificate(certId, scope) {
   return post(`${PY}/certificates/${certId}/retire${qs}`, {});
 }
 
+// ── Trust & transparency (split engine, hash ledger, earnings calculator) ──
+
+export async function calculateEarnings(payload) {
+  return post(`${PY}/farms/earnings-calculator`, payload);
+}
+
+export async function getFarmLedger(farmId) {
+  return get(`${PY}/ledger/${farmId}`);
+}
+
+export async function demoLogin(phone) {
+  return post(`${PY}/demo/login`, { phone });
+}
+
 // ── Farm passport & history ──
 
 export async function getFarmPassport(farmId) {

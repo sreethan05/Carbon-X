@@ -117,7 +117,7 @@ export default function LeafletMap({
     if (polygonClosed && polygonPoints.length >= 3) {
       emitGeojson(polygonPoints);
     }
-  }, [polygonClosed, polygonPoints]);
+  }, [polygonClosed, polygonPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startPolygon = () => {
     if (readOnly) return;

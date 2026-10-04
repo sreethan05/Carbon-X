@@ -4,6 +4,9 @@ backend/.venv/
 venv/
 .venv/
 
+# AI tool worktrees
+.kilo/
+
 # Environment files and secrets
 .env
 .env.*

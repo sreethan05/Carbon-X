@@ -29,7 +29,7 @@ export default function CertificateRetirementPage() {
         } else {
           setLoadError(`Certificate ${certId} was not found in the escrow ledger.`);
         }
-      } catch (e) {
+      } catch {
         setLoadError('Certificate ledger unreachable. Is the backend running?');
       } finally {
         setLoading(false);
@@ -48,7 +48,7 @@ export default function CertificateRetirementPage() {
       } else {
         setRetireError((res && res.message) || 'Retirement failed');
       }
-    } catch (e) {
+    } catch {
       setRetireError('Retirement service unreachable. Please try again.');
     } finally {
       setIsRetiring(false);

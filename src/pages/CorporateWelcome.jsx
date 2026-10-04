@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Globe, ShieldCheck, ArrowRight, Layers, Sparkles, Building2 } from 'lucide-react';
+import { ArrowRight, Sparkles } from 'lucide-react';
 import BadgePill from '../components/BadgePill';
 
 export default function CorporateWelcome() {

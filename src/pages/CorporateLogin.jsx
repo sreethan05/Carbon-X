@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, ArrowRight, ShieldCheck, Lock, CheckCircle2 } from 'lucide-react';
+import { Building2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { corporateLogin } from '../services/api';
 

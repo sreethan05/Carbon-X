@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowRight, CheckCircle2, AlertTriangle, ShieldCheck, Compass, Info, Check, Edit3, X } from 'lucide-react';
+import { ArrowRight, AlertTriangle, ShieldCheck, Check, Edit3, X } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import LeafletMap from '../components/LeafletMap';
 import { useAuth } from '../context/AuthContext';
