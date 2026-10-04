@@ -1,0 +1,17 @@
+{
+  "features": [
+    "NDVI",
+    "NDWI",
+    "SAVI",
+    "NDVI_STD",
+    "B4",
+    "B8",
+    "B11",
+    "B8_VAR"
+  ],
+  "model": "gb_slow",
+  "val_r2": 0.981,
+  "test_r2": 0.989,
+  "target": "satellite_derived_bio_index",
+  "ndvi_std_importance": 0.697
+}
