@@ -140,6 +140,34 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
 `DetailedFarmAnalytics` has the Trust Engine & Ledger card;
 `EarningsCalculator` component is on the farmer dashboard.
 
+## Production hardening (added 2026-10-04, late)
+
+- **Trust Engine Stage 1** lives in `credit_engine.stage1_verification`:
+  declared crop vs per-crop NDVI signature windows; mismatch saves the farm
+  PENDING with credits blocked (FPO queue) — never auto-reject. Enforced
+  server-side in `/analyze` (returns `stage1`) and `/save-farm`.
+- **5-day monitoring**: `POST /monitor/run` compares `farms.ndvi` vs
+  `last_monitor_ndvi` (drop >= 0.15 -> status Flagged + ledger MONITOR event).
+  An in-process scheduler (`CARBONX_AUTO_MONITOR=1`, default) runs it at boot
+  (+90s) and every 5 days. Passport exposes a `monitoring` block.
+- **Certificate PDFs**: `GET /certificates/{cert_id}/pdf` renders a
+  Verra-style PDF (reportlab, `app/services/certificate_pdf.py`).
+- **Security**: real random `JWT_SECRET_KEY` in `backend/.env`; OTP sends
+  rate-limited (3 per phone / 10 min, in-process — move to Redis for
+  multi-worker); RLS enabled on ALL tables (anon/authenticated denied —
+  backend uses service_role which bypasses RLS; nothing client-side reads
+  Supabase directly).
+- **Tests**: `backend/tests/test_trust_layer.py` (39 tests total) covers
+  split math, ledger tamper-detection, credit engine, Stage 1. Run from
+  `backend/`: `python -m unittest discover tests`. CI (`.github/workflows/ci.yml`)
+  runs frontend lint+build and the backend suite on every push.
+- **Land registry**: 30 Telangana parcels seeded via
+  `scripts/seed_land_registry.py` (idempotent, deterministic).
+- **PWA-lite**: manifest + conservative service worker (app shell offline;
+  API calls always network-only), registered in production builds only.
+- **Deploy**: `vercel.json` (rewrites `/py-api/*` — replace placeholder) +
+  `docs/DEPLOYMENT.md`. API bases are env-aware (`VITE_PY_API_BASE`).
+
 ## Commands
 
 ```powershell

@@ -1,5 +1,8 @@
-const PY = '/py-api';
-const BC = '/bc-api';
+// API bases: Vite dev proxies /py-api and /bc-api; in production set
+// VITE_PY_API_BASE / VITE_BC_API_BASE (e.g. https://api.example.com).
+export const PY_API_BASE = import.meta.env.VITE_PY_API_BASE || '/py-api';
+const BC = import.meta.env.VITE_BC_API_BASE || '/bc-api';
+const PY = PY_API_BASE;
 
 function authHeaders() {
   const token = localStorage.getItem('carbonx_token');

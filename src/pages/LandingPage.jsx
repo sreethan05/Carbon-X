@@ -166,6 +166,44 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* How CarbonX Works — the five-flow trust story */}
+      <section className="max-w-7xl mx-auto px-4 md:px-10 mb-20">
+        <div className="text-center mb-12">
+          <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-widest bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
+            The Trust Pipeline
+          </span>
+          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope mt-4">From field photo to farmer payout — in five verified steps</h2>
+          <p className="text-sm text-slate-600 mt-2 max-w-2xl mx-auto">
+            Every credit on CarbonX walks the same auditable path. Nothing silently fails, nothing invisibly passes — and the farmer sees every rupee.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          {[
+            { n: '1', t: 'Register & Validate', d: 'OTP login, OCR of any land document, map-drawn boundary. Failed checks escalate to the FPO queue — never silently dropped.' },
+            { n: '2', t: 'Verify (Stage 1)', d: 'Declared crop cross-checked against Sentinel-2 NDVI signatures. Mismatch pauses for human review — satellites check, humans judge.' },
+            { n: '3', t: 'Calculate (Stage 2)', d: 'VM0042-style five-step math: additionality, biomass, soil carbon — minus a 10–30% uncertainty deduction. Conservative by design.' },
+            { n: '4', t: 'Anchor & Monitor', d: 'Every credit anchors a SHA-256 evidence hash. A 5-day NDVI cycle flags at-risk credits straight to FPO review.' },
+            { n: '5', t: 'Sell & Split', d: 'Buyers see the farmer-level breakdown before paying. Escrow splits 70/5/25 or 70/30, purchase = instant retirement, certificate issued.' },
+          ].map((s) => (
+            <div key={s.n} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all">
+              <div className="w-9 h-9 rounded-full bg-[#1B4332] text-emerald-200 font-extrabold text-sm flex items-center justify-center mb-3 font-manrope">
+                {s.n}
+              </div>
+              <h3 className="text-sm font-extrabold text-slate-900 font-manrope">{s.t}</h3>
+              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{s.d}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
+          <p className="text-xs text-emerald-900 font-semibold">
+            <span className="font-extrabold">The farmer's sale screen:</span> Credit sold · Price ₹1,800 · Your share (70%) ₹1,260 · FPO (5%) ₹90 · Platform (25%) ₹450 · Verified record sha256:3a7f…9e21
+          </p>
+          <p className="text-[11px] text-emerald-700 mt-1">Every rupee, every recipient, every hash — one screen.</p>
+        </div>
+      </section>
+
       {/* Quick Portal Navigation Cards */}
       <section className="max-w-7xl mx-auto px-4 md:px-10 mb-20">
         <div className="text-center mb-12">

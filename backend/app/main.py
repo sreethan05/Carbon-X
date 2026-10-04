@@ -54,6 +54,35 @@ except Exception as e:
     print(f"Earth Engine not available: {e}")
 
 
+# ── Automatic 5-day monitoring scheduler ─────────────────────────────
+# The Sentinel-2 revisit cycle, run in-process so a single deployment
+# keeps credits at-risk without anyone pressing a button. Disable with
+# CARBONX_AUTO_MONITOR=0.
+import asyncio
+
+_MONITOR_INTERVAL_SECONDS = 5 * 24 * 60 * 60
+
+
+async def _monitoring_loop():
+    await asyncio.sleep(90)  # let the app finish booting first
+    while True:
+        try:
+            if os.getenv("CARBONX_AUTO_MONITOR", "1").strip().lower() not in ("0", "false", "no"):
+                result = run_monitoring_cycle()
+                print(f"[monitor] scheduled cycle: checked={result.get('checked')} "
+                      f"at_risk={result.get('at_risk_count')}")
+        except Exception as e:
+            print(f"[monitor] scheduled cycle failed: {e}")
+        await asyncio.sleep(_MONITOR_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+def _start_monitoring_scheduler():
+    if db.is_ready():
+        asyncio.get_event_loop().create_task(_monitoring_loop())
+        print("[monitor] 5-day scheduler armed (first cycle in 90s)")
+
+
 def _sms_ready() -> bool:
     """True when Textplate SMS creds are set (token + template id)."""
     try:
@@ -258,7 +287,35 @@ def _user_response(user: dict, phone: str):
     }
 
 
+_OTP_SEND_WINDOW_SECONDS = 600   # 10 minutes
+_OTP_SEND_MAX_PER_WINDOW = 3     # per phone — blunt but effective abuse brake
+_otp_send_log: dict = {}
+
+
+def _otp_rate_limited(phone: str) -> bool:
+    """Sliding-window per-phone OTP send limiter (per process).
+
+    Production note: with multiple workers move this to Redis; the in-process
+    window is per-worker, which still blunts single-source flooding.
+    """
+    import time
+
+    now = time.monotonic()
+    hits = [t for t in _otp_send_log.get(phone, []) if now - t < _OTP_SEND_WINDOW_SECONDS]
+    if len(hits) >= _OTP_SEND_MAX_PER_WINDOW:
+        _otp_send_log[phone] = hits
+        return True
+    hits.append(now)
+    _otp_send_log[phone] = hits
+    return False
+
+
 def _send_otp_flow(phone: str):
+    if _otp_rate_limited(phone):
+        return {
+            "success": False,
+            "message": "Too many OTP requests for this number. Please wait 10 minutes and try again.",
+        }
     otp = generate_otp()
     _store_otp(phone, otp)
     sms_sent, msg = send_phone_otp(phone, otp)
@@ -1974,6 +2031,47 @@ def list_certificates():
             "on_chain": False,
         })
     return {"success": True, "certificates": certificates}
+
+
+@app.get("/certificates/{cert_id}/pdf")
+def download_certificate_pdf(cert_id: str):
+    """Download the retirement certificate as a print-ready PDF."""
+    from fastapi.responses import Response
+
+    from app.services.certificate_pdf import render_certificate_pdf
+
+    rows = None
+    if not db.is_ready():
+        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
+    else:
+        try:
+            sb = db._client()
+            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    if not row:
+        return {"success": False, "message": "Certificate not found"}
+    farm_id = row.get("farm_id") or ""
+    chain = ledger.summary(farm_id) if farm_id else {}
+    cert = {
+        "id": cert_id,
+        "buyer": "Corporate Buyer",
+        "farmer_name": row.get("farmer_name"),
+        "crop": row.get("crop"),
+        "volume": row.get("total_credits"),
+        "value": row.get("current_bid"),
+        "location": row.get("location"),
+        "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
+        "retired_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
+        "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
+    }
+    pdf_bytes = render_certificate_pdf(cert)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
+    )
 
 
 @app.post("/certificates/{cert_id}/retire")
