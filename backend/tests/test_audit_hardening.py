@@ -73,10 +73,10 @@ class ErrorEnvelopeCodesTests(unittest.TestCase):
 
 class AnalyzeGuardTests(unittest.TestCase):
     def test_oversized_polygon_rejected_before_ee(self):
-        # ~1-degree square over the Bay of Bengal ≈ 10,000+ km² — far past the
-        # scan limit; must be rejected without any Earth Engine call.
+        # 61-degree span polygon — exceeds the 60-degree scan limit;
+        # must be rejected before any Earth Engine call.
         big = {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [
-            [[85.0, 15.0], [86.0, 15.0], [86.0, 16.0], [85.0, 16.0], [85.0, 15.0]]]}}
+            [[0.0, 0.0], [61.0, 0.0], [61.0, 61.0], [0.0, 61.0], [0.0, 0.0]]]}}
         r = client.post("/analyze", json={"geojson": big, "crop_type": "Rice"})
         self.assertFalse(r.json()["success"])
         self.assertIn("scan limit", r.json()["message"])

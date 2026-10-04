@@ -26,6 +26,14 @@ _MIGRATED = False
 # In-process pub/sub for live ledger push (#WS). Multi-worker deployments
 # should fan out via Supabase Realtime; this covers the single-worker case.
 _ENTITY_LISTENERS: dict = {}
+_main_loop = None
+
+
+def set_main_loop(loop) -> None:
+    """Capture the app's event loop (called from main's startup) so sync
+    ledger writes can bridge broadcasts onto it from worker threads."""
+    global _main_loop
+    _main_loop = loop
 
 
 def subscribe(entity_id: str, callback) -> None:
@@ -43,6 +51,18 @@ def _publish(entity_id: str, event: dict) -> None:
             cb(event)
         except Exception as e:  # a dead websocket must never break the ledger
             logger.warning("ledger listener failed: %s", e)
+    # Broadcast to WebSocket subscribers (main.py registers a loop at
+    # startup). append_event runs in sync/worker-thread contexts, so the
+    # coroutine must be bridged with run_coroutine_threadsafe — a bare
+    # asyncio.create_task here would raise (no loop in this thread) and the
+    # broadcast would silently never happen.
+    try:
+        import asyncio
+        if _main_loop is not None and _main_loop.is_running():
+            from app.main import _ledger_broadcast
+            asyncio.run_coroutine_threadsafe(_ledger_broadcast(entity_id, event), _main_loop)
+    except Exception:
+        pass  # main not loaded yet (e.g., during tests) or app shutting down
 
 _CHAINS: dict = {}
 _DEFAULT_PATH = os.path.join(

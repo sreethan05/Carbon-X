@@ -1,14 +1,84 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "carbonx-backend"
 version = "1.0.0"
-description = "CarbonX FastAPI backend — satellite-verified carbon + biodiversity credits"
-requires-python = ">=3.11"
-license = { file = "../LICENSE" }
-readme = "../README.md"
+description = "CarbonX FastAPI backend — satellite-verified carbon credits for smallholder farmers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "CarbonX Team", email = "team@carbonx.example"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Framework :: FastAPI",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "supabase>=2.3",
+    "redis>=5.0",
+    "python-dotenv>=1.0",
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    "pillow>=10.0",
+    "pytesseract>=0.3",
+    "numpy>=1.24",
+    "pandas>=2.1",
+    "scikit-learn>=1.3",
+    "joblib>=1.3",
+    "earthengine-api>=0.1.380",
+    "httpx>=0.25",
+    "prometheus-fastapi-instrumentator>=6.1",
+]
 
-[tool.setuptools]
-packages = ["app"]
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.21",
+    "httpx>=0.25",
+    "ruff>=0.1.0",
+    "mypy>=1.5",
+]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.3",
+]
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+namespace_packages = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = ["E", "F", "I", "UP", "B", "C4", "W"]
+ignore = ["E501", "B008", "C408"]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101", "S113", "PLP004"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["*Test"]
+python_functions = ["test_*"]
