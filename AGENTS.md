@@ -9,7 +9,6 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 - Main app: repo root (`src/`), React 18 + Vite + Tailwind. `npm run dev` → port 5000.
 - `backend/` — Python FastAPI (GEE satellite scan, ML, phone OTP auth, Supabase service-role access) → port 8000. Proxied via `/py-api`.
 - `backend/` (Node) — blockchain minting API → port 3001. Proxied via `/bc-api`.
-- `frontend/` — legacy standalone map UI (deprecated; GEE map is now `src/components/GEEMap.jsx`).
 - Local schema SQL lives in `supabase/` (`01_sreethan_initial_schema.sql`, `02_hasini_merged_schema.sql`, `schema.sql`).
 
 ## Supabase (source of truth: remote DB)
@@ -227,6 +226,38 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   #19 Zod, #20 full i18n, #27 monsoon gap-fill, #28 registry listing,
   #29 mobile, #35 corporate portfolio).
 
+
+## Code-quality audit round (2026-10-04, latest)
+
+- Error envelope now carries machine codes (`UNAUTHORIZED`/`FORBIDDEN`/
+  `NOT_FOUND`/`BAD_CURSOR`/…) for frontend routing; `X-Request-ID` is in
+  every `carbonx.*` JSON log record (contextvar set by middleware).
+- `/analyze`: GeoJSONPolygon Pydantic model (`extra=forbid` + field_validator),
+  early >10,000 ha scan guard, parallel EVI/feature/area EE queries
+  (ThreadPoolExecutor), `quick_scan_estimate` TTL cache, FORMULA_VERSION
+  recorded in estimates and ledger ISSUE snapshots.
+- `/marketplace/listings`: opaque `cursor`/`next_cursor` pagination
+  (base64 offset — keyset upgrade documented); `/predict` and `/analyze`
+  always include `ml_source`; `/marketplace/buy` rejects listings whose farm
+  no longer exists (no ledger writes against phantom farms).
+- `WebSocket /ws/ledger/{farm_id}`: in-process pub-sub in the ledger pushes
+  events to the passport instantly (frontend falls back to 15s polling);
+  vite proxy has `ws: true`.
+- `POST /ops/ground-truth/calibrate`: per-crop factor suggestions when
+  N>=30 (never auto-applies — governance decision).
+- `farms.credits_ci90_low/high` persist the statistical interval at
+  enrollment; passport exposes `credits_ci90`.
+- `app/config.py` centralizes constants; `app/supabase_db.py` has TypedDict
+  row shapes; sample_data is lazy (production paths never import it);
+  `_polygon_area_hectares` delegates to polygon_service; `extra=forbid` on
+  money models; backend `pyproject.toml` + `py.typed`.
+- Removed: `frontend/` (deprecated legacy UI), `src/lib/supabase.js`,
+  `backend/src/routes/farms.js`. Kept `backend/src/` (standalone optional
+  Amoy minting service, documented — NOT dead) and the `.kilo` gitignore
+  line (defensive against tool recreation).
+- Deferred: main.py router split (2.9k lines, pure churn without behavior
+  gain at this stage — trigger: second backend contributor).
+
 ## Commands
 
 ```powershell
@@ -255,7 +286,7 @@ stack still boots and degrades cleanly (verified end-to-end):
 - CORS: the frontend origin is port **5000**; the `CORS_ORIGINS` default in
   `backend/app/main.py` and `backend/.env` include 5173/3000/5000 (5000 was
   missing before 2026-10-04 — direct browser→:8000 calls were blocked).
-- ESLint config ignores `backend`, `blockchain`, `frontend`, `.kilo`; `.kilo/`
+- ESLint config ignores `backend`, `blockchain`, `.kilo`; `.kilo/`
   (leftover AI-tool worktrees) is gitignored too. `src/lib/supabase.js` exports
   a null-gated client but nothing imports it — frontend auth goes through
   `/py-api` only. `backend/src/routes/farms.js` routes are not mounted in

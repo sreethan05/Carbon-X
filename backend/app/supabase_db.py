@@ -1,6 +1,69 @@
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional, TypedDict
+
+
+class ListingRow(TypedDict, total=False):
+    id: str
+    farm_id: str
+    farmer_phone: str
+    farmer_name: str
+    location: str
+    crop: str
+    size_label: str
+    listing_model: str
+    price_per_credit: float
+    current_bid: float
+    bids_count: int
+    total_credits: float
+    carbon_credits: float
+    biodiversity_credits: float
+    status: str
+    token_id: Optional[str]
+    tx_hash: Optional[str]
+    image_url: Optional[str]
+    expires_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class FarmRow(TypedDict, total=False):
+    id: str
+    owner_phone: str
+    name: str
+    crop_type: str
+    irrigation: str
+    geojson: dict
+    area_hectares: float
+    ndvi: float
+    evi: float
+    carbon_tonnes: float
+    biodiversity_score: float
+    total_credits: float
+    status: str
+    badge: Optional[str]
+    fpo_id: Optional[str]
+    token_id: Optional[str]
+    last_monitor_ndvi: Optional[float]
+    last_monitored_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class ProfileRow(TypedDict, total=False):
+    id: str
+    phone: str
+    name: str
+    role: str
+    state: Optional[str]
+    district: Optional[str]
+    village: Optional[str]
+    upi: Optional[str]
+    aadhaar_last4: Optional[str]
+    fpo_id: Optional[str]
+    preferred_language: Optional[str]
+    created_at: str
+    updated_at: str
 
 _supabase = None
 _ready = False
@@ -59,7 +122,7 @@ def health_check() -> dict:
     return {"ready": all(tables.values()), "tables": tables}
 
 
-def get_profile(phone: str) -> Optional[dict]:
+def get_profile(phone: str) -> Optional[ProfileRow]:
     sb = _client()
     if not sb:
         return None
@@ -199,7 +262,7 @@ def update_farm(farm_id: str, fields: dict) -> Optional[dict]:
     return rows[0] if rows else None
 
 
-def get_listings(status: Optional[str] = "Active") -> list:
+def get_listings(status: Optional[str] = "Active") -> List[ListingRow]:
     sb = _client()
     if not sb:
         return []
@@ -319,7 +382,7 @@ def get_land_registry(survey_number: str) -> Optional[dict]:
     return rows[0] if rows else None
 
 
-def get_farm(farm_id: str) -> Optional[dict]:
+def get_farm(farm_id: str) -> Optional[FarmRow]:
     sb = _client()
     if not sb:
         return None
