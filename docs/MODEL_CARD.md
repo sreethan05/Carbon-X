@@ -24,16 +24,18 @@ Artifacts: `backend/ml/models/{biodiversity_model,feature_scaler,score_scaler}.p
 
 ## Honest performance (measured 2026-10-04, real GBIF data)
 
-**v2 result: test R² = −0.165, MAE ≈ 4.0 species** (n_test = 32, 315 filtered
-cells). The honest conclusion: **Sentinel-2 vegetation indices alone do not
-predict GBIF citizen-science species richness** for this sample — a model
-that generalises worse than predicting the mean. It is trained, versioned,
-and archived with its true metrics (`ml/models/model_card.json`), and a
+**v3 result (2026-10-04): test R² ≈ 0.00, MAE ≈ 5.1 species** (n_test = 59,
+294 cells, 11 features including elevation, NDVI range and seasonal
+contrast). v2 (indices only) scored −0.165; adding terrain/habitat features
+recovered to mean-prediction level — and no further. The honest conclusion:
+**GBIF citizen-science richness is not predictable from Sentinel-2 features
+at this sample size** — sampling bias dominates. Both models are trained,
+versioned, archived with true metrics (`ml/models/model_card.json`), and a
 **quality gate** (`ml_service._MIN_SERVING_TEST_R2 = 0.2`) refuses to serve
-any model below threshold — so the app currently serves the labelled
-NDVI-only heuristic, and will automatically serve the model only when a
-retrain clears the gate (planned: elevation, habitat-heterogeneity and
-seasonal-contrast features; ground-truth plot data).
+any model below threshold — the app serves the labelled NDVI-only heuristic
+and will auto-adopt a model only when a retrain clears the gate. The
+evidence-backed path to that is field survey data (Phase 0 calibration),
+not more remote-sensing features.
 
 The previous v1 model's 0.989 "R²" was circular — its label was a
 deterministic formula of its own input features. That model was retired.
