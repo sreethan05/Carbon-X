@@ -54,19 +54,64 @@ export default function DetailedFarmAnalytics() {
     return () => { cancelled = true; };
   }, [farmId]);
 
-  // Live ledger: poll the hash chain so a sale/split/retire lands on the
-  // farmer's screen without a manual refresh.
+  // Live ledger: WebSocket push when available, 15s polling as fallback —
+  // a sale/split/retire lands on the farmer's screen without a refresh.
   useEffect(() => {
     if (!farmId) return undefined;
-    const timer = setInterval(async () => {
+    let ws = null;
+    let pollTimer = null;
+    let closed = false;
+
+    const mergeChain = (payload) => {
+      setPassport((prev) => (prev ? {
+        ...prev,
+        ledger: {
+          events: payload.events ?? prev.ledger?.events ?? 0,
+          verified: payload.verified ?? prev.ledger?.verified ?? false,
+          tail_hash: payload.tail_hash ?? prev.ledger?.tail_hash,
+          types: payload.types ?? prev.ledger?.types ?? [],
+        },
+      } : prev));
+    };
+
+    const refresh = async () => {
       if (document.hidden) return;
       try {
         const chain = await getFarmLedger(farmId);
         if (!chain || !chain.success) return;
-        setPassport((prev) => (prev ? { ...prev, ledger: chain.verification ? { ...chain.verification, types: chain.events.map((e) => e.type) } : prev.ledger } : prev));
+        mergeChain({
+          events: chain.verification?.length ?? chain.events?.length,
+          verified: chain.verification?.valid,
+          tail_hash: chain.verification?.tail_hash,
+          types: (chain.events || []).map((e) => e.type),
+        });
       } catch { /* transient — next tick retries */ }
-    }, 15000);
-    return () => clearInterval(timer);
+    };
+
+    try {
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${wsProto}//${window.location.host}/py-api/ws/ledger/${farmId}`);
+      ws.onmessage = (msg) => {
+        try {
+          const data = JSON.parse(msg.data);
+          if (data.type === 'snapshot') {
+            mergeChain({ events: data.events, verified: data.verified, tail_hash: data.tail_hash });
+          } else {
+            refresh(); // pull authoritative state on each pushed event
+          }
+        } catch { /* ignore malformed frames */ }
+      };
+      ws.onerror = () => { if (!pollTimer) pollTimer = setInterval(refresh, 15000); };
+      ws.onclose = () => { if (!closed && !pollTimer) pollTimer = setInterval(refresh, 15000); };
+    } catch {
+      pollTimer = setInterval(refresh, 15000);
+    }
+
+    return () => {
+      closed = true;
+      if (ws) { try { ws.close(); } catch { /* noop */ } }
+      if (pollTimer) clearInterval(pollTimer);
+    };
   }, [farmId]);
 
   // Farmer-facing analytics export (#34): passport summary + NDVI history as CSV.

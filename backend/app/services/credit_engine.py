@@ -211,7 +211,27 @@ def credit_split(carbon_tonnes: float, biodiversity_score: float) -> dict:
     }
 
 
+_quick_scan_cache: dict = {}
+_QUICK_SCAN_TTL = 600  # seconds — same composite inputs give identical outputs
+
+
 def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float) -> dict:
+    import time as _time
+
+    key = (round(float(area_hectares), 4), str(crop).strip().lower(), round(float(ndvi), 4))
+    hit = _quick_scan_cache.get(key)
+    if hit and _time.time() - hit[0] < _QUICK_SCAN_TTL:
+        import logging
+        logging.getLogger("carbonx.credit_engine").info("quick_scan cache hit")
+        return dict(hit[1])
+    result = _quick_scan_estimate_uncached(area_hectares, crop, ndvi)
+    if len(_quick_scan_cache) > 512:
+        _quick_scan_cache.clear()
+    _quick_scan_cache[key] = (_time.time(), result)
+    return dict(result)
+
+
+def _quick_scan_estimate_uncached(area_hectares: float, crop: str, ndvi: float) -> dict:
     """Canonical carbon estimate for enrollment scans.
 
     THE single source of truth — /analyze must use this, never its own

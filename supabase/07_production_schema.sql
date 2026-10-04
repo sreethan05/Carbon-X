@@ -47,6 +47,11 @@ alter table public.marketplace_listings add column if not exists deleted_at time
 alter table public.farms add column if not exists last_monitor_ndvi numeric;
 alter table public.farms add column if not exists last_monitored_at timestamptz;
 
+-- 4b. Persisted statistical interval per farm (#21) — audit-grade, not just
+--     an API-response field. Written at enrollment from the scan estimate.
+alter table public.farms add column if not exists credits_ci90_low numeric;
+alter table public.farms add column if not exists credits_ci90_high numeric;
+
 -- 5. RLS posture (applied to the live project on 2026-10-04):
 --    RLS is ENABLED on every table with NO anon/authenticated policies —
 --    deny-by-default for client-side access. The backend uses service_role

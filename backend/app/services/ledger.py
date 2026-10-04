@@ -23,6 +23,26 @@ from threading import RLock
 
 _LOCK = RLock()
 _MIGRATED = False
+# In-process pub/sub for live ledger push (#WS). Multi-worker deployments
+# should fan out via Supabase Realtime; this covers the single-worker case.
+_ENTITY_LISTENERS: dict = {}
+
+
+def subscribe(entity_id: str, callback) -> None:
+    """Register callback(event_dict) fired after every append for entity."""
+    _ENTITY_LISTENERS.setdefault(entity_id, set()).add(callback)
+
+
+def unsubscribe(entity_id: str, callback) -> None:
+    _ENTITY_LISTENERS.get(entity_id, set()).discard(callback)
+
+
+def _publish(entity_id: str, event: dict) -> None:
+    for cb in list(_ENTITY_LISTENERS.get(entity_id, [])):
+        try:
+            cb(event)
+        except Exception as e:  # a dead websocket must never break the ledger
+            logger.warning("ledger listener failed: %s", e)
 
 _CHAINS: dict = {}
 _DEFAULT_PATH = os.path.join(
@@ -159,6 +179,7 @@ def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -
                     "hash": event["hash"],
                 }).execute()
                 _CHAINS.setdefault(entity_id, []).append(event)  # keep file mirror in sync
+                _publish(entity_id, event)
                 return event
             except Exception as e:
                 logger.error("DB append failed (%s) — writing to local file", e)
@@ -177,6 +198,7 @@ def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -
         event["hash"] = _event_hash(seq, entity_id, event_type, payload_json, prev)
         _CHAINS[entity_id] = chain + [event]
         _persist_file()
+        _publish(entity_id, event)
         return event
 
 

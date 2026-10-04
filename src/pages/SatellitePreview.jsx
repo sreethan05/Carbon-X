@@ -75,6 +75,9 @@ export default function SatellitePreview() {
               satellite_source: analysis.satellite_source,
               area_hectares: analysis.area_hectares || parcel.areaHa,
               badge: parcel.badge,
+              s2_scene: analysis.s2_scene || null,
+              ci90_low: analysis.scan_estimate?.ci90?.low ?? null,
+              ci90_high: analysis.scan_estimate?.ci90?.high ?? null,
             });
             if (saved && saved.success) savedFarm = saved.farm;
           } catch (e) {

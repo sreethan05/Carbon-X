@@ -9,9 +9,9 @@ ROOT_DIR = BACKEND_DIR.parent
 load_dotenv(ROOT_DIR / ".env", override=True)
 load_dotenv(BACKEND_DIR / ".env", override=True)
 
-from fastapi import FastAPI, File, Header, HTTPException, Depends, Query, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Depends, Query, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 from typing import Literal, Optional
 import base64
 import math
@@ -32,9 +32,16 @@ from app.security import (
 from app.phone_service import generate_otp, send_phone_otp
 from app import supabase_db as db
 from app import redis_store
-from app import sample_data
+from app import config as app_config
 from app.services import credit_engine, ledger, market_store, split_engine
 from app.services.kyc_service import analyse_document, validate_aadhaar
+
+
+def _sample_data():
+    """Lazy sample_data access (#13) — the fallback dataset is only imported
+    when a demo/fallback path actually needs it."""
+    from app import sample_data as _sd
+    return _sd
 
 app = FastAPI(
     title="CarbonX API",
@@ -65,6 +72,7 @@ app.add_middleware(
 async def security_and_trace_headers(request, call_next):
     import uuid as _uuid
     request_id = request.headers.get("X-Request-ID") or _uuid.uuid4().hex[:16]
+    request_id_var.set(request_id)
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     response.headers["X-API-Version"] = "1.0.0"
@@ -81,7 +89,7 @@ async def security_and_trace_headers(request, call_next):
 
 
 # ── Structured logging (#24) ──
-from app.logging_setup import setup_logging
+from app.logging_setup import setup_logging, request_id_var
 setup_logging()
 
 # ── Prometheus metrics (#25) ──
@@ -105,12 +113,18 @@ async def validation_exception_envelope(request, exc):
         msgs.append(f"{loc}: {err.get('msg', 'invalid')}" if loc else str(err.get("msg", "invalid")))
     return JSONResponse(status_code=422, content={"success": False, "message": "; ".join(msgs)})
 
+_HTTP_ERROR_CODES = {401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 429: "RATE_LIMITED"}
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_envelope(request, exc):
     detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
     if isinstance(detail, list):  # FastAPI validation-style detail
         detail = "; ".join(d.get("msg", str(d)) for d in detail if isinstance(d, dict))
-    return JSONResponse(status_code=exc.status_code, content={"success": False, "message": detail})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"success": False, "message": detail,
+                 "code": _HTTP_ERROR_CODES.get(exc.status_code, f"HTTP_{exc.status_code}")},
+    )
 
 
 @app.exception_handler(Exception)
@@ -134,7 +148,7 @@ except Exception as e:
 # CARBONX_AUTO_MONITOR=0.
 import asyncio
 
-_MONITOR_INTERVAL_SECONDS = 5 * 24 * 60 * 60
+_MONITOR_INTERVAL_SECONDS = app_config.MONITOR_INTERVAL_SECONDS
 
 
 async def _monitoring_loop():
@@ -213,6 +227,10 @@ def _clear_otp(phone: str):
 
 
 def _polygon_area_hectares(geojson: dict) -> float:
+    """Deprecated alias — canonical implementation is
+    polygon_service.polygon_area_hectares (kept for the raising behaviour
+    callers rely on)."""
+    from app.services.polygon_service import polygon_area_hectares as _canonical
     import math
 
     geometry = geojson.get("geometry", {})
@@ -329,11 +347,27 @@ def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
 # the dominant EE consumer; results within the cache window are identical
 # anyway (median composite of a static window).
 _analyze_cache: dict = {}
-_ANALYZE_CACHE_TTL = 600  # seconds
+_ANALYZE_CACHE_TTL = app_config.ANALYZE_CACHE_TTL_SECONDS  # seconds
+
+
+class GeoJSONPolygon(BaseModel):
+    """Strict farm-plot geometry — validated before any Earth Engine call."""
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["Feature"] = "Feature"
+    geometry: dict
+
+    @field_validator("geometry")
+    @classmethod
+    def _validate_polygon(cls, geom):
+        ok, err = _validate_polygon_geojson({"type": "Feature", "geometry": geom})
+        if not ok:
+            raise ValueError(err)
+        return geom
 
 
 class AnalyzeModel(BaseModel):
-    geojson: dict
+    model_config = ConfigDict(extra="forbid")
+    geojson: GeoJSONPolygon
     farm_name: Optional[str] = "My Farm"
     crop_type: Optional[str] = "Mixed Crop"
     irrigation: Optional[str] = "Drip"
@@ -425,8 +459,8 @@ def _user_response(user: dict, phone: str):
     }
 
 
-_OTP_SEND_WINDOW_SECONDS = 600   # 10 minutes
-_OTP_SEND_MAX_PER_WINDOW = 3     # per phone — blunt but effective abuse brake
+_OTP_SEND_WINDOW_SECONDS = app_config.OTP_SEND_WINDOW_SECONDS
+_OTP_SEND_MAX_PER_WINDOW = app_config.OTP_SEND_MAX_PER_WINDOW
 _otp_send_log: dict = {}
 
 
@@ -1317,9 +1351,7 @@ def update_profile(data: UpdateProfileModel, current_user: dict = Depends(get_cu
 @app.post("/analyze")
 def analyze(data: AnalyzeModel):
     try:
-        geojson = data.geojson
-        if not geojson:
-            return {"success": False, "message": "GeoJSON polygon missing"}
+        geojson = data.geojson.model_dump()
         ok, err = _validate_polygon_geojson(geojson)
         if not ok:
             return {"success": False, "message": err}
@@ -1333,6 +1365,14 @@ def analyze(data: AnalyzeModel):
         ml_result = None
         s2_scene = None
         scan_est = None
+        max_area = app_config.ANALYZE_MAX_AREA_HECTARES
+        try:
+            approx_area = _polygon_area_hectares(geojson)
+            if approx_area > max_area:
+                return {"success": False,
+                        "message": f"Parcel area {approx_area:,.0f} ha exceeds the {max_area:,} ha scan limit — redraw the boundary"}
+        except Exception:
+            pass  # shape problems surface in the branch-specific extraction
         if earth_engine_ready:
             import ee
             coordinates = geojson["geometry"]["coordinates"]
@@ -1385,6 +1425,28 @@ def analyze(data: AnalyzeModel):
                 print(f"[analyze] real feature extraction failed: {e}")
                 real_features = None
 
+            # EVI/feature-stack reductions are independent EE queries — run
+            # them concurrently instead of serially (#7).
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                evi_future = pool.submit(lambda: _with_ee_backoff(lambda: evi.reduceRegion(
+                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e13,
+                ).values().get(0).getInfo()))
+                area_future = pool.submit(lambda: _with_ee_backoff(lambda: polygon.area().getInfo()) / 10000)
+                feat_future = pool.submit(lambda: stack.reduceRegion(
+                    reducer=ee.Reducer.mean(), geometry=polygon, scale=10, maxPixels=1e9,
+                ).getInfo())
+                try:
+                    s2_scene = _with_ee_backoff(lambda: collection.first().get("system:index").getInfo())
+                except Exception:
+                    s2_scene = None
+                evi_value = round(evi_future.result(), 3)
+                area_hectares = round(area_future.result(), 2)
+                feat_values = feat_future.result()
+                real_features = {k: feat_values.get(k) for k in
+                                 ("NDVI", "NDWI", "SAVI", "NDVI_STD", "B4", "B8", "B11", "B8_VAR")}
+                if any(v is None for v in real_features.values()):
+                    real_features = None
             try:
                 from app.services.ml_service import predict_biodiversity
                 ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
@@ -1393,14 +1455,11 @@ def analyze(data: AnalyzeModel):
             except Exception:
                 biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
             satellite_source = "Google Earth Engine · Sentinel-2 SR"
-            try:
-                s2_scene = collection.first().get("system:index").getInfo()
-            except Exception:
-                s2_scene = None
 
             # Canonical carbon estimate — credit_engine is the single source
             # of truth for carbon math (scan-only evidence quality here).
             scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
+            scan_est["formula_version"] = app_config.FORMULA_VERSION
             carbon_tonnes = scan_est["credits_tco2e"]
         else:
             coords = geojson.get("geometry", {}).get("coordinates", [[]])
@@ -1417,6 +1476,7 @@ def analyze(data: AnalyzeModel):
                 biodiversity_score = round(min(max(ndvi_value * 110, 40), 95), 1)
             satellite_source = "Estimated (GEE offline)"
             scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
+            scan_est["formula_version"] = app_config.FORMULA_VERSION
             carbon_tonnes = scan_est["credits_tco2e"]
 
         tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
@@ -1522,6 +1582,10 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
             "status": status,
             "token_id": farm.get("token_id"),
         }
+        if farm.get("ci90_low") is not None:
+            record["credits_ci90_low"] = farm["ci90_low"]
+        if farm.get("ci90_high") is not None:
+            record["credits_ci90_high"] = farm["ci90_high"]
         if badge:
             record["badge"] = badge
         saved = db.insert_farm_safe(record)
@@ -1536,6 +1600,8 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
             "status": status,
             "badge": badge,
             "stage1": stage1["status"],
+            "formula_version": app_config.FORMULA_VERSION,
+            "s2_scene": farm.get("s2_scene"),
         })
         return {
             "success": True,
@@ -1574,6 +1640,7 @@ def marketplace_listings(
     order: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction: asc or desc"),
     limit: int = Query(50, ge=1, le=200, description="Page size (max 200)"),
     offset: int = Query(0, ge=0, description="Page offset for pagination"),
+    cursor: Optional[str] = Query(None, description="Opaque cursor from a previous response's next_cursor (preferred over offset)"),
 ):
     try:
         query_kwargs = {
@@ -1593,6 +1660,12 @@ def marketplace_listings(
             "limit": limit,
             "offset": offset,
         }
+        if cursor:
+            try:
+                import base64 as _b64
+                query_kwargs["offset"] = int(_b64.urlsafe_b64decode(cursor.encode()).decode())
+            except Exception:
+                return {"success": False, "message": "Invalid cursor", "code": "BAD_CURSOR"}
         applied = {k: v for k, v in query_kwargs.items() if v is not None}
 
         result = None
@@ -1607,13 +1680,15 @@ def marketplace_listings(
             print("[marketplace/listings] LIVE DB not configured — serving FALLBACK sample data")
         if result is None:
             source = "fallback"
+            from app import sample_data
+            from app import sample_data
             result = sample_data.filter_listings(market_store.all_rows(), **query_kwargs)
 
         print(
             f"[marketplace/listings] source={'LIVE DB' if source == 'live_db' else 'FALLBACK sample data'} "
             f"| matched={result['total']} | returned={len(result['listings'])} | filters={applied or 'default'}"
         )
-        return {
+        response = {
             "success": True,
             "source": source,
             "total": result["total"],
@@ -1621,6 +1696,11 @@ def marketplace_listings(
             "filters": applied,
             "listings": result["listings"],
         }
+        next_offset = query_kwargs["offset"] + limit
+        if next_offset < result["total"] and result["listings"]:
+            import base64 as _b64
+            response["next_cursor"] = _b64.urlsafe_b64encode(str(next_offset).encode()).decode()
+        return response
     except Exception as e:
         return {"success": False, "message": str(e), "source": "error", "total": 0, "count": 0, "listings": []}
 
@@ -1758,6 +1838,7 @@ def predict(longitude: float, latitude: float):
             "ndvi_source": ndvi_source,
             "biodiversity_score": result["biodiversity_score"],
             "status": result["status"],
+            "ml_source": result.get("source"),
             "biodiversity_credits": credits["biodiversity_credits"],
             "total_credits": credits["total_credits"],
         }
@@ -1992,6 +2073,7 @@ def _cert_id_for_listing(listing_id: str) -> str:
 
 
 class MarketplaceBuyModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     listing_id: str
     credits: float
     unit_price: Optional[float] = None
@@ -2124,6 +2206,11 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         credits = round(min(float(data.credits or available), available), 4)
         if credits <= 0:
             return {"success": False, "message": "Credit quantity must be greater than zero"}
+        # Never write ledger events against a phantom farm: the listing's
+        # farm must exist before the purchase pipeline runs.
+        farm_id = listing.get("farm_id")
+        if farm_id and not db.get_farm(farm_id):
+            return {"success": False, "message": "Listing references an unknown farm — purchase rejected"}
         return _purchase_flow(listing, credits, buyer, lambda fields: sb.table("marketplace_listings").update(fields).eq("id", data.listing_id).execute())
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -2257,7 +2344,7 @@ def download_certificate_pdf(cert_id: str):
     global _pdf_cache
     if "_pdf_cache" not in globals():
         _pdf_cache = {}
-    if len(_pdf_cache) > 128:
+    if len(_pdf_cache) > app_config.PDF_CACHE_MAX_ENTRIES:
         _pdf_cache.clear()
     cached = _pdf_cache.get(cert_id)
     if cached:
@@ -2378,9 +2465,9 @@ def get_carbon_passport(farm_id: str):
             "status": "verified",
             "badge": "REGISTRY",
             "irrigation": "Drip",
-            "updated_at": sample_data.FALLBACK_AS_OF.isoformat(),
+            "updated_at": _sample_data().FALLBACK_AS_OF.isoformat(),
         }
-    owner = db.get_profile(farm.get("owner_phone") or "") if db.is_ready() else sample_data.FARMERS.get(farm.get("owner_phone"))
+    owner = db.get_profile(farm.get("owner_phone") or "") if db.is_ready() else _sample_data().FARMERS.get(farm.get("owner_phone"))
     kyc = db.get_kyc_status(farm.get("owner_phone") or "") if db.is_ready() else None
     badge = farm.get("badge") or (kyc or {}).get("badge") or "DOCUMENT"
     benchmark = {"REGISTRY": 340, "REGISTRY_DOC": 320, "FPO": 300}.get(badge, 310)
@@ -2441,6 +2528,10 @@ def get_carbon_passport(farm_id: str):
         "kyc_status": (kyc or {}).get("status"),
         "status": "APPROVED MRV RECORD" if verified_status else "PENDING MRV REVIEW",
         "expected_earnings": income,
+        "credits_ci90": {
+            "low": farm.get("credits_ci90_low"),
+            "high": farm.get("credits_ci90_high"),
+        },
         "monitoring": monitoring,
         "trust": {
             "evidence_quality": quality["score"],
@@ -2458,7 +2549,7 @@ def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
     and the ledger hash that proves every payout line."""
     phone = current_user.get("phone")
     if not db.is_ready():
-        profile = sample_data.FARMERS.get(phone) or {}
+        profile = _sample_data().FARMERS.get(phone) or {}
         rows = [r for r in market_store.all_rows() if r.get("farmer_phone") == phone]
     else:
         try:
@@ -2534,6 +2625,7 @@ def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
 
 
 class GroundTruthModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     farm_id: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -2554,6 +2646,85 @@ def add_ground_truth(data: GroundTruthModel):
         row = {k: v for k, v in data.model_dump().items() if v is not None}
         res = sb.table("ground_truth_samples").insert(row).execute()
         return {"success": True, "sample": (res.data or [None])[0]}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.websocket("/ws/ledger/{farm_id}")
+async def ws_ledger(websocket: WebSocket, farm_id: str):
+    """Push new ledger events to the passport page instantly (fallback to
+    the existing 15s poll on the client if this connection fails)."""
+    import asyncio
+    import json as _json
+
+    from app.services import ledger as _ledger
+
+    await websocket.accept()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _on_event(event):
+        loop.call_soon_threadsafe(queue.put_nowait, event)
+
+    _ledger.subscribe(farm_id, _on_event)
+    try:
+        # send current tail so the client can reconcile immediately
+        summary = _ledger.summary(farm_id)
+        await websocket.send_text(_json.dumps({"type": "snapshot", **summary}))
+        while True:
+            event = await queue.get()
+            await websocket.send_text(_json.dumps({"type": event["type"], "event": event}))
+    except Exception:
+        pass  # client disconnected
+    finally:
+        _ledger.unsubscribe(farm_id, _on_event)
+
+
+@app.get("/ops/ground-truth/calibrate")
+def suggest_factor_calibration():
+    """When ground-truth samples accumulate (N>=30, MAE<15%), propose
+    calibrated crop factors (measured/estimated ratio per crop) for the
+    methodology review. Returns suggestions; never auto-applies — factor
+    changes are a governance decision recorded in docs/MRV_METHODOLOGY.md."""
+    sb = db._client()
+    if not sb:
+        return {"success": False, "message": "Database not configured"}
+    try:
+        samples = (sb.table("ground_truth_samples").select("*").execute().data) or []
+        linked = [s for s in samples if s.get("farm_id") and s.get("measured_soc_tco2e_ha")]
+        by_crop: dict = {}
+        for s in linked:
+            farm = db.get_farm(s["farm_id"])
+            if not farm:
+                continue
+            est = credit_engine.estimate_credits(
+                float(farm.get("area_hectares") or 0), farm.get("crop_type") or "",
+                farm.get("ndvi") or 0, quality_score=1.0)
+            per_ha = est["credits_tco2e"] / max(float(farm.get("area_hectares") or 1), 0.01)
+            measured = float(s["measured_soc_tco2e_ha"])
+            crop = (farm.get("crop_type") or "Unknown").strip()
+            by_crop.setdefault(crop, []).append((per_ha, measured))
+        n_total = sum(len(v) for v in by_crop.values())
+        if n_total < 30:
+            return {"success": True,
+                    "eligible": False,
+                    "message": f"Calibration needs >=30 linked samples (have {n_total}). Collect Phase-0 plots first.",
+                    "samples_linked": n_total}
+        suggestions = {}
+        errors = []
+        for crop, pairs in by_crop.items():
+            ratios = [m / max(e, 1e-6) for e, m in pairs]
+            mean_ratio = sum(ratios) / len(ratios)
+            suggestions[crop] = {
+                "n": len(pairs),
+                "mean_ratio_measured_over_estimated": round(mean_ratio, 3),
+                "suggested_biomass_base_multiplier": round(mean_ratio, 3),
+            }
+            errors.extend(abs(m - e) / max(m, 1e-6) * 100 for e, m in pairs)
+        mae_pct = sum(errors) / len(errors)
+        return {"success": True, "eligible": mae_pct < 15, "overall_mae_pct": round(mae_pct, 1),
+                "suggestions": suggestions,
+                "note": "Apply via methodology review — update _CROP_FACTORS and bump FORMULA_VERSION."}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -2648,7 +2819,7 @@ def demo_login(data: dict = None):
         return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
     body = data or {}
     phone = str(body.get("phone") or "9000000001")
-    farmer = sample_data.FARMERS.get(phone)
+    farmer = _sample_data().FARMERS.get(phone)
     if not farmer:
         return {"success": False, "message": "Unknown demo farmer"}
     token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
@@ -2703,7 +2874,7 @@ def ops_summary():
         return {"success": False, "message": str(e)}
 
 
-NDVI_DROP_ALERT = 0.15  # Sentinel-2-cycle drop that flags credits at-risk
+NDVI_DROP_ALERT = app_config.NDVI_DROP_ALERT  # Sentinel-2-cycle drop that flags credits at-risk
 
 
 @app.post("/monitor/run")
