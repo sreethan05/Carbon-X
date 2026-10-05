@@ -8,7 +8,7 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 
 - Main app: repo root (`src/`), React 18 + Vite + Tailwind. `npm run dev` → port 5000.
 - `backend/` — Python FastAPI (GEE satellite scan, ML, phone OTP auth, Supabase service-role access) → port 8000. Proxied via `/py-api`.
-- `backend/` (Node) — blockchain minting API → port 3001. Proxied via `/bc-api`.
+- `backend/src` + `blockchain/` (Node/Express + Solidity) — **legacy / roadmap only.** Not part of the credit flow: the live ledger is the SHA-256 hash chain, and on-chain settlement (Polygon/Amoy) is a production-roadmap item. Built by Docker CI, but not used by the app's verification or payout path.
 - Local schema SQL lives in `supabase/` (`01_sreethan_initial_schema.sql`, `02_hasini_merged_schema.sql`, `schema.sql`).
 
 ## Supabase (source of truth: remote DB)
