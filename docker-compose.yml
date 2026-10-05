@@ -33,6 +33,8 @@ services:
       - GEE_PROJECT=${GEE_PROJECT:-carbonx-507617}
       - CORS_ORIGINS=http://localhost:5000,http://localhost:80,http://frontend:80
       - CARBONX_ALLOW_DEV_OTP=${CARBONX_ALLOW_DEV_OTP:-1}
+      - SARVAM_API_KEY=${SARVAM_API_KEY:-}
+      - SARVAM_DEFAULT_LANGUAGE=${SARVAM_DEFAULT_LANGUAGE:-te-IN}
     volumes:
       - carbonx_ledger_data:/app/data
     depends_on:
