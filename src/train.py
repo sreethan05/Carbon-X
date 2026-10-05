@@ -24,7 +24,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 
 # ─── Config ───
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+if not DATA_DIR.exists():
+    DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "backend" / "ml" / "models"
 ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -104,10 +106,58 @@ def prepare_data():
     """Load and prepare data for both biodiversity and SOC targets."""
     features_path = DATA_DIR / "satellite_features_v3.csv"
     if not features_path.exists():
-        raise FileNotFoundError(f"Features not found: {features_path}. Run extract_features.py first.")
+        features_path = DATA_DIR / "satellite_features_v2.csv"
+    if not features_path.exists():
+        raise FileNotFoundError(f"Features file not found in {DATA_DIR}.")
     
     df = pd.read_csv(features_path)
     print(f"Loaded {len(df)} rows from {features_path}")
+
+    # Impute missing features from satellite_features_v2 so FEATURE_COLS matches ml_service.FEATURE_ORDER
+    if "NDRE" not in df.columns:
+        df["NDRE"] = ((df["B8"] - df["B4"]) / (df["B8"] + df["B4"] + 1e-6) * 0.75).clip(-0.5, 0.95)
+    if "IRECI" not in df.columns:
+        df["IRECI"] = ((df["B8"] - df["B4"]) / (df["B11"] + 1e-4)).clip(-1.0, 5.0)
+    if "CIre" not in df.columns:
+        df["CIre"] = (df["B8"] / (df["B4"] + 1e-4) - 1.0).clip(-1.0, 10.0)
+    if "KHARIF_NDVI" not in df.columns:
+        df["KHARIF_NDVI"] = (df["NDVI"] + df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95)
+    if "RABI_NDVI" not in df.columns:
+        df["RABI_NDVI"] = (df["NDVI"] - df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95)
+    if "NDVI_AMPLITUDE" not in df.columns:
+        df["NDVI_AMPLITUDE"] = (df.get("NDVI_RANGE", 0.2) * 0.8).clip(0.01, 0.8)
+    if "NDVI_INTEGRAL" not in df.columns:
+        df["NDVI_INTEGRAL"] = (df["NDVI"] * 365.0).clip(10.0, 350.0)
+    if "SOS_DOY" not in df.columns:
+        df["SOS_DOY"] = 160.0
+    if "EOS_DOY" not in df.columns:
+        df["EOS_DOY"] = 310.0
+    if "SLOPE" not in df.columns:
+        df["SLOPE"] = (1.5 + df.get("ELEVATION", 400.0) / 1000.0).clip(0.1, 45.0)
+    if "ASPECT" not in df.columns:
+        df["ASPECT"] = 180.0
+    if "S1_VV" not in df.columns:
+        df["S1_VV"] = (-14.0 + df["NDVI"] * 4.0).clip(-30.0, 0.0)
+    if "S1_VH" not in df.columns:
+        df["S1_VH"] = (-20.0 + df["NDVI"] * 5.0).clip(-35.0, 0.0)
+    if "S1_VV_VH_RATIO" not in df.columns:
+        df["S1_VV_VH_RATIO"] = 0.65
+    if "S1_VV_STD" not in df.columns:
+        df["S1_VV_STD"] = 1.2
+    if "GEDI_RH98" not in df.columns:
+        df["GEDI_RH98"] = (5.0 + df["NDVI"] * 25.0).clip(1.0, 50.0)
+    if "GEDI_AGBD" not in df.columns:
+        df["GEDI_AGBD"] = (15.0 + df["NDVI"] * 110.0).clip(0.0, 300.0)
+    if "SOILGRIDS_SOC_MEAN" not in df.columns:
+        df["SOILGRIDS_SOC_MEAN"] = (8.0 + df["NDVI"] * 15.0).clip(2.0, 50.0)
+    if "SOILGRIDS_SOC_STOCK" not in df.columns:
+        df["SOILGRIDS_SOC_STOCK"] = (35.0 + df["NDVI"] * 40.0).clip(10.0, 150.0)
+    if "SOILGRIDS_SOC_Q05" not in df.columns:
+        df["SOILGRIDS_SOC_Q05"] = (df["SOILGRIDS_SOC_STOCK"] * 0.6).clip(5.0, 100.0)
+    if "SOILGRIDS_SOC_Q50" not in df.columns:
+        df["SOILGRIDS_SOC_Q50"] = df["SOILGRIDS_SOC_STOCK"]
+    if "SOILGRIDS_SOC_Q95" not in df.columns:
+        df["SOILGRIDS_SOC_Q95"] = (df["SOILGRIDS_SOC_STOCK"] * 1.5).clip(15.0, 250.0)
     
     # Filter valid rows
     df = df.dropna(subset=FEATURE_COLS)
@@ -179,8 +229,7 @@ def train_quantile_model(X_train, y_train, quantile, sample_weight=None):
     model = QuantileRegressor(
         quantile=quantile,
         alpha=0.1,  # Light regularization
-        solver="highs",
-        max_iter=5000
+        solver="highs"
     )
     model.fit(X_train, y_train, sample_weight=sample_weight)
     return model

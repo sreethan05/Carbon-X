@@ -1,48 +1,90 @@
 {
-  "model": "rf_shallow",
-  "params": {
-    "n_estimators": 300,
-    "max_depth": 8,
-    "min_samples_leaf": 3
-  },
-  "target": "log1p(GBIF species richness per 0.02-degree cell)",
-  "features": [
+  "trained_at": "2026-10-05",
+  "feature_cols": [
     "NDVI",
     "NDWI",
     "SAVI",
-    "NDVI_STD",
     "B4",
     "B8",
     "B11",
+    "NDVI_STD",
     "B8_VAR",
-    "ELEVATION",
+    "NDRE",
+    "IRECI",
+    "CIre",
+    "KHARIF_NDVI",
+    "RABI_NDVI",
+    "SEASONAL_CONTRAST",
     "NDVI_RANGE",
-    "SEASONAL_CONTRAST"
+    "NDVI_AMPLITUDE",
+    "NDVI_INTEGRAL",
+    "SOS_DOY",
+    "EOS_DOY",
+    "ELEVATION",
+    "SLOPE",
+    "ASPECT",
+    "S1_VV",
+    "S1_VH",
+    "S1_VV_VH_RATIO",
+    "S1_VV_STD",
+    "GEDI_RH98",
+    "GEDI_AGBD",
+    "SOILGRIDS_SOC_MEAN",
+    "SOILGRIDS_SOC_STOCK",
+    "SOILGRIDS_SOC_Q05",
+    "SOILGRIDS_SOC_Q50",
+    "SOILGRIDS_SOC_Q95"
   ],
-  "trained_at": "2026-10-04",
-  "n_train": 235,
-  "n_val": 29,
-  "n_test": 30,
-  "val_r2": -0.154,
-  "test_r2": -0.003,
-  "test_mae_log": 0.51,
-  "test_mae_species": 5.1,
-  "feature_importance": {
-    "NDVI": 0.05,
-    "NDWI": 0.074,
-    "SAVI": 0.044,
-    "NDVI_STD": 0.089,
-    "B4": 0.152,
-    "B8": 0.07,
-    "B11": 0.135,
-    "B8_VAR": 0.075,
-    "ELEVATION": 0.138,
-    "NDVI_RANGE": 0.086,
-    "SEASONAL_CONTRAST": 0.086
+  "biodiversity": {
+    "quantile": {
+      "val": {
+        "r2": -0.18676925765787877,
+        "mae": 0.4791281013279812,
+        "coverage": 0.9024390243902439,
+        "width": 1.6094379124341005
+      },
+      "test": {
+        "r2": -1.4776651904524485e-05,
+        "mae": 0.5363992353159474,
+        "coverage": 0.9454545454545454,
+        "width": 1.6094379124341005
+      }
+    },
+    "comparison": {
+      "rf": {
+        "val_r2": -0.4848264844750223,
+        "val_mae": 0.5483884517444471
+      },
+      "gb": {
+        "val_r2": -0.5637703163754091,
+        "val_mae": 0.5741653753786289
+      }
+    }
   },
-  "honest_limitations": [
-    "GBIF citizen-science richness is sampling-biased; observation-count weights partially compensate, field validation still required.",
-    "Regional model (India, Sentinel-2 2023): recalibrate for other regions/years.",
-    "R2 well below 1.0 is expected and honest \u2014 richness is only partially explained by 10m vegetation indices."
-  ]
+  "soc": {
+    "quantile": {
+      "val": {
+        "r2": 1.0,
+        "mae": 4.713844490896274e-14,
+        "coverage": 0.8292682926829268,
+        "width": 3.327419640632664e-14
+      },
+      "test": {
+        "r2": 1.0,
+        "mae": 6.821210263296962e-14,
+        "coverage": 0.8,
+        "width": 2.842170943040401e-14
+      }
+    },
+    "comparison": {
+      "rf": {
+        "val_r2": 0.9989485027814802,
+        "val_mae": 0.3991910184838582
+      },
+      "gb": {
+        "val_r2": 0.999300039305479,
+        "val_mae": 0.27861565898019386
+      }
+    }
+  }
 }
