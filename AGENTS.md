@@ -13,22 +13,22 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 
 ## Supabase (source of truth: remote DB)
 
-**ACTIVE PROJECT (since 2026-10-04): sreethan05's own "CarbonX" — ref `ihyqhisxgdwxudnxksts`, region Southeast Asia (Singapore), org `qdjrdxufhdhzqpavnvpt` (own org, alongside "Agri").**
+**Supabase project — the remote DB is the source of truth.**
 
-- **URL:** `https://ihyqhisxgdwxudnxksts.supabase.co`
-- Env vars: root `.env` → `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`; `backend/.env` → `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (write access). Keys are fetched via `npx supabase projects api-keys --project-ref ihyqhisxgdwxudnxksts` (CLI logged in on this machine, token in Windows Credential Manager under `Supabase CLI:supabase`).
+- **URL:** `https://<your-project-ref>.supabase.co`
+- Env vars: root `.env` → `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`; `backend/.env` → `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` (write access). Fetch keys with the Supabase CLI using your own logged-in session — never commit them.
 - Schema completed 2026-10-04 (10 tables): the 7 core tables plus `fpos`, `corporates`, `land_registry` (empty — old 30 Telangana parcels were in the old project), `fpo_members`, `ledger_events` (hash-chain store, service_role granted).
 - Demo data seeded via `python scripts/seed_marketplace_data.py` (defaults to this ref; override with `SUPABASE_PROJECT_REF`).
 
-**LEGACY PROJECT (do not use): `rbdyzeuucgqkhlikbpnd`** — old "CarbonX" in hasini.four@gmail.com's org (Sydney). Kept here only for history.
+**Legacy projects:** retired — do not use. Refs live in git history if you ever need them.
 
 ### Working CLI commands (no password prompt — use CLI login role)
 
 ```powershell
 supabase orgs list
 supabase projects list
-supabase inspect db table-stats --project-ref ihyqhisxgdwxudnxksts
-supabase gen types typescript --project-id ihyqhisxgdwxudnxksts --schema public
+supabase inspect db table-stats --project-ref <your-project-ref>
+supabase gen types typescript --project-id <your-project-ref> --schema public
 ```
 
 CLI quirks:

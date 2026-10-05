@@ -160,7 +160,7 @@ def predict(longitude: float, latitude: float):
         from app.services.ml_service import predict_biodiversity
 
         ndvi = None
-        ndvi_source = "Estimated (GEE offline)"
+        ndvi_source = "unavailable (no live satellite data)"
         if earth_engine_ready:
             try:
                 from app.services.gee_service import get_ndvi_at_point
@@ -172,8 +172,22 @@ def predict(longitude: float, latitude: float):
             except Exception as exc:
                 print(f"/predict GEE point query failed: {exc}")
         if ndvi is None:
-            ndvi = round(0.5 + math.sin(longitude * 0.1) * 0.2 + math.cos(latitude * 0.1) * 0.15, 3)
-            ndvi = min(max(ndvi, 0.1), 0.9)
+            # No live satellite data: NEVER fabricate an NDVI. A made-up index
+            # would flow into the biodiversity score and read as evidence.
+            # Report honestly instead (ml_source stays present for clients).
+            return {
+                "success": True,
+                "location": {"longitude": longitude, "latitude": latitude},
+                "ndvi": None,
+                "ndvi_source": ndvi_source,
+                "biodiversity_score": None,
+                "status": "Unknown",
+                "biodiversity_credits": 0.0,
+                "total_credits": 0.0,
+                "ml_source": None,
+                "satellite_live": False,
+                "message": "Live satellite data is unavailable — no NDVI estimate or credit issued.",
+            }
         result = predict_biodiversity(ndvi=ndvi)
         # /predict is a biodiversity probe only — it does not estimate carbon,
         # so no carbon credit line is invented here (single source of truth).
@@ -458,23 +472,35 @@ def analyze(data: AnalyzeModel):
             scan_est["formula_version"] = app_config.FORMULA_VERSION
             carbon_tonnes = scan_est["credits_tco2e"]
         else:
-            coords = geojson.get("geometry", {}).get("coordinates", [[]])
+            # No live satellite data: NEVER fabricate an NDVI, and never turn a
+            # made-up index into a credit. Without imagery there is no evidence,
+            # so the scan returns an honest empty result and the record is routed
+            # to FPO review instead of inventing a number.
             area_hectares = _polygon_area_hectares(geojson)
-            seed = hash(str(coords)) % 1000
-            ndvi_value = round(0.45 + (seed % 40) / 100.0, 3)
-            evi_value = round(ndvi_value * 0.85, 3)
-            real_features = None
-            s2_scene = None
-            try:
-                from app.services.ml_service import predict_biodiversity
-                ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value, area_ha=area_hectares)
-                biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 110, 40), 95), 1)
-            satellite_source = "Estimated (GEE offline)"
-            scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
-            carbon_tonnes = scan_est["credits_tco2e"]
+            return {
+                "success": True,
+                "ndvi": None,
+                "evi": None,
+                "tree_cover": 0.0,
+                "soil_moisture": 0.0,
+                "carbon_tonnes": 0.0,
+                "carbon_credits": 0.0,
+                "biodiversity_credits": 0.0,
+                "total_credits": 0.0,
+                "area_hectares": area_hectares,
+                "vegetation_health": "Unknown",
+                "biodiversity_score": None,
+                "ml_source": None,
+                "ai_confidence": None,
+                "satellite_source": "unavailable (no live Sentinel-2 data)",
+                "satellite_live": False,
+                "credits_available": False,
+                "s2_scene": None,
+                "scan_estimate": None,
+                "stage1": None,
+                "message": ("Live satellite data is unavailable, so no credit can be issued. "
+                            "Retry when Earth Engine is reachable, or route this record to FPO review."),
+            }
 
         tree_cover = round(min(max(ndvi_value * 100, 0), 100), 2)
         soil_moisture = round(min(max(evi_value * 25, 0), 100), 2)
