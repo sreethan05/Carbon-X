@@ -80,7 +80,9 @@ def validate_aadhaar(number: str) -> bool:
 
 
 def _average_hash(image: Image.Image) -> str:
-    pixels = list(image.convert("L").resize((16, 16)).getdata())
+    resized = image.convert("L").resize((16, 16))
+    get_pixels = getattr(resized, "get_flattened_data", resized.getdata)
+    pixels = list(get_pixels())
     average = sum(pixels) / len(pixels)
     return "".join("1" if pixel >= average else "0" for pixel in pixels)
 

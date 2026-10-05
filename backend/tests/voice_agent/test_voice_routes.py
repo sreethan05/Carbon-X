@@ -109,9 +109,10 @@ class TestVoiceRoutes(unittest.TestCase):
             headers=self.headers,
         )
         self.assertEqual(res.status_code, 200)
-        body = json.dumps(res.json())
-        self.assertIn("9.8", body)
-        self.assertNotIn("21", body)
+        res_data = res.json()
+        body = json.dumps(res_data)
+        self.assertEqual(res_data["tool_result"]["scores"]["total_credits"], 9.8)
+        self.assertNotIn("Other Plot", body)
         self.assertNotIn("2222222222", body)
 
     def test_invalid_tools_and_actions_are_rejected(self):
