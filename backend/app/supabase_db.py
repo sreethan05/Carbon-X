@@ -1,146 +1,6 @@
 import os
 from datetime import datetime, timezone
-from typing import List, Optional, TypedDict, Any
-
-
-class ListingRow(TypedDict, total=False):
-    id: str
-    farm_id: str
-    farmer_phone: str
-    farmer_name: str
-    location: str
-    crop: str
-    size_label: str
-    listing_model: str
-    price_per_credit: float
-    current_bid: float
-    bids_count: int
-    total_credits: float
-    carbon_credits: float
-    biodiversity_credits: float
-    status: str
-    token_id: Optional[str]
-    tx_hash: Optional[str]
-    image_url: Optional[str]
-    expires_at: Optional[str]
-    created_at: str
-    updated_at: str
-
-
-class FarmRow(TypedDict, total=False):
-    id: str
-    owner_phone: str
-    name: str
-    crop_type: str
-    irrigation: str
-    geojson: dict
-    area_hectares: float
-    ndvi: float
-    evi: float
-    carbon_tonnes: float
-    biodiversity_score: float
-    total_credits: float
-    status: str
-    badge: Optional[str]
-    fpo_id: Optional[str]
-    token_id: Optional[str]
-    last_monitor_ndvi: Optional[float]
-    last_monitored_at: Optional[str]
-    created_at: str
-    updated_at: str
-
-
-class ProfileRow(TypedDict, total=False):
-    id: str
-    phone: str
-    name: str
-    role: str
-    state: Optional[str]
-    district: Optional[str]
-    village: Optional[str]
-    upi: Optional[str]
-    aadhaar_last4: Optional[str]
-    fpo_id: Optional[str]
-    preferred_language: Optional[str]
-    created_at: str
-    updated_at: str
-
-
-class FpoRow(TypedDict, total=False):
-    id: str
-    name: str
-    registration_no: str
-    created_at: str
-    updated_at: str
-
-
-class CorporateRow(TypedDict, total=False):
-    c_id: str
-    name: str
-    password_hash: Optional[str]
-    created_at: str
-    updated_at: str
-
-
-class KycVerificationRow(TypedDict, total=False):
-    id: str
-    owner_phone: str
-    status: str
-    reasons: Any
-    checks: Any
-    extracted_fields: Any
-    document_name: str
-    document_sha256: str
-    perceptual_hash: Optional[str]
-    created_at: str
-
-
-class LedgerEventRow(TypedDict, total=False):
-    id: str
-    entity_id: str
-    seq: int
-    event_type: str
-    payload: Any
-    payload_json: str
-    ts: str
-    prev_hash: str
-    hash: str
-
-
-class GroundTruthSampleRow(TypedDict, total=False):
-    id: str
-    farm_id: Optional[str]
-    latitude: Optional[float]
-    longitude: Optional[float]
-    measured_soc_tco2e_ha: Optional[float]
-    measured_species_count: Optional[int]
-    source: str
-    measured_at: Optional[str]
-    notes: Optional[str]
-    created_at: str
-
-
-class LandRegistryRow(TypedDict, total=False):
-    id: str
-    survey_number: str
-    owner_name: str
-    area_ha: float
-    village: str
-    mandal: str
-    district: str
-    tier: str
-    registry_geometry_available: bool
-    geojson: Optional[dict]
-    created_at: str
-    updated_at: str
-
-
-class FpoMemberRow(TypedDict, total=False):
-    id: str
-    fpo_id: str
-    farmer_phone: str
-    joined_at: str
-
+from typing import Optional
 
 _supabase = None
 _ready = False
@@ -199,7 +59,7 @@ def health_check() -> dict:
     return {"ready": all(tables.values()), "tables": tables}
 
 
-def get_profile(phone: str) -> Optional[ProfileRow]:
+def get_profile(phone: str) -> Optional[dict]:
     sb = _client()
     if not sb:
         return None
@@ -339,7 +199,7 @@ def update_farm(farm_id: str, fields: dict) -> Optional[dict]:
     return rows[0] if rows else None
 
 
-def get_listings(status: Optional[str] = "Active") -> List[ListingRow]:
+def get_listings(status: Optional[str] = "Active") -> list:
     sb = _client()
     if not sb:
         return []
@@ -430,9 +290,21 @@ def insert_listing(listing: dict) -> Optional[dict]:
 
 
 def compute_credits(carbon_tonnes: float, biodiversity_score: float) -> dict:
-    """Deprecated shim — canonical implementation is credit_engine.credit_split."""
-    from app.services.credit_engine import credit_split
-    return credit_split(carbon_tonnes, biodiversity_score)
+    """DEPRECATED — legacy credit arithmetic, kept only for compatibility.
+
+    Do not use in new code. Credits now come from the single canonical engine
+    (``app.services.credits.canonical_credits`` -> ``credit_engine``). This
+    helper applied a second, simpler formula (carbon + biodiversity/40), which
+    is exactly the inconsistency the canonical engine removes. No live endpoint
+    calls it any more.
+    """
+    carbon = round(float(carbon_tonnes or 0), 2)
+    bio = round(float(biodiversity_score or 0) / 40.0, 2)
+    return {
+        "carbon_credits": carbon,
+        "biodiversity_credits": bio,
+        "total_credits": round(carbon + bio, 2),
+    }
 
 
 def get_land_registry(survey_number: str) -> Optional[dict]:
@@ -459,7 +331,7 @@ def get_land_registry(survey_number: str) -> Optional[dict]:
     return rows[0] if rows else None
 
 
-def get_farm(farm_id: str) -> Optional[FarmRow]:
+def get_farm(farm_id: str) -> Optional[dict]:
     sb = _client()
     if not sb:
         return None
