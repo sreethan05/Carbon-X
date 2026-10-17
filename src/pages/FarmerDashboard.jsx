@@ -4,6 +4,7 @@ import { MapPin, ShieldCheck, Wallet, AlertTriangle, PlusCircle, ShoppingCart, T
 import VerificationBadge from '../components/VerificationBadge';
 import EarningsCalculator from '../components/EarningsCalculator';
 import { useAuth } from '../context/AuthContext';
+import { getMarketplaceListings } from '../services/api';
 
 export default function FarmerDashboard() {
   const navigate = useNavigate();
@@ -11,6 +12,26 @@ export default function FarmerDashboard() {
   const { user, farms: realFarms, refreshUser } = useAuth();
 
   React.useEffect(() => { refreshUser(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Real listing prices for this farmer's farms (used for the revenue estimate
+  // — no fixed benchmark price is fabricated when no listing exists).
+  const [listingPrices, setListingPrices] = React.useState({});
+
+  React.useEffect(() => {
+    let cancelled = false;
+    async function loadPrices() {
+      if (!user?.phone) return;
+      const res = await getMarketplaceListings({ farmer_phone: user.phone, status: 'all', limit: 200 });
+      if (cancelled || !res || !res.success) return;
+      const prices = {};
+      (res.listings || []).forEach((l) => {
+        if (l.farm_id && l.price_per_credit != null) prices[l.farm_id] = l.price_per_credit;
+      });
+      setListingPrices(prices);
+    }
+    loadPrices();
+    return () => { cancelled = true; };
+  }, [user?.phone]);
 
   const navState = location.state || {};
 
@@ -22,12 +43,11 @@ export default function FarmerDashboard() {
     return {
       id: f.id,
       surveyNumber: (f.name || `FARM-${idx + 1}`).replace(/^Survey /, ''),
-      acres: f.area_hectares || 0,
-      crop: f.crop_type || 'Mixed Crop',
-      badge: f.badge || 'DOCUMENT',
+      areaHectares: f.area_hectares ?? null,
+      crop: f.crop_type || '—',
+      badge: f.badge || 'PENDING',
       credits: f.total_credits || 0,
-      earnings: Math.round((f.total_credits || 0) * 340),
-      ndvi: f.ndvi || 0,
+      ndvi: f.ndvi ?? null,
       bioScore: f.biodiversity_score ? (f.biodiversity_score / 10).toFixed(1) : null,
       status: status.toUpperCase(),
       flagged,
@@ -45,18 +65,21 @@ export default function FarmerDashboard() {
   const currentFarm = farms[selectedFarmIndex] || {
     id: null,
     surveyNumber: '—',
-    acres: 0,
+    areaHectares: null,
     crop: '—',
     badge: 'PENDING',
     credits: 0,
-    earnings: 0,
-    ndvi: 0,
+    ndvi: null,
     bioScore: null,
     status: 'PENDING',
     isPending: true,
   };
 
   const isPending = currentFarm.isPending || currentFarm.badge === 'PENDING';
+  const currentPrice = currentFarm.id ? listingPrices[currentFarm.id] : null;
+  const currentEarnings = currentPrice != null && currentFarm.credits > 0
+    ? Math.round(currentFarm.credits * currentPrice)
+    : null;
 
   return (
     <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-8 px-4 md:px-10">
@@ -76,7 +99,7 @@ export default function FarmerDashboard() {
             <h1 className="text-2xl font-extrabold text-[#0F172A] font-manrope tracking-tight">{farmerName}</h1>
             <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 font-medium">
               <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>{village}, {district} | Selected Land Parcel: Survey {currentFarm.surveyNumber} ({currentFarm.acres} Acres)</span>
+              <span>{village}, {district} | Selected Land Parcel: Survey {currentFarm.surveyNumber} ({currentFarm.areaHectares ?? '—'} ha)</span>
             </p>
           </div>
 
@@ -121,7 +144,7 @@ export default function FarmerDashboard() {
         {/* Earnings Calculator — pre-signup estimate, Trust Engine Stage 2 */}
         <EarningsCalculator
           farm={{
-            areaHectares: currentFarm.acres,
+            areaHectares: currentFarm.areaHectares,
             crop: currentFarm.crop,
             ndvi: currentFarm.ndvi,
             badge: currentFarm.badge,
@@ -137,9 +160,6 @@ export default function FarmerDashboard() {
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider bg-amber-200 px-2.5 py-0.5 rounded-full">
                     Verification Incomplete
-                  </span>
-                  <span className="text-[10px] text-amber-800 font-semibold bg-white/80 px-2 py-0.5 rounded">
-                    Demo Mode
                   </span>
                 </div>
                 <h2 className="text-xl font-extrabold font-manrope text-amber-950">
@@ -170,14 +190,18 @@ export default function FarmerDashboard() {
                     ESTIMATED ANNUAL CARBON REVENUE
                   </span>
                   <span className="text-[10px] font-semibold text-slate-500 bg-white/80 px-2 py-0.5 rounded border border-slate-200">
-                    Live Benchmark
+                    {currentEarnings != null ? 'Your latest listing price' : 'No listing yet'}
                   </span>
                 </div>
                 <h2 className="text-3xl md:text-4xl font-extrabold font-manrope text-[#0C2A18] mt-2">
-                  ₹{currentFarm.earnings.toLocaleString('en-IN')} <span className="text-sm font-normal text-slate-600">/ year</span>
+                  {currentEarnings != null
+                    ? <>₹{currentEarnings.toLocaleString('en-IN')} <span className="text-sm font-normal text-slate-600">/ year</span></>
+                    : <span className="text-2xl text-slate-500">—</span>}
                 </h2>
                 <p className="text-xs text-slate-600 mt-1 max-w-xl font-medium">
-                  {currentFarm.acres} acres {currentFarm.crop} = {currentFarm.credits} credits/year, benchmarked under verified {currentFarm.badge} badge status.
+                  {currentEarnings != null
+                    ? `${currentFarm.areaHectares ?? '—'} ha ${currentFarm.crop} = ${currentFarm.credits} credits/year, priced at ₹${currentPrice}/credit from your own marketplace listing.`
+                    : `${currentFarm.areaHectares ?? '—'} ha ${currentFarm.crop} = ${currentFarm.credits} credits/year. Publish a listing to see revenue at real market prices.`}
                 </p>
               </div>
 
@@ -196,7 +220,7 @@ export default function FarmerDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-2xl p-6 space-y-1">
             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">NDVI Vegetation Index</p>
-            <p className="text-3xl font-extrabold text-[#0C2A18] font-manrope">{currentFarm.ndvi} Index</p>
+            <p className="text-3xl font-extrabold text-[#0C2A18] font-manrope">{currentFarm.ndvi ?? '—'} Index</p>
             <p className="text-xs text-slate-500 font-medium pt-1">Sentinel-2 Multi-Spectral Active Vegetation Canopy</p>
           </div>
 

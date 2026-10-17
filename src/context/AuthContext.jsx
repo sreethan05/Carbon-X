@@ -34,6 +34,10 @@ export function AuthProvider({ children }) {
         if (data.user?.preferred_language) {
           localStorage.setItem('carbonx_lang', data.user.preferred_language);
         }
+      } else if (data.code === 'UNAUTHORIZED' || data.status === 401) {
+        // Stale/expired token — drop the session instead of pretending to be
+        // signed in while every authenticated action fails.
+        logout();
       }
     } catch (e) {
       console.warn('Could not refresh user:', e);

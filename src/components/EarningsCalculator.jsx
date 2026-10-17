@@ -13,8 +13,8 @@ export default function EarningsCalculator({ farm }) {
   const [area, setArea] = useState('');
   const [crop, setCrop] = useState('Rice');
   const [ndvi, setNdvi] = useState(0.7);
-  const [hasPhoto, setHasPhoto] = useState(true);
-  const [geotagOk, setGeotagOk] = useState(true);
+  const [hasPhoto, setHasPhoto] = useState(false);
+  const [geotagOk, setGeotagOk] = useState(false);
   const [fpoVerified, setFpoVerified] = useState(false);
   const [result, setResult] = useState(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -26,7 +26,7 @@ export default function EarningsCalculator({ farm }) {
       if (hectares) setArea(hectares.toFixed(2));
       if (farm.crop) setCrop(farm.crop);
       if (farm.ndvi) setNdvi(parseFloat(farm.ndvi));
-      if (farm.badge && farm.badge !== 'DOCUMENT') setFpoVerified(true);
+      if (['REGISTRY', 'REGISTRY_DOC', 'FPO'].includes(String(farm.badge || '').toUpperCase())) setFpoVerified(true);
     }
   }, [farm]);
 

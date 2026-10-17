@@ -56,6 +56,8 @@ export default function CorporateCreditAnalysis() {
       // Execute real escrow purchases for each allocated parcel
       let lastCert = null;
       let proof = null;
+      let purchased = 0;
+      const skipped = [];
       for (const parcel of matchedParcels) {
         if (!parcel.listing_id || (parcel.credits || 0) <= 0) continue;
         const res = await buyCredits({
@@ -67,20 +69,25 @@ export default function CorporateCreditAnalysis() {
         if (res && res.certificate_id) {
           lastCert = res.certificate_id;
           proof = res;
-        } else if (res && res.message) {
-          console.warn(`Purchase skipped for ${parcel.farm}: ${res.message}`);
+          purchased += 1;
+        } else {
+          skipped.push(`${parcel.farm || parcel.listing_id}: ${(res && res.message) || 'listing unavailable'}`);
         }
       }
       if (lastCert) {
         setLastCertId(lastCert);
-        setLastProof(proof);
+        setLastProof({ ...proof, purchased_count: purchased, skipped_purchases: skipped });
         setPaymentDone(true);
       } else {
-        setPayError('No purchases completed — the matched parcels may no longer be available. Re-run the auto-match.');
-        setIsPaying(false);
+        setPayError(skipped.length
+          ? `No purchases completed — ${skipped[0]}`
+          : 'No purchases completed — the matched parcels may no longer be available. Re-run the auto-match.');
       }
     } catch {
       setPayError('Payment execution failed. Please try again.');
+    } finally {
+      // Always release the button lock — leaving it set used to freeze the
+      // Execute Escrow Purchase button after a successful settlement.
       setIsPaying(false);
     }
   };
@@ -245,7 +252,7 @@ export default function CorporateCreditAnalysis() {
             disabled={matchedParcels.length === 0 || isMatching}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 mt-4"
           >
-            <span>Proceed to Payment Gateway Simulation</span>
+            <span>Proceed to Escrow Checkout</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
@@ -269,6 +276,12 @@ export default function CorporateCreditAnalysis() {
                     <p className="text-xs text-slate-600 font-mono">Certificate: {lastCertId}</p>
                     {lastProof?.escrow_ref && (
                       <p className="text-[11px] text-slate-500 font-mono">Escrow {lastProof.escrow_ref}</p>
+                    )}
+                    {lastProof?.skipped_purchases?.length > 0 && (
+                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-1 text-left font-semibold">
+                        {lastProof.purchased_count} purchase{lastProof.purchased_count === 1 ? '' : 's'} settled;{' '}
+                        {lastProof.skipped_purchases.length} skipped (listing changed): {lastProof.skipped_purchases[0]}
+                      </p>
                     )}
                   </div>
 

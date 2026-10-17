@@ -218,7 +218,7 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   `carbonx.*` loggers (`app/logging_setup.py`).
 - **New endpoint**: `POST /fpo/login` — registration_no -> OTP to the linked
   officer's phone (step 2 is the standard OTP login).
-- **Tests**: 48 total, hermetic (tests force demo mode POST-IMPORT because
+- **Tests**: 72 total, hermetic (tests force demo mode POST-IMPORT because
   `load_dotenv(override=True)` re-reads backend/.env — see the reset block in
   test files; `CARBONX_TEST_LIVE_DB=1` opts the old DB-coupled suite into a
   live run). 15 API integration tests cover buy->split->ledger->retire,
@@ -262,6 +262,45 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   line (defensive against tool recreation).
 - Deferred: main.py router split (2.9k lines, pure churn without behavior
   gain at this stage — trigger: second backend contributor).
+
+
+## Honesty audit round (2026-10-17, latest)
+
+Full-repo data-integrity pass: every number shown must come from a real
+engine, a stored record, or an explicitly-labelled demo path.
+
+- **FarmDetailsForm**: removed the fabricated "LSTM Sequestration Boost"
+  practice-bonus model (+0.50/+0.35/+0.40 "credits/acre/yr" — no such model
+  exists); crop picker now uses `_CROP_FACTORS` canonical keys ("Paddy
+  (Rice)"/"Pulses & Millets" silently fell back to the default factor
+  before); the form stores only crop + irrigation (the fields the pipeline
+  actually consumes) and states openly that practice-level factors are
+  roadmap.
+- **DetailedFarmAnalytics**: the "Interactive ML Simulation" (hardcoded
+  zero-till +2.2 tCO2e / +₹748 deltas) is replaced by a real evidence
+  checklist rendered from `passport.trust.components`.
+- **Passport trust**: no longer claims `practice_photo`/`geotag_ok`/
+  `baseline_known` (no capture pipeline or stored baseline series exists) —
+  quality counts the badge + stored NDVI only (demo farm: 0.40 → −22%).
+- **EarningsCalculator + `POST /farms/earnings-calculator`**: evidence flags
+  default to NOT claimed; badge proxy excludes PENDING.
+- **SupportCenter**: fake toll-free number, "UPI in <3 minutes",
+  "micro-insurance" and unverifiable encryption/compliance claims replaced
+  with pilot-accurate statements.
+- **Earlier fixes in this round** (same working tree): AdminDashboard reads
+  real `/ops/summary` + FPO queues; Marketplace has no fabricated listings
+  (real loading/error/empty + fallback badge); FarmerDashboard uses ha units
+  and real listing prices; NDVI charts show stored measurements only;
+  CarbonWallet demo payout is UI-only (no state/ledger mutation);
+  CorporateDashboard target is user-set; FPO API keys renamed to true units
+  (`area_hectares`); certificates/PDFs carry real buyer + `retired_at`;
+  FarmerRegister uses the real Web Speech API with no fabricated defaults;
+  `farms/{id}/ndvi-history` returns stored measurements only.
+- **Docs**: MRV_METHODOLOGY §1/§4 now say crop-calibrated SOC factors
+  (practice-level modulation = roadmap); IMPACT_MODEL SOC range corrected to
+  the recalibrated 0.25–0.60 tCO₂e/ha/yr.
+- **Gates**: backend 72 tests green (1 skipped live-DB opt-in), eslint 0
+  errors, vite build OK.
 
 ## Commands
 

@@ -57,6 +57,11 @@ FEATURE_COLS = [
 BLOCK_SIZE_DEG = 0.5
 NDVI_MIN, NDVI_MAX = 0.02, 0.95
 
+# Feature columns that were backfilled (with stand-in values) because the
+# extraction CSV did not contain them. Recorded in the model card; the serving
+# quality gate refuses models trained on backfilled inputs.
+BACKFILLED: dict = {}
+
 
 def spatial_block_split(df, block_size=BLOCK_SIZE_DEG, test_frac=0.2, val_frac=0.1, seed=42):
     """Split data by spatial blocks to prevent leakage.
@@ -113,60 +118,74 @@ def prepare_data():
     df = pd.read_csv(features_path)
     print(f"Loaded {len(df)} rows from {features_path}")
 
-    # Impute missing features from satellite_features_v2 so FEATURE_COLS matches ml_service.FEATURE_ORDER
-    if "NDRE" not in df.columns:
-        df["NDRE"] = ((df["B8"] - df["B4"]) / (df["B8"] + df["B4"] + 1e-6) * 0.75).clip(-0.5, 0.95)
-    if "IRECI" not in df.columns:
-        df["IRECI"] = ((df["B8"] - df["B4"]) / (df["B11"] + 1e-4)).clip(-1.0, 5.0)
-    if "CIre" not in df.columns:
-        df["CIre"] = (df["B8"] / (df["B4"] + 1e-4) - 1.0).clip(-1.0, 10.0)
-    if "KHARIF_NDVI" not in df.columns:
-        df["KHARIF_NDVI"] = (df["NDVI"] + df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95)
-    if "RABI_NDVI" not in df.columns:
-        df["RABI_NDVI"] = (df["NDVI"] - df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95)
-    if "NDVI_AMPLITUDE" not in df.columns:
-        df["NDVI_AMPLITUDE"] = (df.get("NDVI_RANGE", 0.2) * 0.8).clip(0.01, 0.8)
-    if "NDVI_INTEGRAL" not in df.columns:
-        df["NDVI_INTEGRAL"] = (df["NDVI"] * 365.0).clip(10.0, 350.0)
-    if "SOS_DOY" not in df.columns:
-        df["SOS_DOY"] = 160.0
-    if "EOS_DOY" not in df.columns:
-        df["EOS_DOY"] = 310.0
-    if "SLOPE" not in df.columns:
-        df["SLOPE"] = (1.5 + df.get("ELEVATION", 400.0) / 1000.0).clip(0.1, 45.0)
-    if "ASPECT" not in df.columns:
-        df["ASPECT"] = 180.0
-    if "S1_VV" not in df.columns:
-        df["S1_VV"] = (-14.0 + df["NDVI"] * 4.0).clip(-30.0, 0.0)
-    if "S1_VH" not in df.columns:
-        df["S1_VH"] = (-20.0 + df["NDVI"] * 5.0).clip(-35.0, 0.0)
-    if "S1_VV_VH_RATIO" not in df.columns:
-        df["S1_VV_VH_RATIO"] = 0.65
-    if "S1_VV_STD" not in df.columns:
-        df["S1_VV_STD"] = 1.2
-    if "GEDI_RH98" not in df.columns:
-        df["GEDI_RH98"] = (5.0 + df["NDVI"] * 25.0).clip(1.0, 50.0)
-    if "GEDI_AGBD" not in df.columns:
-        df["GEDI_AGBD"] = (15.0 + df["NDVI"] * 110.0).clip(0.0, 300.0)
-    if "SOILGRIDS_SOC_MEAN" not in df.columns:
-        df["SOILGRIDS_SOC_MEAN"] = (8.0 + df["NDVI"] * 15.0).clip(2.0, 50.0)
-    if "SOILGRIDS_SOC_STOCK" not in df.columns:
-        df["SOILGRIDS_SOC_STOCK"] = (35.0 + df["NDVI"] * 40.0).clip(10.0, 150.0)
-    if "SOILGRIDS_SOC_Q05" not in df.columns:
-        df["SOILGRIDS_SOC_Q05"] = (df["SOILGRIDS_SOC_STOCK"] * 0.6).clip(5.0, 100.0)
-    if "SOILGRIDS_SOC_Q50" not in df.columns:
-        df["SOILGRIDS_SOC_Q50"] = df["SOILGRIDS_SOC_STOCK"]
-    if "SOILGRIDS_SOC_Q95" not in df.columns:
-        df["SOILGRIDS_SOC_Q95"] = (df["SOILGRIDS_SOC_STOCK"] * 1.5).clip(15.0, 250.0)
-    
-    # Filter valid rows
+    # ─── Column provenance ───
+    # v2 extraction produced 11 of the 33 contract features. Missing INPUT
+    # columns are backfilled with stand-ins so the pipeline can still run on
+    # v2 data, but every backfill is recorded in the model card and the
+    # serving gate refuses models trained on backfilled inputs. Targets are
+    # NEVER backfilled — deriving a label from a stand-in column is what made
+    # the old SOC model circular (R²=1.0, MAE≈5e-14).
+    def _backfill(col, value, note):
+        if col not in df.columns:
+            df[col] = value
+            BACKFILLED[col] = note
+
+    _backfill("NDRE", ((df["B8"] - df["B4"]) / (df["B8"] + df["B4"] + 1e-6) * 0.75).clip(-0.5, 0.95),
+              "NDVI-family stand-in (no red-edge bands in CSV)")
+    _backfill("IRECI", ((df["B8"] - df["B4"]) / (df["B11"] + 1e-4)).clip(-1.0, 5.0),
+              "NDVI-family stand-in (no red-edge bands in CSV)")
+    _backfill("CIre", (df["B8"] / (df["B4"] + 1e-4) - 1.0).clip(-1.0, 10.0),
+              "NDVI-family stand-in (no red-edge bands in CSV)")
+    _backfill("KHARIF_NDVI", (df["NDVI"] + df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95),
+              "NDVI stand-in (no seasonal composites in CSV)")
+    _backfill("RABI_NDVI", (df["NDVI"] - df.get("SEASONAL_CONTRAST", 0.1) * 0.5).clip(0.02, 0.95),
+              "NDVI stand-in (no seasonal composites in CSV)")
+    _backfill("NDVI_AMPLITUDE", (df.get("NDVI_RANGE", 0.2) * 0.8).clip(0.01, 0.8),
+              "NDVI-range stand-in (no phenology in CSV)")
+    _backfill("NDVI_INTEGRAL", (df["NDVI"] * 365.0).clip(10.0, 350.0),
+              "NDVI stand-in (no phenology in CSV)")
+    _backfill("SOS_DOY", 160.0, "constant stand-in (no phenology in CSV)")
+    _backfill("EOS_DOY", 310.0, "constant stand-in (no phenology in CSV)")
+    _backfill("SLOPE", (1.5 + df.get("ELEVATION", 400.0) / 1000.0).clip(0.1, 45.0),
+              "elevation-derived stand-in (no terrain slope in CSV)")
+    _backfill("ASPECT", 180.0, "constant stand-in (no terrain aspect in CSV)")
+    _backfill("S1_VV", (-14.0 + df["NDVI"] * 4.0).clip(-30.0, 0.0),
+              "NDVI stand-in (no SAR in CSV)")
+    _backfill("S1_VH", (-20.0 + df["NDVI"] * 5.0).clip(-35.0, 0.0),
+              "NDVI stand-in (no SAR in CSV)")
+    _backfill("S1_VV_VH_RATIO", 0.65, "constant stand-in (no SAR in CSV)")
+    _backfill("S1_VV_STD", 1.2, "constant stand-in (no SAR in CSV)")
+    _backfill("GEDI_RH98", (5.0 + df["NDVI"] * 25.0).clip(1.0, 50.0),
+              "NDVI stand-in (no GEDI in CSV)")
+    _backfill("GEDI_AGBD", (15.0 + df["NDVI"] * 110.0).clip(0.0, 300.0),
+              "NDVI stand-in (no GEDI in CSV)")
+    _backfill("SOILGRIDS_SOC_MEAN", (8.0 + df["NDVI"] * 15.0).clip(2.0, 50.0),
+              "NDVI stand-in (no SoilGrids in CSV)")
+
+    # SOC target availability is decided BEFORE any stand-in is added.
+    soc_target_available = "SOILGRIDS_SOC_STOCK" in df.columns
+    _backfill("SOILGRIDS_SOC_STOCK", (35.0 + df["NDVI"] * 40.0).clip(10.0, 150.0),
+              "linear NDVI stand-in — input feature only, NEVER usable as a target")
+    _backfill("SOILGRIDS_SOC_Q05", (df["SOILGRIDS_SOC_STOCK"] * 0.6).clip(5.0, 100.0),
+              "stock-derived stand-in (no SoilGrids quantiles in CSV)")
+    _backfill("SOILGRIDS_SOC_Q50", df["SOILGRIDS_SOC_STOCK"],
+              "stock-derived stand-in (no SoilGrids quantiles in CSV)")
+    _backfill("SOILGRIDS_SOC_Q95", (df["SOILGRIDS_SOC_STOCK"] * 1.5).clip(15.0, 250.0),
+              "stock-derived stand-in (no SoilGrids quantiles in CSV)")
+
+    # Filter valid rows ONCE, before any target is derived, so features and
+    # labels always share one index (the old code computed y_bio before a
+    # later row filter and could silently misalign X with y).
     df = df.dropna(subset=FEATURE_COLS)
     df = df[(df["NDVI"] >= NDVI_MIN) & (df["NDVI"] <= NDVI_MAX)]
-    print(f"After NDVI filter: {len(df)}")
-    
-    # Target 1: Biodiversity (log1p species richness)
     if "species_count" in df.columns:
         df = df[df["species_count"] > 1]
+    if soc_target_available:
+        df = df[df["SOILGRIDS_SOC_STOCK"].notna()]
+    print(f"After validity filter: {len(df)}")
+
+    # Target 1: Biodiversity (log1p species richness) — real GBIF observations.
+    if "species_count" in df.columns:
         y_bio = np.log1p(df["species_count"].values)
         obs = df.get("observation_count", pd.Series(1, index=df.index)).values
         w_bio = 1 + 9 * (obs - obs.min()) / (obs.max() - obs.min() + 1e-8)
@@ -174,18 +193,17 @@ def prepare_data():
     else:
         y_bio = None
         w_bio = None
-    
-    # Target 2: SOC (tCO2e/ha from SoilGrids stock)
-    if "SOILGRIDS_SOC_STOCK" in df.columns:
+
+    # Target 2: SOC (tCO2e/ha) — ONLY from the real SoilGrids stock column.
+    if soc_target_available:
         # SoilGrids stock is t C/ha → convert to tCO2e/ha
         y_soc = df["SOILGRIDS_SOC_STOCK"].values * 3.67
-        df = df[~np.isnan(y_soc)]
-        y_soc = y_soc[~np.isnan(y_soc)]
         w_soc = np.ones_like(y_soc)  # Equal weight for SOC
         print(f"SOC target: {len(y_soc)} samples, range [{y_soc.min():.1f}, {y_soc.max():.1f}] tCO2e/ha")
     else:
         y_soc = None
         w_soc = None
+        print("SOC target SKIPPED: real SoilGrids SOC stock column absent from the features CSV")
     
     X = df[FEATURE_COLS].values
     
@@ -294,7 +312,13 @@ def train_target(name, X_train, y_train, w_train, X_val, y_val, X_test, y_test):
         ss = MinMaxScaler(feature_range=(0, 100)).fit(median_preds.reshape(-1, 1))
         joblib.dump(ss, ARTIFACTS_DIR / "biodiversity_score_scaler.pkl")
     
-    return models, {"val": val_metrics, "test": test_metrics}
+    return models, {
+        "val": val_metrics,
+        "test": test_metrics,
+        "n_train": int(len(y_train)),
+        "n_val": int(len(y_val)),
+        "n_test": int(len(y_test)),
+    }
 
 
 def train_comparison_models(X_train, y_train, w_train, X_val, y_val, name):
@@ -325,11 +349,34 @@ def main():
     print("=" * 70)
     print("CARBONX MODEL TRAINING — SPATIAL CV + QUANTILE REGRESSION")
     print("=" * 70)
-    
+
+    # Remove legacy v1 artifacts that the current pipeline never writes and no
+    # serving code loads (pre-quantile single-model files). Leaving them in
+    # the models dir misleads anyone inspecting what is actually served.
+    for legacy in ("biodiversity_model.pkl", "score_scaler.pkl"):
+        legacy_path = ARTIFACTS_DIR / legacy
+        if legacy_path.exists():
+            legacy_path.unlink()
+            print(f"Removed legacy artifact: {legacy}")
+
     # Prepare data
     data = prepare_data()
     
-    all_metrics = {"trained_at": time.strftime("%Y-%m-%d"), "feature_cols": FEATURE_COLS}
+    all_metrics = {
+        "trained_at": time.strftime("%Y-%m-%d"),
+        "feature_cols": FEATURE_COLS,
+        "features_source": "extracted" if not BACKFILLED else "backfilled",
+        "backfilled_features": BACKFILLED,
+        "gate": {
+            "min_spatial_cv_r2": 0.2,
+            "requires_features_source": "extracted",
+        },
+    }
+    if BACKFILLED:
+        print(f"\nWARNING: {len(BACKFILLED)} feature(s) backfilled with stand-ins — "
+              "models trained from this run will be recorded as 'backfilled' and "
+              "the serving quality gate will refuse them until a real v3 "
+              "extraction is used.")
     
     # Train biodiversity model (if target available)
     if "y_bio_train" in data:
@@ -346,6 +393,11 @@ def main():
         all_metrics["biodiversity"] = {
             "quantile": bio_metrics,
             "comparison": bio_comparison,
+        }
+    else:
+        all_metrics["biodiversity"] = {
+            "status": "not_trained",
+            "reason": "species_count absent from the features CSV (run download_gbif.py + aggregate_richness.py first)",
         }
     
     # Train SOC model (if target available)
@@ -364,6 +416,23 @@ def main():
             "quantile": soc_metrics,
             "comparison": soc_comparison,
         }
+    else:
+        # Remove stale SOC artifacts from previous (circular-target) runs so
+        # they can never be served: a model whose label was rebuilt from an
+        # input column reports R²=1.0 while learning nothing.
+        removed = []
+        for pattern in ("soc_quantile_*.pkl", "soc_rf.pkl", "soc_gb.pkl"):
+            for path in ARTIFACTS_DIR.glob(pattern):
+                path.unlink()
+                removed.append(path.name)
+        all_metrics["soc"] = {
+            "status": "not_trained",
+            "reason": ("real SoilGrids SOC stock absent from the features CSV; "
+                       "rebuilding the target from NDVI would be circular. "
+                       "Run scripts/ingest_soilgrids.py and a real feature "
+                       "extraction before training SOC."),
+            "removed_stale_artifacts": removed,
+        }
     
     # Write comprehensive model card
     with open(ARTIFACTS_DIR / "model_card.json", "w") as f:
@@ -374,16 +443,22 @@ def main():
     print("=" * 70)
     print(f"Artifacts saved to: {ARTIFACTS_DIR}")
     print("  - feature_scaler.pkl")
-    print("  - biodiversity_quantile_{0.1,0.5,0.9}.pkl")
-    print("  - soc_quantile_{0.1,0.5,0.9}.pkl")
-    print("  - biodiversity_score_scaler.pkl (if bio target)")
+    if "quantile" in all_metrics.get("biodiversity", {}):
+        print("  - biodiversity_quantile_{0.1,0.5,0.9}.pkl + biodiversity_score_scaler.pkl")
+    if "quantile" in all_metrics.get("soc", {}):
+        print("  - soc_quantile_{0.1,0.5,0.9}.pkl")
+    else:
+        print(f"  - soc models NOT trained: {all_metrics['soc']['reason']}")
     print("  - model_card.json (honest metrics with spatial CV)")
     print("\nKey metrics:")
     for target in ["biodiversity", "soc"]:
-        if target in all_metrics:
-            m = all_metrics[target]["quantile"]["test"]
-            print(f"  {target}: Test R²={m['r2']:.3f}, MAE={m['mae']:.3f}, "
-                  f"Coverage={m['coverage']:.1%}, Width={m['width']:.3f}")
+        m = all_metrics.get(target, {})
+        if "quantile" in m:
+            t = m["quantile"]["test"]
+            print(f"  {target}: Test R²={t['r2']:.3f}, MAE={t['mae']:.3f}, "
+                  f"Coverage={t['coverage']:.1%}, Width={t['width']:.3f}")
+        else:
+            print(f"  {target}: NOT TRAINED ({m.get('reason', 'target unavailable')})")
 
 
 if __name__ == "__main__":

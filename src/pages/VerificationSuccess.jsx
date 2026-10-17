@@ -11,7 +11,19 @@ export default function VerificationSuccess() {
   const analysis = data?.analysis || {};
   const parcel = data?.parcel || {};
   const savedFarm = data?.savedFarm || null;
-  const badge = parcel.badge || 'REGISTRY';
+  const badge = parcel.badge || savedFarm?.badge || 'DOCUMENT';
+
+  const stage1 = analysis.stage1 || null;
+  const pending = badge === 'PENDING'
+    || (stage1 && stage1.status === 'MISMATCH')
+    || analysis.credits_available === false;
+  const pendingReason = stage1?.status === 'MISMATCH'
+    ? stage1.reason
+    : analysis.credits_available === false
+      ? (analysis.message || 'No live satellite data was available for this scan, so no credits were issued.')
+      : badge === 'PENDING'
+        ? 'The drawn area differed from the record area, so this parcel was queued for FPO review.'
+        : '';
 
   const downloadReport = () => {
     const lines = [
@@ -21,6 +33,7 @@ export default function VerificationSuccess() {
       `Owner: ${parcel.ownerName || '—'}`,
       `Farm ID: ${savedFarm?.id || 'not persisted'}`,
       `Tier: ${parcel.tierCode || '—'} · Badge: ${badge}`,
+      `Review status: ${pending ? `PENDING — ${pendingReason}` : 'cleared for credits'}`,
       `Area: ${analysis.area_hectares ?? parcel.areaHa ?? '—'} ha`,
       `NDVI: ${analysis.ndvi ?? '—'} · EVI: ${analysis.evi ?? '—'}`,
       `Vegetation health: ${analysis.vegetation_health || '—'}`,
@@ -50,15 +63,26 @@ export default function VerificationSuccess() {
           </div>
 
           <div>
-            <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
-              Minting & Verification Milestone
+            <span className={`text-xs font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+              pending
+                ? 'text-amber-800 bg-amber-50 border-amber-200'
+                : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+            }`}>
+              {pending ? 'Submitted for Review' : 'Minting & Verification Milestone'}
             </span>
             <h1 className="text-2xl font-extrabold text-slate-900 font-manrope mt-2">
-              Farmland Verification Complete!
+              {pending ? 'Parcel Submitted — Review Pending' : 'Farmland Verification Complete!'}
             </h1>
             <p className="text-xs text-slate-500 mt-1">
-              Your parcel coordinates and satellite biomass scan have been sealed into the MRV ledger.
+              {pending
+                ? 'Your parcel coordinates and satellite scan were recorded, but no credits are minted until the review clears.'
+                : 'Your parcel coordinates and satellite biomass scan have been sealed into the MRV ledger.'}
             </p>
+            {pending && pendingReason && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-2 font-semibold">
+                {pendingReason}
+              </p>
+            )}
           </div>
 
           <div className="py-2">
@@ -80,7 +104,7 @@ export default function VerificationSuccess() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 text-left">
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
               <p className="text-[10px] font-semibold text-slate-500 uppercase">Parcel ID</p>
-              <p className="text-xs font-bold text-slate-900 mt-0.5">TEL-{parcel.surveyNumber || '—'}</p>
+              <p className="text-xs font-bold text-slate-900 mt-0.5">TEL-{parcel.surveyNumber || 'UNREGISTERED'}</p>
             </div>
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
               <p className="text-[10px] font-semibold text-slate-500 uppercase">Area</p>

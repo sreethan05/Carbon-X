@@ -1,28 +1,23 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Sparkles, Sprout } from 'lucide-react';
+import { ArrowRight, Info, Sprout } from 'lucide-react';
+
+// Values must match credit_engine._CROP_FACTORS keys exactly: a label the
+// engine does not recognise silently falls back to the generic mixed-cropping
+// factor, so this picker mirrors the engine's canonical crop set.
+const CROPS = ['Rice', 'Maize', 'Millets', 'Turmeric', 'Cotton', 'Sugarcane', 'Chilli'];
 
 export default function FarmDetailsForm() {
   const navigate = useNavigate();
 
   const [crop, setCrop] = useState('Cotton');
   const [irrigation, setIrrigation] = useState('Drip Irrigation');
-  const [tillage, setTillage] = useState('Zero-Till');
-  const [fertilizer, setFertilizer] = useState('Bio-Fertilizers & Compost');
-
-  // Real-time estimated carbon bonus per practice
-  const getBonus = () => {
-    let bonus = 0;
-    if (tillage === 'Zero-Till') bonus += 0.50;
-    if (tillage === 'Reduced-Till') bonus += 0.25;
-    if (irrigation === 'Drip Irrigation') bonus += 0.35;
-    if (fertilizer.includes('Bio-Fertilizers')) bonus += 0.40;
-    return bonus.toFixed(2);
-  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    localStorage.setItem('carbonx_farm_details', JSON.stringify({ crop, irrigation, tillage, fertilizer, bonus: getBonus() }));
+    // Only the fields the pipeline actually consumes are stored: crop_type
+    // selects the engine's factors, irrigation is saved on the farm record.
+    localStorage.setItem('carbonx_farm_details', JSON.stringify({ crop, irrigation }));
     navigate('/satellite-preview');
   };
 
@@ -36,31 +31,27 @@ export default function FarmDetailsForm() {
             <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-block mb-1">
               Agronomic Metadata
             </span>
-            <h1 className="text-2xl font-extrabold text-slate-900 font-manrope">Regenerative Farming Practices</h1>
-            <p className="text-xs text-slate-500 mt-0.5">Capture soil management and irrigation practices to calculate yield bonus.</p>
+            <h1 className="text-2xl font-extrabold text-slate-900 font-manrope">Crop &amp; Irrigation Profile</h1>
+            <p className="text-xs text-slate-500 mt-0.5">These two fields feed the Sentinel-2 scan and your farm's MRV record.</p>
           </div>
           <Sprout className="w-10 h-10 text-emerald-700" />
         </div>
 
-        {/* Real-Time Impact Preview Banner */}
-        <div className="bg-[#0D2F1D] text-white border border-emerald-800 shadow-sm rounded-xl p-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-emerald-800/80 rounded-xl flex items-center justify-center text-emerald-300">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Sequestration Bonus Yield</p>
-              <p className="text-xl font-extrabold font-manrope text-white mt-0.5">
-                +{getBonus()} Credits / Acre / Year
-              </p>
-            </div>
+        {/* Honest method note — no bonus math happens on this screen */}
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-5 flex items-start gap-3">
+          <Info className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+          <div className="text-xs text-emerald-900 space-y-1">
+            <p className="font-bold">How your estimate is built</p>
+            <p className="leading-relaxed">
+              After you continue, the Sentinel-2 scan measures your plot's NDVI. The credit engine combines a
+              crop-calibrated biomass factor and an IPCC-style soil factor with that satellite signal, then applies a
+              conservative 10–30% uncertainty deduction based on evidence quality. The full step-by-step math is shown
+              with the scan result and in your Carbon Passport.
+            </p>
           </div>
-          <span className="text-[11px] bg-emerald-950 border border-emerald-600 text-emerald-300 px-3 py-1 rounded-full font-semibold">
-            LSTM Sequestration Boost
-          </span>
         </div>
 
-        {/* Practices Form */}
+        {/* Crop & Irrigation Form */}
         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-5">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1">Primary Crop Type</label>
@@ -69,11 +60,7 @@ export default function FarmDetailsForm() {
               onChange={e => setCrop(e.target.value)}
               className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
             >
-              <option value="Cotton">Cotton</option>
-              <option value="Paddy (Rice)">Paddy (Rice)</option>
-              <option value="Pulses & Millets">Pulses & Millets</option>
-              <option value="Maize">Maize</option>
-              <option value="Sugarcane">Sugarcane</option>
+              {CROPS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
 
@@ -84,36 +71,10 @@ export default function FarmDetailsForm() {
               onChange={e => setIrrigation(e.target.value)}
               className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
             >
-              <option value="Drip Irrigation">Drip Irrigation (+0.35 bonus)</option>
-              <option value="Sprinkler System">Sprinkler System (+0.20 bonus)</option>
-              <option value="Rain-fed">Rain-fed (+0.10 bonus)</option>
-              <option value="Canal Flood">Canal Flood (+0.00 bonus)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Tillage Management Practice</label>
-            <select
-              value={tillage}
-              onChange={e => setTillage(e.target.value)}
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
-            >
-              <option value="Zero-Till">Zero-Till / No-Till Farming (+0.50 bonus)</option>
-              <option value="Reduced-Till">Reduced Tillage (+0.25 bonus)</option>
-              <option value="Conventional">Conventional Deep Ploughing (+0.00 bonus)</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">Fertilizer & Nutrient Practices</label>
-            <select
-              value={fertilizer}
-              onChange={e => setFertilizer(e.target.value)}
-              className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:border-emerald-600"
-            >
-              <option value="Bio-Fertilizers & Compost">Bio-Fertilizers & Organic Compost (+0.40 bonus)</option>
-              <option value="Integrated Nutrient Mgmt">Integrated Nutrient Management (+0.20 bonus)</option>
-              <option value="Synthetic NPK">Synthetic Chemical NPK (+0.00 bonus)</option>
+              <option value="Drip Irrigation">Drip Irrigation</option>
+              <option value="Sprinkler System">Sprinkler System</option>
+              <option value="Rain-fed">Rain-fed</option>
+              <option value="Canal Flood">Canal Flood</option>
             </select>
           </div>
 
@@ -124,6 +85,11 @@ export default function FarmDetailsForm() {
             <span>Proceed to Earth Engine Satellite Processing</span>
             <ArrowRight className="w-4 h-4" />
           </button>
+
+          <p className="text-[11px] text-slate-500 text-center">
+            Practice-specific factor tables (zero-till, AWD rice, cover crops) are on the MRV roadmap; today the engine
+            credits satellite-measured vegetation improvement plus a crop-calibrated soil factor.
+          </p>
         </form>
 
       </div>

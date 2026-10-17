@@ -48,30 +48,55 @@ def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
         return (match or {}).get("name") or "Linked FPO"
     if farm and farm.get("fpo"):
         return farm["fpo"]
-    return market_store.fpo_for_phone(farmer_phone)
+    # Only demo listings (no real farm row) fall back to the sample FPO map;
+    # a live farm with no recorded FPO link means the split has no FPO leg.
+    return market_store.fpo_for_phone(farmer_phone) if farm is None else ""
 
 
-def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update) -> dict:
+def _prior_sale_gross(farm_id: str, listing_id: str) -> float:
+    """Sum of SALE proceeds already booked in the hash ledger for this listing."""
+    total = 0.0
+    for event in ledger.get_chain(farm_id):
+        if event.get("type") != "SALE":
+            continue
+        payload = event.get("payload") or {}
+        if payload.get("listing_id") == listing_id:
+            total += float(payload.get("gross_inr") or 0)
+    return round(total, 2)
+
+
+def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update, farm: Optional[dict] = None) -> dict:
     available = float(listing.get("total_credits") or 0)
     unit_price = float(listing.get("price_per_credit") or 0)
     gross = round(credits * unit_price, 2)
     farm_id = listing.get("farm_id") or ""
-    fpo_name = _resolve_fpo_link(None, listing.get("farmer_phone") or "")
-    if not fpo_name and farm_id and db.is_ready():
-        farm = db.get_farm(farm_id) or {}
-        fpo_name = _resolve_fpo_link(farm, listing.get("farmer_phone") or "")
+    if farm is None and farm_id and db.is_ready():
+        farm = db.get_farm(farm_id)
+    fpo_name = _resolve_fpo_link(farm, listing.get("farmer_phone") or "")
 
     split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
     escrow_ref = "ESC-" + uuid.uuid4().hex[:12].upper()
-    batch_hash = None
     partial = credits < available - 1e-6
 
-    updates = {"tx_hash": escrow_ref, "current_bid": gross, "bids_count": int(listing.get("bids_count") or 0) + 1}
+    updates = {
+        "tx_hash": escrow_ref,
+        "current_bid": round(_prior_sale_gross(farm_id, listing.get("id")) + gross, 2),
+        "bids_count": int(listing.get("bids_count") or 0) + 1,
+    }
     if partial:
         updates["total_credits"] = round(available - credits, 4)
     else:
         updates["status"] = "Retired"
-    apply_update(updates)
+
+    # Compare-and-swap: proceed (and write ledger events) only if the row was
+    # still in the state we read. A concurrent buyer wins the race and the
+    # loser aborts without touching the hash chain or paying a split.
+    if not apply_update(updates):
+        return {
+            "success": False,
+            "code": "CONFLICT",
+            "message": "Listing changed during checkout (concurrent purchase) — refresh and try again",
+        }
 
     cert_id = _cert_id_for_listing(listing.get("id"))
     sale_event = ledger.append_event(farm_id, "SALE", {
@@ -212,10 +237,10 @@ def marketplace_listings(
             rows = market_store.all_rows()
             result = sample_data.filter_listings(rows, **query_kwargs)
 
-        # Build next_cursor
+        # Build next_cursor (offset may have come from the cursor itself)
         next_cursor = None
         if len(result["listings"]) == limit:
-            next_offset = offset + limit
+            next_offset = int(query_kwargs["offset"]) + limit
             import base64 as _b64
             next_cursor = _b64.urlsafe_b64encode(str(next_offset).encode()).decode()
 
@@ -323,6 +348,17 @@ def place_bid(listing_id: str, data: BidModel, current_user: dict = Depends(get_
 
 @router.post("/buy")
 def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
+    """Escrow purchase: split → hash-ledger events → instant retirement.
+
+    Demo mode (DB off) stays open for local testing; with the live database a
+    signed-in farmer/buyer token is required — anonymous visitors must never
+    be able to move money or retire credits in production.
+    """
+    if db.is_ready() and not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in with a farmer or corporate account to purchase credits",
+        )
     buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
 
     if not db.is_ready():
@@ -338,7 +374,10 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         if credits <= 0:
             return {"success": False, "message": "Credit quantity must be greater than zero"}
         listing["_source"] = "demo_store"
-        return _purchase_flow(listing, credits, buyer, lambda fields: market_store.update(data.listing_id, fields))
+        return _purchase_flow(
+            listing, credits, buyer,
+            lambda fields: market_store.update_cas(data.listing_id, fields, expected_credits=available),
+        )
 
     try:
         sb = db._client()
@@ -356,9 +395,20 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             return {"success": False, "message": "Credit quantity must be greater than zero"}
         # Never write ledger events against a phantom farm
         farm_id = listing.get("farm_id")
-        if farm_id and not db.get_farm(farm_id):
+        farm = db.get_farm(farm_id) if farm_id else None
+        if farm_id and not farm:
             return {"success": False, "message": "Listing references an unknown farm — purchase rejected"}
-        return _purchase_flow(listing, credits, buyer, lambda fields: sb.table("marketplace_listings").update(fields).eq("id", data.listing_id).execute())
+
+        def _cas_update(fields: dict) -> bool:
+            """UPDATE ... WHERE id AND (status | credit balance) matched."""
+            q = sb.table("marketplace_listings").update(fields).eq("id", data.listing_id)
+            if "status" in fields:  # full purchase → status becomes Retired
+                q = q.eq("status", listing.get("status") or "Active")
+            else:                   # partial purchase → credit balance drops
+                q = q.eq("total_credits", available)
+            return bool(q.select("id").execute().data)
+
+        return _purchase_flow(listing, credits, buyer, _cas_update, farm=farm)
     except Exception as e:
         return {"success": False, "message": str(e)}
 

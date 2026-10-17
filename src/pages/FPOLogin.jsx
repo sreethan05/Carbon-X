@@ -46,13 +46,7 @@ export default function FPOLogin() {
         setError(res.message || 'Failed to send OTP. Please retry.');
       }
     } catch {
-      if (import.meta.env.DEV) {
-        setShowOtp(true);
-        setCountdown(60);
-        setCanResend(false);
-      } else {
-        setError('Could not reach the server. Please check your connection and retry.');
-      }
+      setError('Could not reach the server. Please check your connection and retry.');
     } finally {
       setIsVerifying(false);
     }

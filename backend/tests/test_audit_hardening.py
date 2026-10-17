@@ -54,10 +54,60 @@ class CursorPaginationTests(unittest.TestCase):
         second_ids = {l["id"] for l in second["listings"]}
         self.assertFalse(first_ids & second_ids, "cursor must not overlap pages")
 
+    def test_cursor_walks_three_pages(self):
+        """Regression: page 3 must advance past page 2 (old bug reused the
+        original offset when building next_cursor from a cursor request)."""
+        seen = set()
+        cursor = None
+        pages = 0
+        while pages < 3:
+            params = {"limit": 2}
+            if cursor:
+                params["cursor"] = cursor
+            body = client.get("/marketplace/listings", params=params).json()
+            self.assertTrue(body["success"])
+            ids = {l["id"] for l in body["listings"]}
+            if not ids:
+                break
+            self.assertFalse(seen & ids, f"page {pages + 1} overlapped a previous page")
+            seen |= ids
+            pages += 1
+            cursor = body.get("next_cursor")
+            if not cursor:
+                break
+        self.assertGreaterEqual(pages, 2)
+        if pages >= 3:
+            self.assertGreaterEqual(len(seen), 5)
+
     def test_invalid_cursor_rejected(self):
         r = client.get("/marketplace/listings", params={"cursor": "not-a-cursor"})
         self.assertFalse(r.json()["success"])
         self.assertEqual(r.json().get("code"), "BAD_CURSOR")
+
+
+class LedgerIntegrityTests(unittest.TestCase):
+    def test_unknown_farm_ledger_has_no_phantom_genesis(self):
+        """Demo mode must not mint an ISSUE event for an arbitrary id."""
+        body = client.get("/ledger/phantom-farm-id-that-does-not-exist").json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["events"], [], "phantom id must not anchor a chain")
+        self.assertTrue(body["verification"]["valid"])
+
+    def test_market_store_cas_blocks_double_spend(self):
+        from app.services import market_store
+        row = next(r for r in market_store.all_rows() if str(r.get("status")) == "Active")
+        credits = float(row["total_credits"])
+        # stale balance (concurrent buyer already took the row) → reject
+        self.assertFalse(market_store.update_cas(
+            row["id"], {"total_credits": credits - 1}, expected_credits=credits + 5))
+        # current balance → accept
+        self.assertTrue(market_store.update_cas(
+            row["id"], {"total_credits": credits - 1}, expected_credits=credits))
+        # balance moved → an old-balance CAS must now fail (no double spend)
+        self.assertFalse(market_store.update_cas(
+            row["id"], {"status": "Retired"}, expected_credits=credits))
+        # restore state for later tests
+        market_store.update(row["id"], {"total_credits": credits})
 
 
 class ErrorEnvelopeCodesTests(unittest.TestCase):

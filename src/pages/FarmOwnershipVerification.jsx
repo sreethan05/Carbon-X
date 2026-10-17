@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
-import { parsePahaniDocument } from '../services/api';
+import { parsePahaniDocument, lookupLandRegistry } from '../services/api';
 
 export default function FarmOwnershipVerification() {
   const navigate = useNavigate();
@@ -41,84 +41,58 @@ export default function FarmOwnershipVerification() {
 
     setIsSearching(true);
     setSearchDone(false);
+    setRegistryResult(null);
+
+    // Honest document-based fallback record (Tier 2) — used only when the
+    // registry cannot provide a verdict, never to fake a registry match.
+    const documentPath = (registryMessage, unavailable = false) => ({
+      found: false,
+      surveyNumber: survey,
+      ownerName: user?.name || null,
+      village: user?.village || null,
+      mandal: user?.district || null,
+      areaHa: null,
+      tier: 'DOCUMENT',
+      tierCode: '2',
+      hasGeometry: false,
+      geojson: null,
+      registryMessage,
+      unavailable,
+    });
 
     try {
-      const response = await fetch(`/py-api/land/registry/${encodeURIComponent(survey)}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.found) {
-          const hasGeom = data.registry_geometry_available || Boolean(data.geojson);
-          setRegistryResult({
-            found: true,
-            surveyNumber: data.survey_number || survey,
-            ownerName: data.owner_name || 'K. Ramesh',
-            village: data.village || 'Pochampally',
-            mandal: data.mandal || 'Yadadri Bhuvanagiri',
-            areaHa: data.area_ha || 1.20,
-            tier: hasGeom ? 'REGISTRY' : 'REGISTRY_DOC',
-            tierCode: hasGeom ? '1A' : '1B',
-            hasGeometry: hasGeom,
-            geojson: data.geojson || null,
-          });
-          setIsSearching(false);
-          setSearchDone(true);
-          return;
-        }
+      const data = await lookupLandRegistry(survey);
+      if (data && data.success && data.found) {
+        const hasGeom = Boolean(data.registry_geometry_available) || Boolean(data.geojson);
+        setRegistryResult({
+          found: true,
+          surveyNumber: data.survey_number || survey,
+          ownerName: data.owner_name || user?.name || '—',
+          village: data.village || '—',
+          mandal: data.mandal || '—',
+          areaHa: typeof data.area_ha === 'number' ? data.area_ha : null,
+          tier: hasGeom ? 'REGISTRY' : 'REGISTRY_DOC',
+          tierCode: hasGeom ? '1A' : '1B',
+          hasGeometry: hasGeom,
+          geojson: data.geojson || null,
+          registryMessage: null,
+          unavailable: false,
+        });
+      } else if (data && data.success && data.found === false) {
+        setRegistryResult(documentPath('Survey number not found in the government registry extract — proceeding with document-based verification (Tier 2).'));
+      } else {
+        setRegistryResult(documentPath(
+          (data && data.message) || 'Registry lookup is currently unavailable — proceeding with document-based verification (Tier 2).',
+          true,
+        ));
       }
     } catch (err) {
-      console.warn('API lookup offline, using simulated registry fallback', err);
-    }
-
-    setTimeout(() => {
+      console.warn('Registry lookup failed', err);
+      setRegistryResult(documentPath('Registry service unreachable — proceeding with document-based verification (Tier 2).', true));
+    } finally {
       setIsSearching(false);
       setSearchDone(true);
-
-      const upperSurvey = survey.toUpperCase();
-      if (upperSurvey === '124/A' || upperSurvey === '101/A') {
-        setRegistryResult({
-          found: true,
-          surveyNumber: upperSurvey,
-          ownerName: user?.name || 'K. Ramesh',
-          village: user?.village || 'Pochampally',
-          mandal: user?.district || 'Yadadri Bhuvanagiri',
-          areaHa: 1.20,
-          acres: 2.96,
-          tier: 'REGISTRY',
-          tierCode: '1A',
-          hasGeometry: true,
-          geojson: {
-            type: 'Feature',
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[[78.484, 17.383], [78.487, 17.383], [78.487, 17.386], [78.484, 17.386], [78.484, 17.383]]]
-            }
-          }
-        });
-      } else if (upperSurvey === '124/B' || upperSurvey === '102/B') {
-        setRegistryResult({
-          found: true,
-          surveyNumber: upperSurvey,
-          ownerName: user?.name || 'Padma Bai',
-          village: user?.village || 'Pochampally',
-          mandal: user?.district || 'Yadadri Bhuvanagiri',
-          areaHa: 0.85,
-          acres: 2.10,
-          tier: 'REGISTRY_DOC',
-          tierCode: '1B',
-          hasGeometry: false,
-          geojson: null
-        });
-      } else {
-        setRegistryResult({
-          found: false,
-          surveyNumber: survey,
-          tier: 'DOCUMENT',
-          tierCode: '2',
-          hasGeometry: false,
-          geojson: null
-        });
-      }
-    }, 600);
+    }
   };
 
   const handlePahaniUpload = (e) => {
@@ -169,9 +143,9 @@ export default function FarmOwnershipVerification() {
     navigate('/farm-map', {
       state: {
         surveyNumber: registryResult.surveyNumber || surveyInput,
-        ownerName: registryResult.ownerName || user?.name || 'Farmer',
-        village: registryResult.village || 'Pochampally',
-        areaHa: registryResult.areaHa || 1.20,
+        ownerName: registryResult.ownerName || user?.name || null,
+        village: registryResult.village || user?.village || '',
+        areaHa: registryResult.areaHa ?? null,
         tierCode: registryResult.tierCode,
         tier: registryResult.tier,
         hasGeometry: registryResult.hasGeometry,
@@ -321,12 +295,25 @@ export default function FarmOwnershipVerification() {
 
               {!isProcessingPipeline && !pipelineDone && (
                 <button
-                  onClick={runPipeline}
+                  type="button"
+                  onClick={() => {
+                    if (pahaniFile) {
+                      runPipeline(pahaniFile);
+                    } else {
+                      setParseError('Upload a Pahani / RoR document first — the Trust Engine reads the actual file.');
+                    }
+                  }}
                   className="w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
                 >
                   <ScanLine className="w-4 h-4" />
                   <span>Run Automated Trust Engine Check</span>
                 </button>
+              )}
+
+              {!isProcessingPipeline && !pipelineDone && parseError && (
+                <p className="text-[11px] text-rose-700 font-bold bg-rose-50 border border-rose-200 rounded-lg p-2">
+                  {parseError}
+                </p>
               )}
             </div>
           </div>
@@ -341,6 +328,13 @@ export default function FarmOwnershipVerification() {
 
               {searchDone && registryResult ? (
                 <div className="space-y-4">
+                  {registryResult.registryMessage && (
+                    <p className={`text-[11px] font-semibold rounded-lg p-2.5 border leading-relaxed ${
+                      registryResult.unavailable ? 'text-rose-800 bg-rose-50 border-rose-200' : 'text-amber-900 bg-amber-50 border-amber-200'
+                    }`}>
+                      {registryResult.registryMessage}
+                    </p>
+                  )}
                   <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block mb-1">
@@ -359,7 +353,7 @@ export default function FarmOwnershipVerification() {
                   <div className="grid grid-cols-2 gap-4 bg-[#F8FAF8] p-4 rounded-xl border border-slate-200 text-xs">
                     <div>
                       <span className="text-[10px] text-slate-500 font-semibold block">Pattadar Owner</span>
-                      <span className="font-bold text-slate-900">{registryResult.ownerName}</span>
+                      <span className="font-bold text-slate-900">{registryResult.ownerName || '—'}</span>
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-500 font-semibold block">Survey Number</span>
@@ -367,11 +361,17 @@ export default function FarmOwnershipVerification() {
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-500 font-semibold block">Village & Mandal</span>
-                      <span className="font-bold text-slate-900">{registryResult.village}, {registryResult.mandal}</span>
+                      <span className="font-bold text-slate-900">
+                        {[registryResult.village, registryResult.mandal].filter(Boolean).join(', ') || '—'}
+                      </span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-500 font-semibold block">Pahani Acreage</span>
-                      <span className="font-bold text-slate-900">{registryResult.areaHa} ha ({Math.round(registryResult.areaHa * 2.471 * 100) / 100} Acres)</span>
+                      <span className="text-[10px] text-slate-500 font-semibold block">Recorded Area</span>
+                      <span className="font-bold text-slate-900">
+                        {registryResult.areaHa != null
+                          ? `${registryResult.areaHa} ha (${Math.round(registryResult.areaHa * 2.471 * 100) / 100} Acres)`
+                          : '— (no area on record)'}
+                      </span>
                     </div>
                   </div>
                 </div>

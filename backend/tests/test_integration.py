@@ -34,6 +34,14 @@ os.environ["SUPABASE_URL"] = ""
 os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
 _db._supabase = None
 _db._ready = False
+
+# Hermetic hash ledger: never read or append to the developer's real
+# backend/data/ledger.json from tests (repeat runs must not accumulate).
+import tempfile  # noqa: E402
+from app.services import ledger as _ledger  # noqa: E402
+_ledger._PATH = os.path.join(tempfile.mkdtemp(prefix="carbonx_test_ledger_"), "ledger.json")
+_ledger._CHAINS = {}
+_ledger._MIGRATED = True
   # noqa: E402  (no env -> DB off -> demo mode)
 
 client = TestClient(app)
@@ -71,6 +79,30 @@ class HealthAndListingsTests(unittest.TestCase):
 
 
 class PurchasePipelineTests(unittest.TestCase):
+    def test_buy_settles_wallet_proceeds_from_ledger(self):
+        """Penny-path check: a purchase must show up in the seller's wallet
+        with the actual ledger gross — not a fabricated bid value."""
+        listings = client.get("/marketplace/listings", params={"status": "Active"}).json()["listings"]
+        if not listings:
+            self.skipTest("no active listings left in demo store")
+        target = min(listings, key=lambda l: float(l["total_credits"]))
+        phone = target.get("farmer_phone")
+        login = client.post("/demo/login", json={"phone": phone}).json()
+        if not login.get("success"):
+            self.skipTest("listing farmer is not a demo farmer")
+        r = client.post("/marketplace/buy", json={
+            "listing_id": target["id"], "credits": 1, "buyer_name": "Wallet Test Corp"})
+        body = r.json()
+        self.assertTrue(body["success"], body)
+        wallet = client.get("/wallet", headers={
+            "Authorization": f"Bearer {login['token']}"}).json()
+        self.assertTrue(wallet["success"], wallet)
+        settled = [t for t in wallet["transactions"] if t["listing_id"] == target["id"]]
+        self.assertEqual(len(settled), 1)
+        self.assertEqual(settled[0]["gross"], body["gross_amount"])
+        self.assertEqual(settled[0]["credits_sold"], body["credits_purchased"])
+        self.assertIn(settled[0]["status"], ("PARTIAL", "SETTLED"))
+
     def test_full_buy_split_retire_cycle(self):
         """The demo-mode money path: buy ALL credits -> retired -> ledger
         events -> certificate -> wallet-visible, on the in-memory store."""

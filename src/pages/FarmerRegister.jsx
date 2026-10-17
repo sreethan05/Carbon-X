@@ -10,9 +10,10 @@ export default function FarmerRegister() {
   const { currentLang } = useLanguage();
   const { login } = useAuth();
 
-  // Voice Assistance Simulation
+  // Voice input (Web Speech API when supported by the browser)
   const [isListening, setIsListening] = useState(false);
-  const [speechText] = useState('');
+  const [speechText, setSpeechText] = useState('');
+  const [formError, setFormError] = useState('');
 
   // Form State
   const [name, setName] = useState('');
@@ -20,9 +21,9 @@ export default function FarmerRegister() {
   const [idType, setIdType] = useState('Govt Aadhaar ID');
   const [rawIdNumber, setRawIdNumber] = useState('');
   const [maskedId, setMaskedId] = useState('');
-  const [district, setDistrict] = useState('Yadadri Bhuvanagiri');
-  const [mandal, setMandal] = useState('Pochampally');
-  const [village, setVillage] = useState('Pochampally');
+  const [district, setDistrict] = useState('');
+  const [mandal, setMandal] = useState('');
+  const [village, setVillage] = useState('');
 
   // OTP Verification State
   const [showOtpModal, setShowOtpModal] = useState(false);
@@ -30,6 +31,7 @@ export default function FarmerRegister() {
   const [otpTimer, setOtpTimer] = useState(600); // 10 minutes timer
   const [timerActive, setTimerActive] = useState(false);
   const [otpError, setOtpError] = useState('');
+  const [isDevOtp, setIsDevOtp] = useState(false);
   const [, setIsRegistering] = useState(false);
 
   useEffect(() => {
@@ -43,17 +45,37 @@ export default function FarmerRegister() {
   }, [timerActive, otpTimer]);
 
   const handleMicClick = () => {
-    setIsListening(true);
-    setTimeout(() => {
-      setName('K. Ramesh');
-      setPhone('9876543210');
-      setRawIdNumber('200000000009');
-      setMaskedId('XXXXXXXX0009');
-      setDistrict('Yadadri Bhuvanagiri');
-      setMandal('Pochampally');
-      setVillage('Pochampally');
+    if (isListening) return;
+    setFormError('');
+    const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) {
+      setSpeechText('Voice input is not supported in this browser. Please type your details.');
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognitionCtor();
+      recognition.lang = currentLang === 'te' ? 'te-IN' : 'en-IN';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.onstart = () => setIsListening(true);
+      recognition.onresult = (event) => {
+        const results = Array.from(event.results || []);
+        const transcript = (results[results.length - 1]?.[0]?.transcript || '').trim();
+        if (transcript) {
+          setSpeechText(transcript);
+          setName(transcript);
+        }
+      };
+      recognition.onerror = () => {
+        setIsListening(false);
+        setSpeechText('Could not capture your voice. Please type your details.');
+      };
+      recognition.onend = () => setIsListening(false);
+      recognition.start();
+    } catch {
       setIsListening(false);
-    }, 2000);
+      setSpeechText('Could not start voice input on this device. Please type your details.');
+    }
   };
 
   const handleIdChange = (e) => {
@@ -70,25 +92,36 @@ export default function FarmerRegister() {
   const handleSubmitForm = async (e) => {
     e.preventDefault();
     const cleanPhone = phone.trim().replace(/\s+/g, '');
-    if (!name || cleanPhone.length < 10) return;
+    setFormError('');
+    if (!name.trim()) {
+      setFormError('Enter your legal full name.');
+      return;
+    }
+    if (!/^\d{10}$/.test(cleanPhone)) {
+      setFormError('Enter a valid 10-digit mobile number.');
+      return;
+    }
+    if (!/^\d{12}$/.test(rawIdNumber.trim())) {
+      setFormError('Enter the complete 12-digit ID number.');
+      return;
+    }
 
     setOtpError('');
     setOtp('');
+    setIsDevOtp(false);
 
-    try {
-      const res = await sendOtp(cleanPhone);
-      setShowOtpModal(true);
-      if (res.success) {
-        setTimerActive(true);
-        setOtpTimer(600);
-      } else {
-        setOtpError(res.message || 'Failed to dispatch SMS to your phone.');
-      }
-    } catch (err) {
-      console.warn('Backend OTP send offline', err);
-      setShowOtpModal(true);
-      setOtpError('Failed to send SMS to your phone. Please check connectivity.');
+    const res = await sendOtp(cleanPhone);
+    if (!res.success) {
+      setFormError(res.message || 'Could not send the SMS to your phone. Please try again.');
+      return;
     }
+    if (res.dev_otp) {
+      setOtp(res.dev_otp);
+      setIsDevOtp(true);
+    }
+    setShowOtpModal(true);
+    setTimerActive(true);
+    setOtpTimer(600);
   };
 
   const handleVerifyOtpSubmit = async (e) => {
@@ -102,29 +135,24 @@ export default function FarmerRegister() {
     setIsRegistering(true);
     setOtpError('');
 
-    let verificationToken = null;
-    try {
-      const verifyRes = await verifyRegistrationOtp(cleanPhone, otp);
-      if (!verifyRes || !verifyRes.success) {
-        setOtpError((verifyRes && verifyRes.message) || 'Invalid or expired OTP');
-        return;
-      }
-      verificationToken = verifyRes.verification_token;
-    } catch {
-      // Backend unreachable; registration attempt below reports the outcome
+    const verifyRes = await verifyRegistrationOtp(cleanPhone, otp);
+    if (!verifyRes || !verifyRes.success) {
+      setOtpError((verifyRes && verifyRes.message) || 'Invalid or expired OTP');
+      setIsRegistering(false);
+      return;
     }
 
     // Step 2: Register user
     const regPayload = {
       phone: cleanPhone,
       otp,
-      otp_verification_token: verificationToken,
-      name: name || 'K. Ramesh',
-      aadhaar: rawIdNumber,
+      otp_verification_token: verifyRes.verification_token,
+      name: name.trim(),
+      aadhaar: rawIdNumber.trim(),
       state: 'Telangana',
-      district: district || 'Yadadri Bhuvanagiri',
-      village: village || 'Pochampally',
-      upi: `${cleanPhone}@upi`,
+      district: district.trim(),
+      village: village.trim(),
+      upi: '',
       role: 'farmer',
       preferred_language: currentLang || 'en',
     };
@@ -138,31 +166,12 @@ export default function FarmerRegister() {
         return;
       }
       setOtpError(regRes.message || 'Registration failed. Please try again.');
-      return;
     } catch (err) {
       console.warn('Backend registration unavailable', err);
-      if (!import.meta.env.DEV) {
-        setOtpError('Could not reach the registration service. Please check your connection and retry.');
-        return;
-      }
+      setOtpError('Could not reach the registration service. Please check your connection and retry.');
     } finally {
       setIsRegistering(false);
     }
-
-    // Demo mode fallback (dev builds only): backend unreachable
-    const userData = {
-      name: name || 'K. Ramesh',
-      phone: cleanPhone,
-      district,
-      mandal,
-      village,
-      role: 'farmer',
-      aadhaar_last4: rawIdNumber.slice(-4) || '3210'
-    };
-
-    await login('cx_token_' + Date.now(), userData);
-    setShowOtpModal(false);
-    navigate('/farmer/land-verification');
   };
 
   const formatTimer = (seconds) => {
@@ -207,7 +216,7 @@ export default function FarmerRegister() {
                 </span>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                {speechText || (currentLang === 'te' ? 'మైక్ క్లిక్ చేసి మాట్లాడండి' : 'Click mic to speak your name, village & details')}
+                {speechText || (currentLang === 'te' ? 'మైక్ క్లిక్ చేసి మీ పూర్తి పేరు చెప్పండి' : 'Click mic and say your full name')}
               </p>
             </div>
           </div>
@@ -274,10 +283,12 @@ export default function FarmerRegister() {
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">District</label>
               <select
+                required
                 value={district}
                 onChange={(e) => setDistrict(e.target.value)}
                 className="w-full px-3 py-2.5 bg-[#F8FAF8] border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
               >
+                <option value="" disabled>Select district</option>
                 <option value="Yadadri Bhuvanagiri">Yadadri Bhuvanagiri</option>
                 <option value="Warangal">Warangal</option>
                 <option value="Jangaon">Jangaon</option>
@@ -288,6 +299,7 @@ export default function FarmerRegister() {
               <label className="block text-xs font-bold text-slate-700 mb-1">Mandal</label>
               <input
                 type="text"
+                placeholder="Enter mandal"
                 value={mandal}
                 onChange={(e) => setMandal(e.target.value)}
                 className="w-full px-3 py-2.5 bg-[#F8FAF8] border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
@@ -298,12 +310,19 @@ export default function FarmerRegister() {
               <label className="block text-xs font-bold text-slate-700 mb-1">Village Name</label>
               <input
                 type="text"
+                placeholder="Enter village name"
                 value={village}
                 onChange={(e) => setVillage(e.target.value)}
                 className="w-full px-3 py-2.5 bg-[#F8FAF8] border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
               />
             </div>
           </div>
+
+          {formError && (
+            <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg leading-relaxed">
+              {formError}
+            </p>
+          )}
 
           <button
             type="submit"
@@ -331,6 +350,12 @@ export default function FarmerRegister() {
               <p className="text-xs text-slate-600">
                 A 6-digit authentication code has been dispatched to <span className="font-bold text-slate-900">+91 {phone}</span>.
               </p>
+
+              {isDevOtp && (
+                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 p-2 rounded-lg">
+                  Dev mode (CARBONX_ALLOW_DEV_OTP): the real stored OTP was returned by the backend and auto-filled below.
+                </p>
+              )}
 
               {otpError && (
                 <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg leading-relaxed">

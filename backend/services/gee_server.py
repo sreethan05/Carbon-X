@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """
-GEE Microservice - Your teammate's Python file integrated as a service
+GEE Microservice - standalone optional helper (legacy)
 Run this to enable real GEE analysis: python gee_server.py
 
-Project: carbonsetu-496709
+Project: read from GEE_PROJECT (defaults to carbonx-507617)
 """
 
 import ee
 import json
 import sys
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-# Initialize GEE with your project
-ee.Initialize(project="carbonsetu-496709")
+# Initialize GEE with the configured project
+ee.Initialize(project=os.getenv("GEE_PROJECT", "carbonx-507617"))
 
 def get_satellite_features(longitude, latitude):
     """Your teammate's original function - gets NDVI from Sentinel-2"""

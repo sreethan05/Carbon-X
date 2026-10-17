@@ -9,27 +9,73 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+// Normalize every response into a JSON envelope:
+//   { success, code?, message?, status?, ...payload }
+// Non-JSON bodies (proxy 502 HTML, empty 204) and network failures resolve to
+// { success: false, code: 'NETWORK'|'NON_JSON', message } instead of throwing,
+// so callers can branch on `success` exactly like for backend envelopes.
+async function parseResponse(res) {
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    data = null;
+  }
+  if (data && typeof data === 'object') {
+    if (!res.ok && data.success !== false) {
+      return {
+        success: false,
+        code: data.code || `HTTP_${res.status}`,
+        message: data.message || data.detail || `Request failed (HTTP ${res.status})`,
+        ...data,
+        status: res.status,
+      };
+    }
+    return { ...data, status: res.status };
+  }
+  return {
+    success: false,
+    code: res.ok ? 'EMPTY_RESPONSE' : `HTTP_${res.status}`,
+    message: res.ok
+      ? 'The server returned an empty response.'
+      : `The server returned a non-JSON response (HTTP ${res.status}).`,
+    status: res.status,
+  };
+}
+
+async function request(url, options = {}) {
+  let res;
+  try {
+    res = await fetch(url, options);
+  } catch {
+    return {
+      success: false,
+      code: 'NETWORK',
+      message: 'Cannot reach the server. Check your connection and try again.',
+      status: 0,
+    };
+  }
+  return parseResponse(res);
+}
+
 async function post(url, body) {
-  const res = await fetch(url, {
+  return request(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
-  return res.json();
 }
 
 async function patch(url, body) {
-  const res = await fetch(url, {
+  return request(url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
-  return res.json();
 }
 
 async function get(url) {
-  const res = await fetch(url, { headers: authHeaders() });
-  return res.json();
+  return request(url, { headers: authHeaders() });
 }
 
 // ── Auth ──
@@ -73,12 +119,11 @@ export async function sendVoiceAudioQuery({ file, language_code, session_id }) {
   form.append('file', file);
   if (language_code) form.append('language_code', language_code);
   if (session_id) form.append('session_id', session_id);
-  const res = await fetch(`${PY}/api/v1/voice/query`, {
+  return request(`${PY}/api/v1/voice/query`, {
     method: 'POST',
     headers: authHeaders(),
     body: form,
   });
-  return res.json();
 }
 
 // ── KYC ──
@@ -111,11 +156,11 @@ export async function saveFarm(farm) {
 }
 
 export async function predictBiodiversity(longitude, latitude) {
-  const res = await fetch(
-    `${PY}/predict?longitude=${longitude}&latitude=${latitude}`,
-    { headers: authHeaders() }
-  );
-  return res.json();
+  return get(`${PY}/predict?longitude=${longitude}&latitude=${latitude}`);
+}
+
+export async function lookupLandRegistry(surveyNumber) {
+  return get(`${PY}/land/registry/${encodeURIComponent(surveyNumber)}`);
 }
 
 // ── Marketplace ──
@@ -191,12 +236,18 @@ export async function getNdviHistory(farmId) {
 
 // ── FPO ──
 
-export async function fpoLogin(registrationNo, password) {
-  return post(`${PY}/fpo/login`, { registration_no: registrationNo, password });
+export async function fpoLogin(registrationNo) {
+  // FPO sign-in is registration_no -> OTP to the linked officer's phone;
+  // the password step no longer exists (see POST /fpo/login).
+  return post(`${PY}/fpo/login`, { registration_no: registrationNo });
 }
 
 export async function getFpos() {
   return get(`${PY}/fpos`);
+}
+
+export async function getOpsSummary() {
+  return get(`${PY}/ops/summary`);
 }
 
 export async function getFpoFarmers() {
@@ -234,12 +285,11 @@ export async function corporateLogin(name, password) {
 export async function parsePahaniDocument(file) {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${PY}/documents/parse-pahani`, {
+  return request(`${PY}/documents/parse-pahani`, {
     method: 'POST',
     headers: authHeaders(),
     body: form,
   });
-  return res.json();
 }
 
 // ── Blockchain ──

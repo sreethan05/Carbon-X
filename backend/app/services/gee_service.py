@@ -11,7 +11,7 @@ def init_earth_engine(project_id: Optional[str] = None) -> bool:
         return True
     try:
         import ee
-        proj = project_id or os.getenv("GEE_PROJECT", "carbonsetu-496709")
+        proj = project_id or os.getenv("GEE_PROJECT", "carbonx-507617")
         ee.Initialize(project=proj)
         _ee_initialized = True
         print(f"Earth Engine initialized with project: {proj}")
@@ -22,7 +22,12 @@ def init_earth_engine(project_id: Optional[str] = None) -> bool:
 
 
 def get_satellite_features(longitude: float, latitude: float) -> list:
-    """Extract 8 satellite features for ML model from a coordinate."""
+    """Extract 8 satellite features for ML model from a coordinate.
+
+    Returns an empty list when Earth Engine is unavailable — never fabricated
+    stand-ins (the old code returned NDVI-derived constants that callers could
+    mistake for measurements).
+    """
     if init_earth_engine():
         try:
             import ee
@@ -45,9 +50,7 @@ def get_satellite_features(longitude: float, latitude: float) -> list:
         except Exception as exc:
             print(f"GEE satellite features error: {exc}")
 
-    # Fallback features when offline
-    nd = 0.48
-    return [nd, nd * 0.9, nd * 1.1, 0.8, 0.4, 0.3, 0.9, 0.2]
+    return []
 
 
 def get_ndvi_at_point(lat: float, lon: float, project_id: Optional[str] = None) -> Dict[str, Any]:
@@ -85,12 +88,11 @@ def get_ndvi_at_point(lat: float, lon: float, project_id: Optional[str] = None) 
         except Exception as exc:
             print(f"Live GEE point query failed: {exc}")
 
-    # Geometric fallback estimation if GEE authentication is pending
-    seed = abs(int(lat * 1000 + lon * 1000)) % 100
-    est_ndvi = round(0.42 + (seed / 400.0), 3)
+    # GEE unavailable: report the data as missing. Never invent a
+    # coordinate-derived pseudo-NDVI (callers must treat this as unknown).
     return {
-        "ndvi": est_ndvi,
-        "source": "Estimated (Run 'earthengine authenticate' for live satellite)",
+        "ndvi": None,
+        "source": "Unavailable (Earth Engine not initialized or query failed)",
         "live_satellite": False,
-        "vegetation_status": "Healthy" if est_ndvi >= 0.3 else "Sparse",
+        "vegetation_status": "Unknown",
     }

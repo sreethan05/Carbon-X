@@ -31,7 +31,7 @@ export default function FPODashboard() {
 
   // Tab 2: Onboarding Form State
   const [onboardData, setOnboardData] = useState({
-    name: '', phone: '', survey_number: '', acreage: '', mandal: 'Pochampally', village: 'Pochampally',
+    name: '', phone: '', survey_number: '', acreage: '', mandal: '', village: '',
   });
   const [onboardSuccess, setOnboardSuccess] = useState(false);
   const [onboardError, setOnboardError] = useState('');
@@ -69,7 +69,7 @@ export default function FPODashboard() {
       setFarmersList((farmersRes && farmersRes.farmers) || []);
       setStats({
         totalFarmers: (farmersRes && farmersRes.total_farmers) || 0,
-        totalAcreageHa: (farmersRes && farmersRes.total_acreage) || 0,
+        totalAcreageHa: (farmersRes && farmersRes.total_hectares) || 0,
         pooledCredits: (farmersRes && farmersRes.pooled_credits) || 0,
       });
       setPendingQueue((pendingRes && pendingRes.pending) || []);
@@ -87,6 +87,11 @@ export default function FPODashboard() {
   const handleOnboardSubmit = async (e) => {
     e.preventDefault();
     if (!onboardData.name || !onboardData.phone || !onboardData.survey_number) return;
+    const acreageHa = parseFloat(onboardData.acreage);
+    if (!Number.isFinite(acreageHa) || acreageHa <= 0) {
+      setOnboardError('Enter the parcel area in hectares (a positive number).');
+      return;
+    }
     setIsOnboarding(true);
     setOnboardError('');
     try {
@@ -94,13 +99,13 @@ export default function FPODashboard() {
         name: onboardData.name,
         phone: onboardData.phone,
         survey_number: onboardData.survey_number,
-        acreage: parseFloat(onboardData.acreage) || 2.0,
+        acreage: acreageHa,
         mandal: onboardData.mandal,
         village: onboardData.village,
       });
       if (res && res.success) {
         setOnboardSuccess(true);
-        setOnboardData({ name: '', phone: '', survey_number: '', acreage: '', mandal: 'Pochampally', village: 'Pochampally' });
+        setOnboardData({ name: '', phone: '', survey_number: '', acreage: '', mandal: '', village: '' });
         await loadAll();
         setTimeout(() => setOnboardSuccess(false), 4000);
       } else {
@@ -175,7 +180,7 @@ export default function FPODashboard() {
                 </span>
               </div>
               <h1 className="text-2xl font-extrabold text-carbon-900 font-manrope">{user?.name || 'FPO Cooperative'}</h1>
-              <p className="text-xs text-agriText-muted mt-0.5">Officer: {user?.phone || '—'} | District: Yadadri Bhuvanagiri</p>
+              <p className="text-xs text-agriText-muted mt-0.5">Officer: {user?.phone || '—'} | District: {user?.district || '—'}</p>
             </div>
           </div>
 
@@ -185,7 +190,7 @@ export default function FPODashboard() {
               <p className="text-xl font-bold text-carbon-900 mt-0.5">{stats.totalFarmers}</p>
             </div>
             <div className="bg-surface-sage/50 border border-forest-200 border-l-4 border-l-emerald-600 rounded-xl p-3 text-center">
-              <p className="text-[10px] font-semibold text-agriText-subtle uppercase">Total Acreage</p>
+              <p className="text-[10px] font-semibold text-agriText-subtle uppercase">Total Area</p>
               <p className="text-xl font-bold text-carbon-900 mt-0.5">{stats.totalAcreageHa} ha</p>
             </div>
             <div className="bg-surface-sage/50 border border-forest-200 border-l-4 border-l-emerald-600 rounded-xl p-3 text-center">
@@ -317,7 +322,7 @@ export default function FPODashboard() {
                     <th className="py-3 px-4">Phone (+91)</th>
                     <th className="py-3 px-4">Village</th>
                     <th className="py-3 px-4">Farms</th>
-                    <th className="py-3 px-4">Acreage</th>
+                    <th className="py-3 px-4">Area (ha)</th>
                     <th className="py-3 px-4">Badge</th>
                     <th className="py-3 px-4">Credits</th>
                     <th className="py-3 px-4">Status</th>
@@ -337,7 +342,7 @@ export default function FPODashboard() {
                         <td className="py-3 px-4 font-mono text-agriText-muted">{f.phone || '—'}</td>
                         <td className="py-3 px-4 font-medium text-carbon-800">{f.village || '—'}</td>
                         <td className="py-3 px-4 font-semibold text-carbon-900">{f.farm_count}</td>
-                        <td className="py-3 px-4 font-semibold text-carbon-900">{f.acres} ha</td>
+                        <td className="py-3 px-4 font-semibold text-carbon-900">{f.area_hectares} ha</td>
                         <td className="py-3 px-4">
                           <VerificationBadge badge={f.badge || 'NONE'} size="sm" />
                         </td>
@@ -419,7 +424,7 @@ export default function FPODashboard() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-carbon-800 mb-1">Parcel Acreage</label>
+                <label className="block text-xs font-bold text-carbon-800 mb-1">Parcel Area (hectares)</label>
                 <input
                   type="number"
                   step="0.1"
@@ -470,7 +475,7 @@ export default function FPODashboard() {
                         <VerificationBadge badge="PENDING" size="sm" />
                       </div>
                       <p className="text-xs text-agriText-muted mt-1">
-                        Phone: {p.phone || '—'} | Village: {p.village || '—'} | Farm: {p.farm_name || '—'} | Area: {p.acres} ha
+                        Phone: {p.phone || '—'} | Village: {p.village || '—'} | Farm: {p.farm_name || '—'} | Area: {p.area_hectares} ha
                       </p>
                     </div>
 
@@ -534,7 +539,7 @@ export default function FPODashboard() {
                           <span className="text-xs font-mono text-agriText-subtle">{fl.farm_name || '—'}</span>
                         </div>
                         <p className="text-xs text-agriText-muted mt-1">
-                          Village: {fl.village || '—'} | Area: {fl.claimed_acres} ha | Flagged: {fl.date}
+                          Village: {fl.village || '—'} | Area: {fl.area_hectares} ha | Flagged: {fl.date}
                         </p>
                         <p className="text-xs text-amber-800 font-semibold mt-1">{fl.issue}</p>
                       </div>

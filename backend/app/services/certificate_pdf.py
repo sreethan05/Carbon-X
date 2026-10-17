@@ -5,7 +5,6 @@ details, the SHA-256 batch hash, and the tamper-evident provenance note.
 Pure reportlab — no external services.
 """
 import io
-from datetime import datetime, timezone
 
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import A4, landscape
@@ -73,20 +72,24 @@ def render_certificate_pdf(cert: dict) -> bytes:
     y -= 34
     c.setFont("Helvetica-Bold", 24)
     c.setFillColor(FOREST)
-    c.drawCentredString(w / 2, y, cert.get("buyer") or "Corporate Buyer")
+    c.drawCentredString(w / 2, y, cert.get("buyer") or "—")
     y -= 26
     c.setFont("Helvetica", 12.5)
     c.setFillColor(MUTE)
-    c.drawCentredString(w / 2, y, "has permanently retired the following carbon credits — purchase equals retirement, one step.")
+    retired = str(cert.get("status") or "RETIRED").upper() == "RETIRED"
+    statement = ("has permanently retired the following carbon credits — purchase equals retirement, one step."
+                 if retired else
+                 "holds the following carbon credits in escrow — not yet permanently retired.")
+    c.drawCentredString(w / 2, y, statement)
 
     # Details grid
     y -= 52
     rows = [
-        ("Credits retired", f"{cert.get('volume', '—')} tCO2e"),
-        ("Credit type", f"Agricultural carbon ({cert.get('crop') or 'Mixed Crop'}) — VM0042-aligned methodology"),
-        ("Source parcels", cert.get("location") or "Telangana, India"),
-        ("Verified farmers", cert.get("farmer_name") or "Registered smallholders"),
-        ("Retirement date", cert.get("retired_date") or datetime.now(timezone.utc).strftime("%d %B %Y")),
+        ("Credits retired" if retired else "Credits held", f"{cert.get('volume', '—')} tCO2e"),
+        ("Credit type", f"Agricultural carbon ({cert.get('crop') or 'crop not recorded'}) — VM0042-aligned methodology"),
+        ("Source parcels", cert.get("location") or "location not recorded"),
+        ("Farmers", cert.get("farmer_name") or "not recorded"),
+        ("Retirement date", (cert.get("retired_date") or "—") if retired else "Not retired"),
     ]
     col_x = w / 2 - 330
     for label, value in rows:
@@ -118,7 +121,9 @@ def render_certificate_pdf(cert: dict) -> bytes:
     # Footer signatures
     c.setFont("Helvetica", 9.5)
     c.setFillColor(MUTE)
-    c.drawString(64, 62, "Escrow-settled · conditional split executed (farmer 70% floor) · credits permanently retired — no resale possible")
+    footer_state = ("credits permanently retired — no resale possible"
+                    if retired else "credits held in escrow — retirement pending")
+    c.drawString(64, 62, f"Escrow-settled · conditional split executed (farmer 70% floor) · {footer_state}")
     c.setFont("Helvetica", 8.5)
     c.drawString(64, 46, "Certificate integrity is verifiable against the platform ledger. Escrow simulated in this build; production settles via payment-gateway escrow with the same split logic.")
     c.setStrokeColor(MUTE)

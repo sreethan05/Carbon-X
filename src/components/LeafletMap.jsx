@@ -81,15 +81,14 @@ export default function LeafletMap({
   const [search, setSearch] = useState('');
   const [flyTo, setFlyTo] = useState(null);
   const [polygonMode, setPolygonMode] = useState(false);
-  const [polygonPoints, setPolygonPoints] = useState(
-    initialPoints || [
-      [17.383, 78.484],
-      [17.383, 78.487],
-      [17.386, 78.487],
-      [17.386, 78.484],
-    ]
-  );
-  const [polygonClosed, setPolygonClosed] = useState(true);
+  // Never fabricate a boundary: start empty unless the caller supplies real
+  // geometry (e.g., a locked cadastral registry polygon for Tier 1A).
+  const [polygonPoints, setPolygonPoints] = useState(initialPoints || []);
+  const [polygonClosed, setPolygonClosed] = useState(Boolean(initialPoints && initialPoints.length >= 3));
+  // Only emit GeoJSON once the polygon comes from real input (registry
+  // geometry or a user-drawn boundary) — a mount with no data must not
+  // silently submit a placeholder square as the parcel.
+  const [polygonTouched, setPolygonTouched] = useState(Boolean(initialPoints && initialPoints.length >= 3));
   const [status, setStatus] = useState(readOnly ? '🔒 Cadastral Boundary Locked (Tier 1A)' : '');
   const [heatmapActive, setHeatmapActive] = useState(false);
 
@@ -97,6 +96,7 @@ export default function LeafletMap({
     if (initialPoints && initialPoints.length >= 3) {
       setPolygonPoints(initialPoints);
       setPolygonClosed(true);
+      setPolygonTouched(true);
     }
   }, [initialPoints]);
 
@@ -114,14 +114,15 @@ export default function LeafletMap({
   };
 
   useEffect(() => {
-    if (polygonClosed && polygonPoints.length >= 3) {
+    if (polygonTouched && polygonClosed && polygonPoints.length >= 3) {
       emitGeojson(polygonPoints);
     }
-  }, [polygonClosed, polygonPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [polygonTouched, polygonClosed, polygonPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startPolygon = () => {
     if (readOnly) return;
     setPolygonMode(true);
+    setPolygonTouched(true);
     setPolygonPoints([]);
     setPolygonClosed(false);
     setStatus('Click map to draw farm vertices. Click near start point to close.');

@@ -30,8 +30,9 @@ The causal chain the methodology leans on:
 > practices.
 
 NDVI is a **productivity proxy**, not a direct carbon measurement. The
-methodology therefore: (a) uses practice-specific factors for the SOC term
-rather than NDVI alone; (b) deducts 10–30% for uncertainty; (c) requires
+methodology therefore: (a) uses crop-calibrated SOC factors for the soil term
+rather than NDVI alone (declared-practice modulation is a roadmap refinement);
+(b) deducts 10–30% for uncertainty; (c) requires
 ground-truth calibration before any claim of measured accuracy.
 
 ## 2. Additionality (baseline vs project)
@@ -55,11 +56,14 @@ farmer created is creditable. Implemented as Step 1 in `estimate_credits`.
 
 ## 4. Soil organic carbon delta (Step 3)
 
-Declared practice → SOC accumulation factor from a Tier-1-style lookup
-(tCO₂e/ha/yr). Publication values used as reference points: IPCC 2006 GLs
-Vol. 4 Table 6.2 (SOC stock change factors for land-use/management) and
-IPCC 2019 Refinement; India-specific cropland factors from ICAR-CRIDA
-(Srinivasarao et al. 2014). Current implementation factors (per crop):
+Declared crop → SOC accumulation factor from a Tier-1-style lookup
+(tCO₂e/ha/yr). The factor currently keys off the declared **crop**;
+declared-practice modulation (e.g. zero-till vs. conventional) is a roadmap
+refinement, not a shipped factor. Publication values used as reference
+points: IPCC 2006 GLs Vol. 4 Table 6.2 (SOC stock change factors for
+land-use/management) and IPCC 2019 Refinement; India-specific cropland factors
+from ICAR-CRIDA (Srinivasarao et al. 2014). Current implementation factors
+(per crop):
 
 | Crop | Biomass base | SOC factor | Reference basis |
 |---|---|---|---|

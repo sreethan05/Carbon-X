@@ -28,7 +28,33 @@ def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
         return (match or {}).get("name") or "Linked FPO"
     if farm and farm.get("fpo"):
         return farm["fpo"]
-    return market_store.fpo_for_phone(farmer_phone)
+    # Sample-FPO fallback applies to demo listings only (farm is None).
+    return market_store.fpo_for_phone(farmer_phone) if farm is None else ""
+
+
+def _ledger_sales(farm_id: str, listing_id: str) -> dict:
+    """Aggregate SALE proceeds booked in the hash ledger for one listing.
+
+    The ledger is the money source of truth: ``current_bid`` on a listing row
+    can also hold a standing per-credit bid (place_bid), so proceeds are read
+    back from the tamper-evident SALE events instead.
+    """
+    gross = 0.0
+    credits = 0.0
+    found = False
+    buyer = None
+    for event in ledger.get_chain(farm_id or ""):
+        if event.get("type") != "SALE":
+            continue
+        payload = event.get("payload") or {}
+        if payload.get("listing_id") != listing_id:
+            continue
+        found = True
+        gross += float(payload.get("gross_inr") or 0)
+        credits += float(payload.get("credits") or 0)
+        if payload.get("buyer"):
+            buyer = payload.get("buyer")
+    return {"gross_inr": round(gross, 2), "credits": round(credits, 4), "found": found, "buyer": buyer}
 
 
 # ─── Helpers ───
@@ -59,8 +85,10 @@ class EarningsCalcModel(BaseModel):
     ndvi: Optional[float] = 0.7
     baseline_ndvi: Optional[float] = None
     badge: Optional[str] = "DOCUMENT"
-    has_photo: Optional[bool] = True
-    geotag_ok: Optional[bool] = True
+    # Evidence flags default to NOT claimed: an unproven input must not earn
+    # the user a smaller uncertainty deduction just because the caller omitted it.
+    has_photo: Optional[bool] = False
+    geotag_ok: Optional[bool] = False
     fpo_or_registry: Optional[bool] = False
 
 
@@ -82,17 +110,21 @@ def list_certificates():
     for r in rows:
         farm_id = r.get("farm_id") or ""
         chain = ledger.summary(farm_id) if farm_id else {}
+        sales = _ledger_sales(farm_id, r.get("id"))
         retired = str(r.get("status")).lower() == "retired"
+        loc = r.get("location") or "Location not recorded"
+        crop_label = f" ({r.get('crop')})" if r.get("crop") else ""
         certificates.append({
             "id": _cert_id_for_listing(r.get("id")),
             "listing_id": r.get("id"),
-            "issued_to": "Corporate Buyer",
+            "issued_to": sales.get("buyer") or None,
             "farmer_name": r.get("farmer_name"),
             "crop": r.get("crop"),
-            "volume_mt": r.get("total_credits"),
-            "value_inr": r.get("current_bid"),
-            "source_parcels": [f"{r.get('location') or 'Telangana'} ({r.get('crop') or 'Mixed Crop'})"],
+            "volume_mt": sales["credits"] if sales["found"] else r.get("total_credits"),
+            "value_inr": sales["gross_inr"] if sales["found"] else r.get("current_bid"),
+            "source_parcels": [f"{loc}{crop_label}"],
             "issued_date": (r.get("updated_at") or r.get("created_at") or "")[:10],
+            "retired_at": ((r.get("updated_at") or "")[:10] or None) if retired else None,
             "status": "RETIRED" if retired else "HELD_IN_ESCROW",
             "batch_hash": chain.get("tail_hash"),
             "ledger_verified": chain.get("verified", False),
@@ -134,13 +166,17 @@ def download_certificate_pdf(cert_id: str):
         return {"success": False, "message": "Certificate not found"}
     farm_id = row.get("farm_id") or ""
     chain = ledger.summary(farm_id) if farm_id else {}
+    sales = _ledger_sales(farm_id, row.get("id"))
+    retired = str(row.get("status")).lower() == "retired"
     cert = {
-        "id": cert_id, "buyer": "Corporate Buyer",
+        "id": cert_id, "buyer": sales.get("buyer") or "—",
         "farmer_name": row.get("farmer_name"), "crop": row.get("crop"),
-        "volume": row.get("total_credits"), "value": row.get("current_bid"),
+        "volume": sales["credits"] if sales["found"] else row.get("total_credits"),
+        "value": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
         "location": row.get("location"),
         "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-        "retired_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
+        "retired_date": ((row.get("updated_at") or "")[:10] or None) if retired else None,
+        "status": "RETIRED" if retired else "HELD_IN_ESCROW",
         "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
     }
     pdf_bytes = render_certificate_pdf(cert)
@@ -152,7 +188,21 @@ def download_certificate_pdf(cert_id: str):
 
 
 @router.post("/certificates/{cert_id}/retire")
-def retire_certificate(cert_id: str, scope: Optional[str] = "Scope 1 Neutrality"):
+def retire_certificate(
+    cert_id: str,
+    scope: Optional[str] = "Scope 1 Neutrality",
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Permanently retire a held certificate.
+
+    Retirement is buyer action in production (live DB requires a signed-in
+    account); demo mode stays open so the certificate page works offline.
+    """
+    if db.is_ready() and not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in to retire a certificate",
+        )
     rows = None
     if not db.is_ready():
         rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() == "sold"]
@@ -187,9 +237,13 @@ def retire_certificate(cert_id: str, scope: Optional[str] = "Scope 1 Neutrality"
 
 @router.get("/passport/{farm_id}")
 def get_carbon_passport(farm_id: str):
-    farm = db.get_farm(farm_id) if db.is_ready() else None
-    demo_mode = False
-    if not farm:
+    if db.is_ready():
+        farm = db.get_farm(farm_id)
+        if not farm:
+            return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
+        demo_mode = False
+    else:
+        # DB off: serve the documented demo farm for any id (clearly flagged)
         demo_mode = True
         farm = {
             "id": farm_id, "name": "Sri Venkateswara Organic Farm",
@@ -213,16 +267,24 @@ def get_carbon_passport(farm_id: str):
     income = credit_engine.income_projection(credits_total, badge)
 
     verified_status = str(farm.get("status", "")).lower() in ("verified", "ver")
+    # Only evidence the platform actually holds counts: the badge is a real
+    # verification fact and a stored NDVI is real current satellite evidence.
+    # There is no practice-photo / geotag capture pipeline, and no stored
+    # baseline NDVI series, so those components stay unclaimed rather than
+    # being assumed for a smaller deduction.
     quality = credit_engine.evidence_quality(
-        has_photo=True, geotag_ok=True,
+        has_photo=False, geotag_ok=False,
         fpo_or_registry=badge in ("REGISTRY", "REGISTRY_DOC", "FPO"),
-        ndvi_current=farm.get("ndvi") is not None, baseline_known=verified_status,
+        ndvi_current=farm.get("ndvi") is not None, baseline_known=False,
     )
-    ledger.ensure_genesis(farm_id, {
-        "farm": farm.get("name"), "crop": farm.get("crop_type"),
-        "area_hectares": farm.get("area_hectares"), "ndvi": farm.get("ndvi"),
-        "carbon_tonnes": farm.get("carbon_tonnes"), "badge": badge, "status": farm.get("status"),
-    }, ts=(farm.get("updated_at") or "") or None)
+    # Genesis only for real farm rows — never mint a hash-chain ISSUE event
+    # for a phantom id (demo farms are clearly flagged and skip anchoring).
+    if not demo_mode:
+        ledger.ensure_genesis(farm_id, {
+            "farm": farm.get("name"), "crop": farm.get("crop_type"),
+            "area_hectares": farm.get("area_hectares"), "ndvi": farm.get("ndvi"),
+            "carbon_tonnes": farm.get("carbon_tonnes"), "badge": badge, "status": farm.get("status"),
+        }, ts=(farm.get("updated_at") or "") or None)
     chain = ledger.summary(farm_id)
     farm_status = farm.get("status")
     monitoring = {
@@ -280,37 +342,67 @@ def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
     sold = [r for r in rows if str(r.get("status")).lower() in ("sold", "retired")]
     active = [r for r in rows if str(r.get("status")).lower() == "active"]
 
+    farms_cache: dict = {}
+
+    def _farm(farm_id):
+        if not farm_id or not db.is_ready():
+            return None
+        if farm_id not in farms_cache:
+            farms_cache[farm_id] = db.get_farm(farm_id)
+        return farms_cache[farm_id]
+
+    # Proceeds come from the hash ledger (the money source of truth); the
+    # listing row is only a fallback for rows predating the ledger.
+    sales_by_listing = {
+        r.get("id"): _ledger_sales(r.get("farm_id") or "", r.get("id")) for r in rows
+    }
+
+    def _settled(r):
+        return sales_by_listing.get(r.get("id")) if sales_by_listing.get(r.get("id"), {}).get("found") else None
+
     def _gross(r):
+        sales = _settled(r)
+        if sales:
+            return sales["gross_inr"]
         bid = r.get("current_bid")
         if bid:
             return round(float(bid), 2)
         return round(float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0), 2)
 
-    total_earned = round(sum(_gross(r) for r in sold), 2)
-    escrow_pending = round(sum(_gross(r) for r in active), 2)
+    # Partially-bought listings stay Active: their settled proceeds belong in
+    # earnings, while only the *remaining* credits are pending escrow.
+    settled_rows = sold + [r for r in active if _settled(r)]
+    total_earned = round(sum(_gross(r) for r in settled_rows), 2)
+    escrow_pending = round(sum(
+        float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0) for r in active
+    ), 2)
 
     farmer_total = 0.0
     fpo_total = 0.0
     platform_total = 0.0
     transactions = []
-    for r in sorted(sold, key=lambda x: x.get("updated_at") or "", reverse=True):
+    for r in sorted(settled_rows, key=lambda x: x.get("updated_at") or "", reverse=True):
         gross = _gross(r)
-        fpo_name = _resolve_fpo_link(None, r.get("farmer_phone") or phone)
+        fpo_name = _resolve_fpo_link(_farm(r.get("farm_id")), r.get("farmer_phone") or phone)
         split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
         farmer_total += split["farmer_amount_inr"]
         fpo_total += split["fpo_amount_inr"]
         platform_total += split["platform_amount_inr"]
         farm_id = r.get("farm_id") or ""
         chain = ledger.summary(farm_id) if farm_id else {}
+        rate = float(r.get("price_per_credit") or 0)
+        sales = _settled(r)
         transactions.append({
             "date": (r.get("updated_at") or r.get("created_at") or "")[:10],
             "tx_id": (r.get("tx_hash") or f"TXN-{(r.get('id') or '')[:6].upper()}"),
             "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
-            "listing_id": r.get("id"), "farm_id": farm_id, "credits_sold": r.get("total_credits"),
-            "rate": r.get("price_per_credit"), "gross": gross,
+            "listing_id": r.get("id"), "farm_id": farm_id,
+            "credits_sold": sales["credits"] if sales else r.get("total_credits"),
+            "rate": rate or None, "gross": gross,
             "farmer_share": split["farmer_amount_inr"], "fpo_share": split["fpo_amount_inr"],
             "platform_share": split["platform_amount_inr"], "split_model": split["model"],
-            "ledger_hash": chain.get("tail_hash"), "status": "SETTLED",
+            "ledger_hash": chain.get("tail_hash"),
+            "status": "SETTLED" if str(r.get("status")).lower() in ("sold", "retired") else "PARTIAL",
         })
 
     return {
@@ -342,14 +434,27 @@ def earnings_calculator(data: EarningsCalcModel):
 def get_farm_ledger(farm_id: str):
     chain = ledger.get_chain(farm_id)
     if not chain:
-        farm = db.get_farm(farm_id) if db.is_ready() else None
-        snapshot = {
-            "farm": (farm or {}).get("name") or "Sri Venkateswara Organic Farm (demo)",
-            "crop": (farm or {}).get("crop_type") or "Rice",
-            "ndvi": (farm or {}).get("ndvi") or 0.78,
-            "note": "Genesis anchored from farm evidence snapshot",
-        }
-        ledger.ensure_genesis(farm_id, snapshot)
+        # Anchor genesis only for a farm that actually exists: a real DB row,
+        # or (demo mode) a known fallback listing — never a phantom id.
+        if db.is_ready():
+            farm = db.get_farm(farm_id)
+            if not farm:
+                return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
+            snapshot = {
+                "farm": farm.get("name"), "crop": farm.get("crop_type"),
+                "ndvi": farm.get("ndvi"), "area_hectares": farm.get("area_hectares"),
+                "note": "Genesis anchored from farm evidence snapshot",
+            }
+            ledger.ensure_genesis(farm_id, snapshot, ts=(farm.get("updated_at") or "") or None)
+        else:
+            row = next((r for r in market_store.all_rows() if r.get("farm_id") == farm_id), None)
+            if row:
+                snapshot = {
+                    "farm": f"Fallback listing {row.get('id')}", "crop": row.get("crop"),
+                    "ndvi": None,
+                    "note": "Demo genesis (in-memory fallback listing, DB offline)",
+                }
+                ledger.ensure_genesis(farm_id, snapshot)
         chain = ledger.get_chain(farm_id)
     verification = ledger.verify_chain(farm_id)
     public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain]

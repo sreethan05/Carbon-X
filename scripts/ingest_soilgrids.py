@@ -56,7 +56,7 @@ def init_ee():
     """Initialize Earth Engine with project from env."""
     try:
         import ee
-        ee.Initialize(project=os.getenv("GEE_PROJECT", "carbonsetu-496709"))
+        ee.Initialize(project=os.getenv("GEE_PROJECT", "carbonx-507617"))
         print("Earth Engine initialized")
         return ee
     except Exception as e:

@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 from datetime import datetime, timezone
 
-from app.security import get_current_user, get_current_user_optional
+from app.security import get_current_user, get_current_user_optional, require_role
 from app import supabase_db as db
 from app import config as app_config
 from app.services import credit_engine, ledger
@@ -39,8 +39,13 @@ def ops_summary():
             if query:
                 q = q.eq(*query)
             return q.execute().count or 0
-        farms_flagged = count("farms", ("status", "Flagged"))
-        farms_pending = count("farms", ("status", "Pending"))
+        def icount(table, status: str):
+            # Farm statuses are stored with mixed casing (PENDING/Flagged);
+            # match case-insensitively so ops never shows a false zero.
+            return (sb.table(table).select("*", count="exact")
+                    .ilike("status", status).execute().count or 0)
+        farms_flagged = icount("farms", "flagged")
+        farms_pending = icount("farms", "pending")
         summary = {
             "success": True,
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -60,7 +65,8 @@ def ops_summary():
 
 
 @router.post("/ground-truth")
-def add_ground_truth(data: GroundTruthModel):
+def add_ground_truth(data: GroundTruthModel,
+                     current_user: dict = Depends(require_role("admin", "verifier", "fpo"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database not configured"}
@@ -131,7 +137,7 @@ def evaluate_ground_truth():
             summary["stock_plausibility"] = {
                 "n": len(soilgrids),
                 "note": ("Bound check, not rate validation: claimed 20-yr cumulative "
-                         "soil sequestration (mean soil factor 4.0 tCO2e/ha/yr x 20) vs "
+                         f"soil sequestration (mean soil factor {soil_factor_mean:.2f} tCO2e/ha/yr x 20) vs "
                          "SoilGrids SOC stock. Rates need field samples."),
                 "median_claim_over_stock": round(ratios[len(ratios) // 2], 3),
                 "share_exceeding_0p5_bound": round(exceed / len(soilgrids), 3),
@@ -147,7 +153,7 @@ def evaluate_ground_truth():
 
 
 @router.post("/ground-truth/calibrate")
-def calibrate_crop_factors():
+def calibrate_crop_factors(current_user: dict = Depends(require_role("admin", "verifier"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database not configured"}

@@ -8,7 +8,7 @@ export default function FarmerLogin() {
   const navigate = useNavigate();
   const { login } = useAuth();
 
-  const [phone, setPhone] = useState('9876543210');
+  const [phone, setPhone] = useState('');
   const [showOtp, setShowOtp] = useState(false);
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const [countdown, setCountdown] = useState(60);
@@ -54,14 +54,7 @@ export default function FarmerLogin() {
         if (/database is not configured/i.test(msg)) setDbOffline(true);
       }
     } catch {
-      if (import.meta.env.DEV) {
-        // Demo mode: continue the flow when no backend is running
-        setShowOtp(true);
-        setCountdown(60);
-        setCanResend(false);
-      } else {
-        setError('Could not reach the server. Please check your connection and retry.');
-      }
+      setError('Could not reach the server. Please check your connection and retry.');
     } finally {
       setIsVerifying(false);
     }
@@ -142,29 +135,12 @@ export default function FarmerLogin() {
         return;
       }
       setError(res.message || 'Invalid OTP. Please try again.');
-      setIsVerifying(false);
-      return;
     } catch (err) {
       console.warn('Backend login unavailable', err);
-    }
-
-    if (!import.meta.env.DEV) {
       setError('Could not reach the server. Please check your connection and retry.');
+    } finally {
       setIsVerifying(false);
-      return;
     }
-
-    // Demo mode fallback (dev builds only): backend unreachable
-    const userData = {
-      name: 'K. Ramesh',
-      phone: cleanPhone,
-      district: 'Yadadri Bhuvanagiri',
-      village: 'Pochampally',
-      role: 'farmer',
-    };
-
-    await login('cx_token_' + Date.now(), userData);
-    navigate('/farmer/dashboard');
   };
 
   return (

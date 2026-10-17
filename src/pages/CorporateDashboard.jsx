@@ -9,12 +9,25 @@ export default function CorporateDashboard() {
   const { user } = useAuth();
 
   const companyName = user?.name || 'Corporate Buyer';
-  const targetOffsets = 1000.0;
+  const targetKey = `cx_corp_target_${companyName}`;
 
   const [certs, setCerts] = useState([]);
   const [loadingCerts, setLoadingCerts] = useState(true);
   const [purchasedOffsets, setPurchasedOffsets] = useState(0.0);
   const [isExporting, setIsExporting] = useState(false);
+  // Self-declared decarbonization target — stored locally per corporate account
+  // (the platform has no per-corporate target field server-side yet).
+  const [targetOffsets, setTargetOffsets] = useState(() => {
+    const saved = parseFloat(localStorage.getItem(targetKey));
+    return Number.isFinite(saved) && saved > 0 ? saved : 1000.0;
+  });
+
+  const updateTarget = (value) => {
+    const num = parseFloat(value);
+    if (!Number.isFinite(num) || num <= 0) return;
+    setTargetOffsets(num);
+    localStorage.setItem(targetKey, String(num));
+  };
 
   useEffect(() => {
     (async () => {
@@ -92,14 +105,26 @@ export default function CorporateDashboard() {
 
         {/* Net-Zero Progress Bar */}
         <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-6 space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center flex-wrap gap-3">
             <div>
               <p className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Corporate Decarbonization Progress</p>
               <h2 className="text-3xl font-extrabold font-manrope text-white mt-1">
                 {purchasedOffsets.toFixed(2)} / {targetOffsets} MT CO2e
               </h2>
             </div>
-            <span className="text-xl font-extrabold font-mono text-[#D1FAE5]">{progressPercent}% Achieved</span>
+            <div className="flex items-center gap-3">
+              <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                Your target (MT)
+                <input
+                  type="number"
+                  min="1"
+                  value={targetOffsets}
+                  onChange={(e) => updateTarget(e.target.value)}
+                  className="w-24 px-2 py-1 bg-emerald-950 border border-emerald-800 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
+                />
+              </label>
+              <span className="text-xl font-extrabold font-mono text-[#D1FAE5]">{progressPercent}% Achieved</span>
+            </div>
           </div>
 
           <div className="w-full bg-emerald-950 border border-emerald-800 h-3.5 rounded-full overflow-hidden">

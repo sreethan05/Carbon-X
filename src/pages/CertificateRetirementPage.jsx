@@ -25,7 +25,9 @@ export default function CertificateRetirementPage() {
         const found = list.find((c) => c.id === certId);
         if (found) {
           setCert(found);
-          if (found.status === 'RETIRED') setRetireTimestamp(found.issued_date);
+          // Note: do NOT reuse issued_date as the retirement date — the
+          // backend only supplies a retire timestamp when it really retired.
+          if (found.status === 'RETIRED') setRetireTimestamp(found.retired_at || found.retired_timestamp || null);
         } else {
           setLoadError(`Certificate ${certId} was not found in the escrow ledger.`);
         }
@@ -64,7 +66,7 @@ export default function CertificateRetirementPage() {
       '  CarbonX — Enterprise AgTech Registry Standard',
       '==========================================',
       `Certificate ID: ${certId}`,
-      `Issued to: ${user?.name || cert?.issued_to || 'Corporate Buyer'}`,
+      `Issued to: ${cert?.issued_to || user?.name || '—'}`,
       `Volume: ${cert?.volume_mt ?? '—'} Metric Tonnes CO2e`,
       `Source parcels: ${(cert?.source_parcels || []).join(', ') || '—'}`,
       `Issued date: ${cert?.issued_date || '—'}`,
@@ -141,11 +143,11 @@ export default function CertificateRetirementPage() {
 
               <div className="max-w-xl mx-auto space-y-3 text-xs text-slate-700 bg-white border border-slate-200 p-6 rounded-xl shadow-inner">
                 <p>This certifies that</p>
-                <p className="text-base font-extrabold text-slate-900 font-manrope">{user?.name || cert.issued_to || 'Corporate Buyer'}</p>
+                <p className="text-base font-extrabold text-slate-900 font-manrope">{cert.issued_to || user?.name || '—'}</p>
                 <p>has acquired and holds</p>
                 <p className="text-2xl font-black text-emerald-800 font-manrope">{Number(cert.volume_mt || 0).toFixed(2)} Metric Tonnes CO2e</p>
                 <p className="text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                  Sourced from verified Telangana farmland parcel{cert.crop ? '' : 's'}: <strong className="text-slate-800">{(cert.source_parcels || []).join(', ') || 'Telangana'}{cert.crop ? ` · ${cert.crop}` : ''}</strong>.
+                  Sourced from verified Telangana farmland parcel{cert.crop ? '' : 's'}: <strong className="text-slate-800">{(cert.source_parcels || []).join(', ') || 'source record unavailable'}{cert.crop ? ` · ${cert.crop}` : ''}</strong>.
                 </p>
               </div>
 
@@ -235,7 +237,7 @@ export default function CertificateRetirementPage() {
                   className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4 text-emerald-700" />
-                  <span>Export Compliance Record (JSON)</span>
+                  <span>Export Compliance Record (TXT)</span>
                 </button>
               </div>
             </div>
