@@ -35,8 +35,9 @@ def _env_str(name: str, default: str) -> str:
 
 
 # ─── Core config ───
-# Formula version for auditability — bump when crop factors or methodology change
-FORMULA_VERSION = _env_str("CARBONX_FORMULA_VERSION", "vm0042-soilgrids-v1-2026-10-04")
+# Formula version for auditability — bump when crop factors or methodology change.
+# Single source of truth: credit_engine imports this value.
+FORMULA_VERSION = _env_str("CARBONX_FORMULA_VERSION", "vm0042-soilgrids-v1-r2-2026-10-04")
 
 # NDVI drop threshold for 5-day monitoring (Sentinel-2 revisit)
 NDVI_DROP_ALERT = _env_float("CARBONX_NDVI_DROP_ALERT", 0.15)
@@ -75,7 +76,7 @@ JSON_LOGS = _env_bool("CARBONX_JSON_LOGS", True)
 CORS_ORIGINS = _env_str("CORS_ORIGINS", "http://localhost:5000,http://localhost:5173,http://localhost:3000")  # port 5000 is the frontend origin
 
 # ─── GEE Project ───
-GEE_PROJECT = _env_str("GEE_PROJECT", "carbonsetu-496709")
+GEE_PROJECT = _env_str("GEE_PROJECT", "carbonx-507617")
 
 # ─── Monitoring scheduler interval ───
 MONITOR_INTERVAL_SECONDS = 5 * 24 * 60 * 60  # 5 days (Sentinel-2 revisit)

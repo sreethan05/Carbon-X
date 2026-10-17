@@ -12,11 +12,11 @@ a vague promise.
 | Avg verified credits/farm/yr | 40 tCO₂e | platform demo farms: 33–138 |
 | Price | ₹450/credit | docs/ECONOMICS.md pricing logic |
 | Farmer share | 70% floor | `split_engine` (code-enforced) |
-| Soil carbon co-benefit | ~2–4 tCO₂e/ha/yr in SOC factors | docs/MRV_METHODOLOGY.md §4 |
+| Soil carbon co-benefit | 0.25–0.60 tCO₂e/ha/yr in crop SOC factors (r2) | docs/MRV_METHODOLOGY.md §4 |
 
 **1,000 farmers → ~40,000 tCO₂e/yr → ₹1.8 Cr gross → ₹1.26 Cr to farmers**
-→ at ~1 ha average holding, roughly 1,000–4,000 tCO₂e/yr of new soil
-carbon, monitored every 5 days.
+→ at ~1 ha average holding, roughly 250–600 tCO₂e/yr of new soil carbon
+(crop-calibrated IPCC-style factors), monitored every 5 days.
 
 ## Who this includes that incumbents exclude
 
@@ -40,10 +40,12 @@ onboarded farmers** explicitly (see below).
 
 ## Beyond carbon: climate-resilience co-benefits
 
-The practices being credited (zero-till, direct-seeded rice, cover crops,
-agroforestry) simultaneously: reduce irrigation demand (AWD rice cuts
-methane up to 48% and water use substantially), stabilise yields against
-dry spells (SOC water-holding), and reduce input costs. The platform tracks
+The practice set CarbonX is built to credit (zero-till, direct-seeded rice,
+cover crops, agroforestry) simultaneously: reduce irrigation demand (AWD rice
+cuts methane up to 48% and water use substantially), stabilise yields against
+dry spells (SOC water-holding), and reduce input costs. Today's engine credits
+the plot-level NDVI improvement plus a crop-calibrated IPCC-style SOC factor;
+practice-level factor tables are on the MRV roadmap. The platform tracks
 biodiversity as a co-benefit score today; water savings are the adjacent
 credit instrument on the same rails (Phase 3).
 

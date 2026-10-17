@@ -8,6 +8,7 @@ from app.security import get_current_user, get_current_user_optional, require_ro
 from app import supabase_db as db
 from app import config as app_config
 from app.services import credit_engine, ledger, split_engine
+from app.services.polygon_service import polygon_area_hectares as _polygon_area_hectares
 
 router = APIRouter(prefix="/fpo", tags=["fpo"])
 
@@ -70,6 +71,20 @@ def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
     return ""
 
 
+def _fpo_scope_ok(role: str, reviewer: dict, farm: dict) -> bool:
+    """May this officer act on the farm? Platform verifiers/admins: yes.
+    FPO officers: only farms whose owner (or farm row) is in their FPO."""
+    if role in ("verifier", "admin"):
+        return True
+    fpo_id = str((reviewer or {}).get("fpo_id") or "")
+    if not fpo_id:
+        return False
+    if str(farm.get("fpo_id") or "") == fpo_id:
+        return True
+    owner = db.get_profile(farm.get("owner_phone") or "") or {}
+    return str(owner.get("fpo_id") or "") == fpo_id
+
+
 # ─── Endpoints ───
 
 @router.get("/farms")
@@ -79,10 +94,14 @@ def fpo_farms(
 ):
     _require_database()
     reviewer = _get_user(current_user.get("phone")) or {}
+    role = current_user.get("role", "fpo")
     fpo_id = reviewer.get("fpo_id")
     phones = None
     if fpo_id:
         phones = [p.get("phone") for p in db.list_profiles_by_fpo(fpo_id) if p.get("phone")]
+    elif role not in ("verifier", "admin"):
+        # Officer not linked to an FPO yet — show nothing rather than all farms.
+        return {"success": True, "status": status, "farms": [], "message": "Your account is not linked to an FPO yet"}
     farms = db.list_farms_by_status(status, owner_phones=phones)
     return {"success": True, "status": status, "farms": farms}
 
@@ -95,6 +114,9 @@ def fpo_confirm_farm(farm_id: str, current_user: dict = Depends(require_role("fp
     farm = db.get_farm(farm_id)
     if not farm:
         raise HTTPException(status_code=404, detail="Farm not found")
+    reviewer = _get_user(current_user.get("phone")) or {}
+    if not _fpo_scope_ok(current_user.get("role", "fpo"), reviewer, farm):
+        raise HTTPException(status_code=403, detail="Farm is outside your FPO's jurisdiction")
     trust = fpo_confirmed_result()
     updated = _patch_farm(farm_id, {"status": trust["status"], "badge": trust["badge"]})
     db.insert_kyc_verification({
@@ -120,6 +142,9 @@ def fpo_review_farm(
     farm = db.get_farm(farm_id)
     if not farm:
         raise HTTPException(status_code=404, detail="Farm not found")
+    reviewer = _get_user(current_user.get("phone")) or {}
+    if not _fpo_scope_ok(current_user.get("role", "fpo"), reviewer, farm):
+        raise HTTPException(status_code=403, detail="Farm is outside your FPO's jurisdiction")
     action = (data.action or "").strip().lower()
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be approve or reject")
@@ -149,12 +174,21 @@ def fpo_review_farm(
 
 
 @router.get("/farmers")
-def get_fpo_farmers(current_user: Optional[dict] = Depends(get_current_user_optional)):
+def get_fpo_farmers(current_user: dict = Depends(require_role("fpo", "verifier", "admin"))):
+    _require_database()
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database unavailable", "farmers": []}
     try:
-        fpo_id = (current_user or {}).get("fpo_id")
+        reviewer = _get_user(current_user.get("phone")) or {}
+        role = current_user.get("role", "fpo")
+        fpo_id = reviewer.get("fpo_id")
+        if not fpo_id and role not in ("verifier", "admin"):
+            return {
+                "success": True, "fpo_id": None, "total_farmers": 0,
+                "total_acreage": 0, "pooled_credits": 0, "farmers": [],
+                "message": "Your account is not linked to an FPO yet",
+            }
         query = sb.table("profiles").select("*")
         if fpo_id:
             query = query.eq("fpo_id", fpo_id)
@@ -173,7 +207,7 @@ def get_fpo_farmers(current_user: Optional[dict] = Depends(get_current_user_opti
                 "phone": p.get("phone"), "village": p.get("village"),
                 "district": p.get("district"), "fpo_id": p.get("fpo_id"),
                 "farm_count": len(pfarms),
-                "acres": round(sum(float(f.get("area_hectares") or 0) for f in active), 2),
+                "area_hectares": round(sum(float(f.get("area_hectares") or 0) for f in active), 2),
                 "credits": round(sum(float(f.get("total_credits") or 0) for f in active), 2),
                 "badge": next((f.get("badge") for f in pfarms if f.get("badge")), None) or ("REGISTRY" if pfarms else "NONE"),
                 "status": "FLAGGED" if any(str(f.get("status", "")).lower() == "flagged" for f in pfarms) else ("VERIFIED" if pfarms else "PENDING"),
@@ -181,7 +215,7 @@ def get_fpo_farmers(current_user: Optional[dict] = Depends(get_current_user_opti
         return {
             "success": True, "fpo_id": fpo_id,
             "total_farmers": len(farmers),
-            "total_acreage": round(sum(f["acres"] for f in farmers), 2),
+            "total_hectares": round(sum(f["area_hectares"] for f in farmers), 2),
             "pooled_credits": round(sum(f["credits"] for f in farmers), 2),
             "farmers": farmers,
         }
@@ -190,7 +224,7 @@ def get_fpo_farmers(current_user: Optional[dict] = Depends(get_current_user_opti
 
 
 @router.post("/onboard")
-def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
+def fpo_onboard_farmer(data: FpoOnboardModel, current_user: dict = Depends(require_role("fpo", "verifier", "admin"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database unavailable"}
@@ -203,10 +237,11 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Dep
         if data.acreage is None or data.acreage <= 0:
             return {"success": False, "message": "Acreage must be greater than zero"}
 
-        fpo_id = (current_user or {}).get("fpo_id")
-        if not fpo_id:
-            fpos = (sb.table("fpos").select("id").limit(1).execute().data) or []
-            fpo_id = fpos[0].get("id") if fpos else None
+        reviewer = _get_user(current_user.get("phone")) or {}
+        role = current_user.get("role", "fpo")
+        fpo_id = reviewer.get("fpo_id")
+        if not fpo_id and role not in ("verifier", "admin"):
+            return {"success": False, "message": "Your account is not linked to an FPO yet — ask the platform admin to link it."}
 
         existing = db.get_profile(phone)
         profile_fields = {
@@ -228,7 +263,8 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Dep
         }
         if data.geojson and data.geojson.get("geometry"):
             farm_record["geojson"] = data.geojson
-            farm_record["area_hectares"] = data.acreage or _polygon_area_hectares(data.geojson)
+            measured = _polygon_area_hectares(data.geojson)
+            farm_record["area_hectares"] = measured if measured > 0 else data.acreage
         saved_farm = db.insert_farm_safe(farm_record)
 
         return {
@@ -236,7 +272,7 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Dep
             "badge": "FPO",
             "farmer": {
                 "id": (profile or {}).get("id"), "name": data.name, "phone": phone,
-                "survey": data.survey_number, "acres": data.acreage, "badge": "FPO", "status": "VERIFIED",
+                "survey": data.survey_number, "area_hectares": data.acreage, "badge": "FPO", "status": "VERIFIED",
             },
             "farm_id": (saved_farm or {}).get("id"),
         }
@@ -245,12 +281,26 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: Optional[dict] = Dep
 
 
 @router.get("/pending")
-def get_fpo_pending():
+def get_fpo_pending(current_user: dict = Depends(require_role("fpo", "verifier", "admin"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database unavailable", "pending": []}
     try:
-        farms = (sb.table("farms").select("*").ilike("status", "pending").execute().data) or []
+        reviewer = _get_user(current_user.get("phone")) or {}
+        role = current_user.get("role", "fpo")
+        fpo_id = reviewer.get("fpo_id")
+        member_phones = None
+        if fpo_id:
+            member_phones = [p.get("phone") for p in db.list_profiles_by_fpo(fpo_id) if p.get("phone")]
+        elif role not in ("verifier", "admin"):
+            return {"success": True, "pending": [], "message": "Your account is not linked to an FPO yet"}
+
+        farms_q = sb.table("farms").select("*").ilike("status", "pending")
+        if member_phones is not None:
+            if not member_phones:
+                return {"success": True, "pending": []}
+            farms_q = farms_q.in_("owner_phone", member_phones)
+        farms = (farms_q.execute().data) or []
         phones = list({f.get("owner_phone") for f in farms if f.get("owner_phone")})
         owners = {}
         if phones:
@@ -260,7 +310,7 @@ def get_fpo_pending():
             "phone": f.get("owner_phone"),
             "village": f.get("geojson", {}).get("properties", {}).get("village") or (owners.get(f.get("owner_phone")) or {}).get("village"),
             "farm_name": f.get("name"), "crop": f.get("crop_type"),
-            "acres": f.get("area_hectares"), "date": (f.get("created_at") or "")[:10],
+            "area_hectares": f.get("area_hectares"), "date": (f.get("created_at") or "")[:10],
         } for f in farms]
         return {"success": True, "pending": pending}
     except Exception as e:
@@ -268,12 +318,26 @@ def get_fpo_pending():
 
 
 @router.get("/flagged")
-def get_fpo_flagged():
+def get_fpo_flagged(current_user: dict = Depends(require_role("fpo", "verifier", "admin"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database unavailable", "flagged": []}
     try:
-        farms = (sb.table("farms").select("*").ilike("status", "flagged").execute().data) or []
+        reviewer = _get_user(current_user.get("phone")) or {}
+        role = current_user.get("role", "fpo")
+        fpo_id = reviewer.get("fpo_id")
+        member_phones = None
+        if fpo_id:
+            member_phones = [p.get("phone") for p in db.list_profiles_by_fpo(fpo_id) if p.get("phone")]
+        elif role not in ("verifier", "admin"):
+            return {"success": True, "flagged": [], "message": "Your account is not linked to an FPO yet"}
+
+        farms_q = sb.table("farms").select("*").ilike("status", "flagged")
+        if member_phones is not None:
+            if not member_phones:
+                return {"success": True, "flagged": []}
+            farms_q = farms_q.in_("owner_phone", member_phones)
+        farms = (farms_q.execute().data) or []
         phones = list({f.get("owner_phone") for f in farms if f.get("owner_phone")})
         owners = {}
         if phones:
@@ -281,8 +345,8 @@ def get_fpo_flagged():
         flagged = [{
             "id": f.get("id"), "farmer_name": (owners.get(f.get("owner_phone")) or {}).get("name") or "Unknown Farmer",
             "farm_name": f.get("name"), "village": (owners.get(f.get("owner_phone")) or {}).get("village"),
-            "claimed_acres": f.get("area_hectares"),
-            "issue": "Flagged by fraud engine — ownership/geometry discrepancy",
+            "area_hectares": f.get("area_hectares"),
+            "issue": "Flagged for review — check the farm's monitoring history and KYC records",
             "status": "FLAGGED", "date": (f.get("updated_at") or f.get("created_at") or "")[:10],
         } for f in farms]
         return {"success": True, "flagged": flagged}

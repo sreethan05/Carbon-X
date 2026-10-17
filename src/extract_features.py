@@ -21,7 +21,11 @@ import json
 from pathlib import Path
 
 # ─── Config ───
-GEE_PROJECT = os.getenv("GEE_PROJECT", "carbonsetu-496709")
+try:  # single source of truth with the serving config
+    from config import GEE_PROJECT as _DEFAULT_GEE_PROJECT
+except ImportError:  # pragma: no cover - fallback when imported as a module
+    _DEFAULT_GEE_PROJECT = "carbonx-507617"
+GEE_PROJECT = os.getenv("GEE_PROJECT", _DEFAULT_GEE_PROJECT)
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
@@ -177,11 +181,10 @@ def get_features(lat, lon, buffer=1500):
     ndvi_range = ndvi_col.max().subtract(ndvi_col.min()).rename("NDVI_RANGE")
     
     # ─── Phenology Metrics ───
-    try:
-        phenology = compute_phenology_metrics(ndvi_col, pt)
-    except Exception as e:
-        print(f"  Phenology computation failed: {e}")
-        phenology = ee.Image.constant([0, 0, 0, 0]).rename(['NDVI_AMPLITUDE', 'NDVI_INTEGRAL', 'SOS_DOY', 'EOS_DOY'])
+    # On failure the whole cell fails (caller counts it as failed) — never
+    # substitute constant zeros, which are plausible real values and would
+    # silently poison training with fabricated data.
+    phenology = compute_phenology_metrics(ndvi_col, pt)
     
     # ─── Terrain ───
     dem = ee.Image("USGS/SRTMGL1_003")
@@ -190,39 +193,33 @@ def get_features(lat, lon, buffer=1500):
     aspect = ee.Terrain.aspect(dem).rename("ASPECT")
     
     # ─── Sentinel-1 SAR ───
-    try:
-        s1_col = (ee.ImageCollection("COPERNICUS/S1_GRD")
-                  .filterBounds(pt)
-                  .filterDate("2023-01-01", "2023-12-31")
-                  .filter(ee.Filter.eq("instrumentMode", "IW"))
-                  .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
-                  .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH")))
-        
-        s1_median = s1_col.median()
-        vv = s1_median.select("VV").rename("S1_VV")
-        vh = s1_median.select("VH").rename("S1_VH")
-        vv_vh_ratio = vv.divide(vh).rename("S1_VV_VH_RATIO")
-        
-        # Temporal coherence (pairwise coherence across 12-day intervals)
-        # Simplified: stdDev of VV as texture proxy
-        s1_std = s1_col.select("VV").reduce(ee.Reducer.stdDev()).rename("S1_VV_STD")
-        
-        sar_bands = ee.Image.cat([vv, vh, vv_vh_ratio, s1_std])
-    except Exception as e:
-        print(f"  SAR extraction failed: {e}")
-        sar_bands = ee.Image.constant([0, 0, 0, 0]).rename(['S1_VV', 'S1_VH', 'S1_VV_VH_RATIO', 'S1_VV_STD'])
+    # A failed/missing collection must fail the cell, not inject 0 dB
+    # constants that look like real measurements.
+    s1_col = (ee.ImageCollection("COPERNICUS/S1_GRD")
+              .filterBounds(pt)
+              .filterDate("2023-01-01", "2023-12-31")
+              .filter(ee.Filter.eq("instrumentMode", "IW"))
+              .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+              .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH")))
+    
+    s1_median = s1_col.median()
+    vv = s1_median.select("VV").rename("S1_VV")
+    vh = s1_median.select("VH").rename("S1_VH")
+    vv_vh_ratio = vv.divide(vh).rename("S1_VV_VH_RATIO")
+    
+    # Temporal coherence (pairwise coherence across 12-day intervals)
+    # Simplified: stdDev of VV as texture proxy
+    s1_std = s1_col.select("VV").reduce(ee.Reducer.stdDev()).rename("S1_VV_STD")
+    
+    sar_bands = ee.Image.cat([vv, vh, vv_vh_ratio, s1_std])
     
     # ─── GEDI Lidar ───
-    try:
-        gedi = ee.ImageCollection("LARSE/GEDI/GEDI02_A_002_MONTHLY")\
-                .filterBounds(pt).filterDate("2023-01-01", "2023-12-31").median()
-        
-        rh98 = gedi.select("rh98").rename("GEDI_RH98")  # Canopy height (98th percentile)
-        agbd = gedi.select("agbd").rename("GEDI_AGBD")  # Above-ground biomass density
-        gedi_bands = ee.Image.cat([rh98, agbd])
-    except Exception as e:
-        print(f"  GEDI extraction failed: {e}")
-        gedi_bands = ee.Image.constant([0, 0]).rename(['GEDI_RH98', 'GEDI_AGBD'])
+    gedi = ee.ImageCollection("LARSE/GEDI/GEDI02_A_002_MONTHLY")\
+            .filterBounds(pt).filterDate("2023-01-01", "2023-12-31").median()
+    
+    rh98 = gedi.select("rh98").rename("GEDI_RH98")  # Canopy height (98th percentile)
+    agbd = gedi.select("agbd").rename("GEDI_AGBD")  # Above-ground biomass density
+    gedi_bands = ee.Image.cat([rh98, agbd])
     
     # ─── SoilGrids SOC Prior ───
     soilgrids = get_soilgrids_image()

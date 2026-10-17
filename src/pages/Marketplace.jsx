@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, MapPin, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X } from 'lucide-react';
+import { Search, MapPin, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getMarketplaceListings, buyCredits } from '../services/api';
 
@@ -15,102 +15,40 @@ export default function Marketplace() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
 
-  const defaultListings = [
-    {
-      id: 'LST-001',
-      crop: 'Paddy',
-      farmer: 'Marketplace Farmer',
-      location: 'Chevella, Rangareddy',
-      available: '1.14',
-      carbonScore: '0.47',
-      bioScore: '0.67',
-      price: '550',
-      status: 'Active',
-      badge: 'REGISTRY'
-    },
-    {
-      id: 'LST-002',
-      crop: 'Rice',
-      farmer: 'Test Farmer',
-      location: 'Moinabad, Rangareddy',
-      available: '96',
-      carbonScore: '0.82',
-      bioScore: '0.75',
-      price: '550',
-      status: 'Active',
-      badge: 'REGISTRY_DOC'
-    },
-    {
-      id: 'LST-003',
-      crop: 'Cotton',
-      farmer: 'Venkat Rao',
-      location: 'Pochampally, Yadadri Bhuvanagiri',
-      available: '12.5',
-      carbonScore: '0.78',
-      bioScore: '0.84',
-      price: '340',
-      status: 'Active',
-      badge: 'REGISTRY'
-    },
-    {
-      id: 'LST-004',
-      crop: 'Maize',
-      farmer: 'B. Lakshmi',
-      location: 'Mothkur, Yadadri Bhuvanagiri',
-      available: '58.0',
-      carbonScore: '0.71',
-      bioScore: '0.72',
-      price: '320',
-      status: 'Active',
-      badge: 'REGISTRY_DOC'
-    },
-    {
-      id: 'LST-005',
-      crop: 'Paddy',
-      farmer: 'M. Narsimha',
-      location: 'Bonakal, Khammam, Telangana',
-      available: '38.0',
-      carbonScore: '0.65',
-      bioScore: '0.68',
-      price: '310',
-      status: 'Active',
-      badge: 'DOCUMENT'
-    }
-  ];
+  const [listings, setListings] = useState([]);
+  const [dataSource, setDataSource] = useState('loading');
+  const [loadError, setLoadError] = useState('');
 
-  const [listings, setListings] = useState(defaultListings);
-  const [dataSource, setDataSource] = useState('fallback');
-
-  useEffect(() => {
-    async function loadListings() {
-      try {
-        const data = await getMarketplaceListings({ limit: 50 });
-        if (data && data.success && Array.isArray(data.listings) && data.listings.length > 0) {
-          const mapped = data.listings.map((l, idx) => ({
-            id: l.id || `LST-DB-${idx}`,
-            crop: l.crop || 'Paddy',
-            farmer: l.farmer_name || 'Marketplace Farmer',
-            location: l.location || 'Telangana',
-            available: (l.total_credits || l.carbon_credits || 1.0).toString(),
-            carbonScore: (l.carbon_credits || 0.5).toString(),
-            bioScore: (l.biodiversity_credits || 0.5).toString(),
-            price: (l.price_per_credit || 340).toString(),
-            status: l.status || 'Active',
-            badge: l.badge || (l.size_label === 'Large' ? 'REGISTRY' : l.size_label === 'Medium' ? 'REGISTRY_DOC' : 'DOCUMENT'),
-            imageUrl: l.image_url
-          }));
-          setListings(mapped);
-          setDataSource(data.source || 'live_db');
-          return;
-        }
-        setDataSource('fallback');
-      } catch (err) {
-        console.warn('Could not fetch remote listings, using defaults', err);
-        setDataSource('fallback');
-      }
+  const loadListings = async () => {
+    setDataSource('loading');
+    setLoadError('');
+    const data = await getMarketplaceListings({ limit: 50 });
+    if (!data || !data.success) {
+      setListings([]);
+      setDataSource('error');
+      setLoadError((data && data.message) || 'Marketplace service unreachable. Please retry.');
+      return;
     }
-    loadListings();
-  }, []);
+    const mapped = (data.listings || [])
+      .filter((l) => l.id)
+      .map((l) => ({
+        id: l.id,
+        crop: l.crop || '—',
+        farmer: l.farmer_name || '—',
+        location: l.location || '—',
+        available: l.total_credits ?? l.carbon_credits ?? null,
+        carbonScore: l.carbon_credits ?? null,
+        bioScore: l.biodiversity_credits ?? null,
+        price: l.price_per_credit ?? null,
+        status: l.status || '—',
+        badge: l.badge || null,
+        imageUrl: l.image_url,
+      }));
+    setListings(mapped);
+    setDataSource(data.source || 'live_db');
+  };
+
+  useEffect(() => { loadListings(); }, []);
 
   const getQuantity = (id) => quantities[id] || 1;
 
@@ -141,36 +79,30 @@ export default function Marketplace() {
     setCheckoutError('');
     try {
       const qty = getQuantity(checkoutModalItem.id);
-      const price = parseFloat(checkoutModalItem.price) || 340;
+      const price = parseFloat(checkoutModalItem.price);
       const data = await buyCredits({
         listing_id: checkoutModalItem.id,
         credits: qty,
-        unit_price: price,
-        buyer_name: user?.name || 'Corporate Buyer'
+        ...(Number.isFinite(price) ? { unit_price: price } : {}),
+        ...(user?.name ? { buyer_name: user.name } : {}),
       });
       if (data && data.certificate_id) {
         setIsProcessing(false);
         setPurchaseProof(data);
         return;
       }
-      throw new Error((data && data.message) || 'Purchase failed');
+      throw new Error((data && (data.message || data.detail)) || 'Purchase failed');
     } catch (err) {
-      console.warn('Purchase API unavailable', err);
-      if (import.meta.env.DEV) {
-        // Demo mode (dev builds only): simulated checkout
-        setIsProcessing(false);
-        setPurchaseProof({
-          demo: true,
-          certificate_id: 'CX-2026-CERT-DEMO01',
-          escrow_ref: 'ESC-DEMO',
-          message: 'Simulated checkout (dev)',
-        });
-        return;
-      }
+      // No simulated receipts: either the backend escrow really executed
+      // (demo mode included, with real ledger hashes) or the error is shown.
       setCheckoutError(err.message || 'Purchase could not be completed. Please try again.');
       setIsProcessing(false);
     }
   };
+
+  const checkoutQty = checkoutModalItem ? getQuantity(checkoutModalItem.id) : 1;
+  const checkoutPrice = checkoutModalItem ? parseFloat(checkoutModalItem.price) : NaN;
+  const checkoutTotal = Number.isFinite(checkoutPrice) ? checkoutQty * checkoutPrice : null;
 
   // Crop visual identity — gradient + emoji tiles that always render (no
   // network dependency), keyed by crop name.
@@ -240,7 +172,23 @@ export default function Marketplace() {
         </div>
 
         {/* Marketplace product grid */}
-        {filteredListings.length === 0 ? (
+        {dataSource === 'loading' ? (
+          <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
+            <p className="text-sm font-bold text-slate-700">Loading listings…</p>
+          </div>
+        ) : dataSource === 'error' ? (
+          <div className="bg-white border border-rose-200 rounded-2xl p-12 text-center space-y-3">
+            <AlertTriangle className="w-10 h-10 text-rose-400 mx-auto" />
+            <p className="text-sm font-bold text-slate-700">Marketplace could not be reached</p>
+            <p className="text-xs text-slate-500">{loadError}</p>
+            <button
+              onClick={loadListings}
+              className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold"
+            >
+              Retry
+            </button>
+          </div>
+        ) : filteredListings.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
             <Search className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-sm font-bold text-slate-700">No listings match your search</p>
@@ -257,7 +205,7 @@ export default function Marketplace() {
                   <div className={`relative h-28 bg-gradient-to-br ${art.grad} flex items-center justify-center`}>
                     <span className="text-5xl drop-shadow-sm">{art.emoji}</span>
                     <span className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/90 text-emerald-900 border border-emerald-200">
-                      {item.badge || 'DOCUMENT'}
+                      {item.badge || 'UNRATED'}
                     </span>
                     <span className="absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#0C2A18] text-emerald-100">
                       {item.status}
@@ -274,14 +222,14 @@ export default function Marketplace() {
                         </p>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className="text-lg font-extrabold text-emerald-800 font-manrope">₹{item.price}</p>
+                        <p className="text-lg font-extrabold text-emerald-800 font-manrope">₹{item.price ?? '—'}</p>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">per credit</p>
                       </div>
                     </div>
 
                     <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
                       <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center text-[9px] font-black shrink-0">
-                        {item.farmer.slice(0, 2).toUpperCase()}
+                        {(item.farmer || '—').slice(0, 2).toUpperCase()}
                       </span>
                       {item.farmer}
                     </p>
@@ -289,15 +237,15 @@ export default function Marketplace() {
                     <div className="grid grid-cols-3 gap-2 text-center">
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
                         <p className="text-[9px] font-bold text-slate-400 uppercase">Available</p>
-                        <p className="text-xs font-extrabold text-slate-900">{item.available}</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.available ?? '—'}</p>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
                         <p className="text-[9px] font-bold text-slate-400 uppercase">Carbon</p>
-                        <p className="text-xs font-extrabold text-slate-900">{item.carbonScore} t</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.carbonScore ?? '—'} t</p>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
                         <p className="text-[9px] font-bold text-slate-400 uppercase">Bio</p>
-                        <p className="text-xs font-extrabold text-slate-900">{item.bioScore} t</p>
+                        <p className="text-xs font-extrabold text-slate-900">{item.bioScore ?? '—'} t</p>
                       </div>
                     </div>
 
@@ -349,7 +297,6 @@ export default function Marketplace() {
                     <p className="font-bold text-sm">Purchase complete — credits retired</p>
                     <p className="text-[11px] text-slate-600">
                       Escrow {purchaseProof.escrow_ref} · Certificate {purchaseProof.certificate_id}
-                      {purchaseProof.demo ? ' · simulated (dev)' : ''}
                     </p>
                   </div>
 
@@ -413,12 +360,12 @@ export default function Marketplace() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500 font-semibold">Selected Volume:</span>
-                      <span className="font-mono font-bold text-emerald-800">{getQuantity(checkoutModalItem.id)} MT</span>
+                      <span className="font-mono font-bold text-emerald-800">{checkoutQty} MT</span>
                     </div>
                     <div className="flex justify-between border-t border-slate-200 pt-2">
                       <span className="text-slate-500 font-semibold">Total Escrow Value:</span>
                       <span className="font-mono font-bold text-slate-900">
-                        ₹{(getQuantity(checkoutModalItem.id) * parseFloat(checkoutModalItem.price)).toLocaleString('en-IN')}
+                        {checkoutTotal != null ? `₹${checkoutTotal.toLocaleString('en-IN')}` : '—'}
                       </span>
                     </div>
                   </div>

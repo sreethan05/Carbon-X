@@ -1,52 +1,75 @@
-import React, { useState } from 'react';
-import { ShieldCheck, Check, X } from 'lucide-react';
-import BadgePill from '../components/BadgePill';
+import React, { useEffect, useState } from 'react';
+import { ShieldCheck, RefreshCw, AlertTriangle, Check, X } from 'lucide-react';
+import { getOpsSummary, getFpoPending, getFpoFlagged, fpoConfirmFarm, fpoReviewFarm } from '../services/api';
 
 export default function AdminDashboard() {
+  const [summary, setSummary] = useState(null);
+  const [pendingQueue, setPendingQueue] = useState([]);
+  const [flaggedQueue, setFlaggedQueue] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [busyId, setBusyId] = useState(null);
 
-  const [complianceQueue, setComplianceQueue] = useState([
-    {
-      id: 'ADM-001',
-      farmer: 'Padma Bai',
-      survey: '124/B',
-      village: 'Pochampally',
-      acres: 2.20,
-      issue: 'ST_Intersects overlap collision detected with Survey 124/A',
-      riskScore: 88,
-      assignedBadge: 'PENDING',
-      status: 'FLAGGED'
-    },
-    {
-      id: 'ADM-002',
-      farmer: 'K. Ramesh',
-      survey: '124/A',
-      village: 'Pochampally',
-      acres: 2.50,
-      issue: 'Zero collision. Exact Cadastral match.',
-      riskScore: 4,
-      assignedBadge: 'REGISTRY',
-      status: 'APPROVED'
-    },
-    {
-      id: 'ADM-003',
-      farmer: 'B. Lakshmi',
-      survey: '88/B',
-      village: 'Mothkur',
-      acres: 1.80,
-      issue: 'RoR 1B document OCR verified.',
-      riskScore: 12,
-      assignedBadge: 'REGISTRY_DOC',
-      status: 'APPROVED'
+  const loadAll = async () => {
+    setIsLoading(true);
+    setLoadError('');
+    const [sumRes, pendingRes, flaggedRes] = await Promise.all([
+      getOpsSummary(), getFpoPending(), getFpoFlagged(),
+    ]);
+    if (sumRes && sumRes.success) {
+      setSummary(sumRes);
+    } else {
+      setSummary(null);
+      setLoadError((sumRes && sumRes.message) || 'Ops summary unavailable');
     }
-  ]);
-
-  const handleApprove = (id) => {
-    setComplianceQueue(complianceQueue.map(item => item.id === id ? { ...item, status: 'APPROVED', assignedBadge: 'FPO', riskScore: 15 } : item));
+    setPendingQueue((pendingRes && pendingRes.pending) || []);
+    setFlaggedQueue((flaggedRes && flaggedRes.flagged) || []);
+    setIsLoading(false);
   };
 
-  const handleReject = (id) => {
-    setComplianceQueue(complianceQueue.map(item => item.id === id ? { ...item, status: 'REJECTED', assignedBadge: 'PENDING', riskScore: 99 } : item));
+  useEffect(() => { loadAll(); }, []);
+
+  const runAction = async (farmId, action) => {
+    setBusyId(farmId);
+    setActionError('');
+    const res = action === 'approve'
+      ? await fpoConfirmFarm(farmId)
+      : await fpoReviewFarm(farmId, { action: 'reject' });
+    if (!res || !res.success) {
+      setActionError((res && res.message) || `Could not ${action} the farm.`);
+    }
+    setBusyId(null);
+    await loadAll();
   };
+
+  // Real queue rows: flagged farms first, then pending enrollments.
+  const queueRows = [
+    ...flaggedQueue.map((f) => ({
+      key: `flagged-${f.id}`,
+      id: f.id,
+      stage: 'FLAGGED',
+      farmer: f.farmer_name || 'Unknown Farmer',
+      farmName: f.farm_name,
+      village: f.village,
+      areaHa: f.area_hectares,
+      detail: f.issue || 'Flagged for review',
+      date: f.date,
+    })),
+    ...pendingQueue.map((p) => ({
+      key: `pending-${p.id}`,
+      id: p.id,
+      stage: 'PENDING',
+      farmer: p.name || 'Unknown Farmer',
+      farmName: p.farm_name,
+      village: p.village,
+      areaHa: p.area_hectares,
+      detail: `${p.crop || 'Crop not set'} — new enrollment awaiting verification`,
+      date: p.date,
+    })),
+  ];
+
+  const metric = (value) => (value === null || value === undefined ? '—' : Number(value).toLocaleString('en-IN'));
 
   return (
     <div className="min-h-screen bg-slate-50 font-inter text-slate-900 py-8 px-4 md:px-10">
@@ -59,134 +82,144 @@ export default function AdminDashboard() {
               Integrity Oversight
             </span>
             <h1 className="text-2xl font-extrabold text-slate-900 font-manrope">Platform Compliance & Audit Desk</h1>
-            <p className="text-xs text-slate-500 mt-0.5">PostGIS spatial collision auditing, hash duplicate prevention & trust badge governance.</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Live operational counts and the real verification review queue — approvals/rejections write to the farm record and the KYC audit log.
+            </p>
           </div>
-          <ShieldCheck className="w-10 h-10 text-slate-800" />
+          <div className="flex items-center gap-3">
+            <button
+              onClick={loadAll}
+              disabled={isLoading}
+              className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+            <ShieldCheck className="w-10 h-10 text-slate-800" />
+          </div>
         </div>
 
-        {/* System-wide Compliance Metrics */}
+        {loadError && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" />
+            <div className="text-xs text-amber-900">
+              <p className="font-bold">Live metrics unavailable</p>
+              <p className="mt-0.5">{loadError} — this desk reads from the live database.</p>
+            </div>
+          </div>
+        )}
+
+        {/* System-wide metrics from GET /ops/summary */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Onboarded Farmers</p>
-            <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">1,420 Farmers</p>
-            <p className="text-xs text-emerald-700 font-medium mt-1">Across 10 Telangana Mandals</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Registered Profiles</p>
+            <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">{metric(summary && summary.profiles)}</p>
+            <p className="text-xs text-slate-500 mt-1">KYC records: {metric(summary && summary.kyc_verifications)}</p>
           </div>
 
           <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5">
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Active Credit Listings</p>
-            <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">85 Listings</p>
-            <p className="text-xs text-emerald-700 font-medium mt-1">Volume: 14,200 MT CO2e</p>
+            <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">{metric(summary && summary.listings_active)}</p>
+            <p className="text-xs text-slate-500 mt-1">Retired: {metric(summary && summary.listings_retired)}</p>
           </div>
 
           <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Fraud Flags Raised</p>
-            <p className="text-2xl font-extrabold text-rose-800 font-manrope mt-1">3 Overlaps</p>
-            <p className="text-xs text-rose-700 font-medium mt-1">ST_Intersects spatial collision</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farms Flagged (at risk)</p>
+            <p className="text-2xl font-extrabold text-rose-800 font-manrope mt-1">{metric(summary && summary.farms_flagged_at_risk)}</p>
+            <p className="text-xs text-rose-700 font-medium mt-1">Routed to FPO review</p>
           </div>
 
           <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Aggregate Carbon Offsets</p>
-            <p className="text-2xl font-extrabold text-emerald-800 font-manrope mt-1">285.4K Tonnes</p>
-            <p className="text-xs text-emerald-700 font-medium mt-1">Verified via Sentinel-2 MRV</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Pending Review</p>
+            <p className="text-2xl font-extrabold text-amber-800 font-manrope mt-1">{metric(summary && summary.farms_pending_review)}</p>
+            <p className="text-xs text-amber-700 font-medium mt-1">Credits blocked until verified</p>
           </div>
         </div>
 
-        {/* Trust Engine Badge Breakdown */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
-          <h2 className="text-base font-bold text-slate-900">Verification Badge Governance Breakdown</h2>
-
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center">
-              <BadgePill badge="REGISTRY" size="sm" />
-              <p className="text-xl font-bold text-slate-900 mt-2">420 Farms</p>
-              <p className="text-[10px] text-emerald-800">INR 340 / Credit</p>
-            </div>
-
-            <div className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-3 text-center">
-              <BadgePill badge="REGISTRY_DOC" size="sm" />
-              <p className="text-xl font-bold text-slate-900 mt-2">310 Farms</p>
-              <p className="text-[10px] text-emerald-800">INR 320 / Credit</p>
-            </div>
-
-            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-center">
-              <BadgePill badge="DOCUMENT" size="sm" />
-              <p className="text-xl font-bold text-slate-900 mt-2">280 Farms</p>
-              <p className="text-[10px] text-sky-800">INR 310 / Credit</p>
-            </div>
-
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
-              <BadgePill badge="FPO" size="sm" />
-              <p className="text-xl font-bold text-slate-900 mt-2">390 Farms</p>
-              <p className="text-[10px] text-amber-800">INR 300 / Credit</p>
-            </div>
-
-            <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-center">
-              <BadgePill badge="PENDING" size="sm" />
-              <p className="text-xl font-bold text-rose-900 mt-2">20 Blocked</p>
-              <p className="text-[10px] text-rose-800">Trading Blocked</p>
-            </div>
-          </div>
+        {/* Ledger & calibration strip */}
+        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-5 flex flex-wrap gap-x-8 gap-y-2">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Ledger events: <span className="text-slate-900 font-mono">{metric(summary && summary.ledger_events)}</span></span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Ground-truth samples: <span className="text-slate-900 font-mono">{metric(summary && summary.ground_truth_samples)}</span></span>
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farms total: <span className="text-slate-900 font-mono">{metric(summary && summary.farms_total)}</span></span>
         </div>
 
-        {/* Fraud Risk Inspector Table */}
+        {/* Verification review queue */}
         <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
-          <h2 className="text-base font-bold text-slate-900">Fraud Risk Inspector Queue</h2>
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Verification Review Queue</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Real pending and flagged farm records. Approve certifies the farm (FPO-attested badge); reject keeps it flagged with credits blocked.</p>
+          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider">
-                  <th className="py-3 px-4">Audit ID</th>
-                  <th className="py-3 px-4">Farmer & Survey</th>
-                  <th className="py-3 px-4">Village</th>
-                  <th className="py-3 px-4">Acreage</th>
-                  <th className="py-3 px-4">Audit Finding / Issue</th>
-                  <th className="py-3 px-4">Risk Score</th>
-                  <th className="py-3 px-4">Badge</th>
-                  <th className="py-3 px-4">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-medium">
-                {complianceQueue.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="py-3 px-4 font-mono text-slate-600">{item.id}</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">{item.farmer} ({item.survey})</td>
-                    <td className="py-3 px-4 text-slate-700">{item.village}</td>
-                    <td className="py-3 px-4 text-slate-900">{item.acres} Acres</td>
-                    <td className="py-3 px-4 text-slate-700">{item.issue}</td>
-                    <td className="py-3 px-4">
-                      <span className={`font-mono font-bold px-2 py-0.5 rounded text-[10px] ${
-                        item.riskScore > 50 ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-900'
-                      }`}>
-                        {item.riskScore} / 100
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <BadgePill badge={item.assignedBadge} size="sm" />
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleApprove(item.id)}
-                          className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px] font-bold flex items-center gap-1"
-                        >
-                          <Check className="w-3 h-3" />
-                          <span>Approve</span>
-                        </button>
-                        <button
-                          onClick={() => handleReject(item.id)}
-                          className="px-2.5 py-1 bg-rose-800 hover:bg-rose-700 text-white rounded text-[10px] font-bold flex items-center gap-1"
-                        >
-                          <X className="w-3 h-3" />
-                          <span>Reject</span>
-                        </button>
-                      </div>
-                    </td>
+          {actionError && (
+            <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg">{actionError}</p>
+          )}
+
+          {queueRows.length === 0 && !isLoading ? (
+            <div className="border border-dashed border-slate-200 rounded-xl p-8 text-center">
+              <ShieldCheck className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm font-bold text-slate-700">No farms awaiting review</p>
+              <p className="text-xs text-slate-500 mt-1">Pending enrollments and monitoring flags will appear here as they are raised.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider">
+                    <th className="py-3 px-4">Stage</th>
+                    <th className="py-3 px-4">Farm & Farmer</th>
+                    <th className="py-3 px-4">Village</th>
+                    <th className="py-3 px-4">Area (ha)</th>
+                    <th className="py-3 px-4">Detail</th>
+                    <th className="py-3 px-4">Raised</th>
+                    <th className="py-3 px-4">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {queueRows.map((row) => (
+                    <tr key={row.key} className="hover:bg-slate-50 transition-colors">
+                      <td className="py-3 px-4">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          row.stage === 'FLAGGED'
+                            ? 'bg-rose-50 text-rose-800 border-rose-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}>
+                          {row.stage}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <p className="font-bold text-slate-900">{row.farmName || '—'}</p>
+                        <p className="text-slate-500">{row.farmer}{row.village ? ` · ${row.village}` : ''}</p>
+                      </td>
+                      <td className="py-3 px-4 text-slate-700">{row.village || '—'}</td>
+                      <td className="py-3 px-4 text-slate-900 font-mono">{row.areaHa ?? row.area ?? '—'}</td>
+                      <td className="py-3 px-4 text-slate-700">{row.detail}</td>
+                      <td className="py-3 px-4 text-slate-500 font-mono">{row.date || '—'}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => runAction(row.id, 'approve')}
+                            disabled={busyId === row.id}
+                            className="px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px] font-bold flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <Check className="w-3 h-3" />
+                            <span>Approve</span>
+                          </button>
+                          <button
+                            onClick={() => runAction(row.id, 'reject')}
+                            disabled={busyId === row.id}
+                            className="px-2.5 py-1 bg-rose-800 hover:bg-rose-700 text-white rounded text-[10px] font-bold flex items-center gap-1 disabled:opacity-50"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>Reject</span>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
       </div>

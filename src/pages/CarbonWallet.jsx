@@ -90,31 +90,15 @@ export default function CarbonWallet() {
     if (amt <= 0 || amt > withdrawableUpi) return;
 
     setIsTransferring(true);
-    // Demo UPI payout simulation — no payments provider is wired in this build
+    // UI-only demo of the future payout rails: no payments provider is wired
+    // in this build, so this moves no money and writes no ledger entry. The
+    // real balance and the itemized ledger are left untouched.
     setTimeout(() => {
       setIsTransferring(false);
       setTransferSuccess(true);
-      setWithdrawableUpi((prev) => prev - amt);
-
-      const newTx = {
-        date: new Date().toISOString().split('T')[0],
-        txId: `UPI-DEMO-${Math.floor(10000 + Math.random() * 90000)}`,
-        source: `Simulated UPI Transfer (${selectedBank}) — demo only`,
-        gross: amt,
-        farmerShare: amt,
-        fpoShare: 0,
-        platformShare: 0,
-        splitModel: 'UPI payout',
-        ledgerHash: null,
-        status: 'DEMO'
-      };
-
-      setTransactions([newTx, ...transactions]);
-
       setTimeout(() => {
         setTransferSuccess(false);
         setShowWithdrawModal(false);
-        refreshUser();
       }, 1800);
     }, 1200);
   };
@@ -234,7 +218,7 @@ export default function CarbonWallet() {
             </div>
 
             <span className="text-xs font-mono font-semibold text-primary bg-surface-sage border border-forest-200 px-3 py-1 rounded-full">
-              UPI VPA: {upiIdInput}
+              UPI VPA: {upiIdInput || '—'}
             </span>
           </div>
 
@@ -311,8 +295,10 @@ export default function CarbonWallet() {
               {transferSuccess ? (
                 <div className="bg-surface-sage border border-forest-200 text-carbon-900 p-4 rounded-xl text-center space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-primary mx-auto" />
-                  <p className="font-bold text-sm">Demo UPI Payout Dispatched!</p>
-                  <p className="text-xs text-agriText-muted">Simulated transfer completed to {selectedBank}.</p>
+                  <p className="font-bold text-sm">Payout rails demo complete</p>
+                  <p className="text-xs text-agriText-muted">
+                    No money was moved and no ledger entry was written — this only previews the future UPI payout flow.
+                  </p>
                 </div>
               ) : (
                 <form onSubmit={handleWithdrawSubmit} className="space-y-4">

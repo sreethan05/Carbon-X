@@ -10,7 +10,7 @@ export default function WelcomeTutorial() {
     {
       step: 1,
       title: 'Satellite Land Mapping',
-      desc: 'Draw or auto-import your farm boundary. Sentinel-2 and ISRO Bhuvan satellite feeds index your parcel geometry automatically.',
+      desc: 'Draw or auto-import your farm boundary. Sentinel-2 imagery via Google Earth Engine indexes your parcel geometry automatically.',
       icon: Compass,
       bgColor: 'bg-emerald-50 text-emerald-800 border-emerald-200'
     },
@@ -24,7 +24,7 @@ export default function WelcomeTutorial() {
     {
       step: 3,
       title: 'Direct UPI Payouts',
-      desc: 'Corporate buyers purchase your verified carbon credits. Earnings are transferred directly into your linked UPI bank account.',
+      desc: 'Corporate buyers purchase your verified carbon credits. Escrow settles your 70% share — UPI payout rails are simulated in this build and clearly labelled.',
       icon: Wallet,
       bgColor: 'bg-amber-50 text-amber-800 border-amber-200'
     }

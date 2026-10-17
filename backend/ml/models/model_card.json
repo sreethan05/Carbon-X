@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-10-05",
+  "trained_at": "2026-10-17",
   "feature_cols": [
     "NDVI",
     "NDWI",
@@ -35,6 +35,35 @@
     "SOILGRIDS_SOC_Q50",
     "SOILGRIDS_SOC_Q95"
   ],
+  "features_source": "backfilled",
+  "backfilled_features": {
+    "NDRE": "NDVI-family stand-in (no red-edge bands in CSV)",
+    "IRECI": "NDVI-family stand-in (no red-edge bands in CSV)",
+    "CIre": "NDVI-family stand-in (no red-edge bands in CSV)",
+    "KHARIF_NDVI": "NDVI stand-in (no seasonal composites in CSV)",
+    "RABI_NDVI": "NDVI stand-in (no seasonal composites in CSV)",
+    "NDVI_AMPLITUDE": "NDVI-range stand-in (no phenology in CSV)",
+    "NDVI_INTEGRAL": "NDVI stand-in (no phenology in CSV)",
+    "SOS_DOY": "constant stand-in (no phenology in CSV)",
+    "EOS_DOY": "constant stand-in (no phenology in CSV)",
+    "SLOPE": "elevation-derived stand-in (no terrain slope in CSV)",
+    "ASPECT": "constant stand-in (no terrain aspect in CSV)",
+    "S1_VV": "NDVI stand-in (no SAR in CSV)",
+    "S1_VH": "NDVI stand-in (no SAR in CSV)",
+    "S1_VV_VH_RATIO": "constant stand-in (no SAR in CSV)",
+    "S1_VV_STD": "constant stand-in (no SAR in CSV)",
+    "GEDI_RH98": "NDVI stand-in (no GEDI in CSV)",
+    "GEDI_AGBD": "NDVI stand-in (no GEDI in CSV)",
+    "SOILGRIDS_SOC_MEAN": "NDVI stand-in (no SoilGrids in CSV)",
+    "SOILGRIDS_SOC_STOCK": "linear NDVI stand-in \u2014 input feature only, NEVER usable as a target",
+    "SOILGRIDS_SOC_Q05": "stock-derived stand-in (no SoilGrids quantiles in CSV)",
+    "SOILGRIDS_SOC_Q50": "stock-derived stand-in (no SoilGrids quantiles in CSV)",
+    "SOILGRIDS_SOC_Q95": "stock-derived stand-in (no SoilGrids quantiles in CSV)"
+  },
+  "gate": {
+    "min_spatial_cv_r2": 0.2,
+    "requires_features_source": "extracted"
+  },
   "biodiversity": {
     "quantile": {
       "val": {
@@ -48,11 +77,14 @@
         "mae": 0.5363992353159474,
         "coverage": 0.9454545454545454,
         "width": 1.6094379124341005
-      }
+      },
+      "n_train": 198,
+      "n_val": 41,
+      "n_test": 55
     },
     "comparison": {
       "rf": {
-        "val_r2": -0.4848264844750223,
+        "val_r2": -0.4848264844750225,
         "val_mae": 0.5483884517444471
       },
       "gb": {
@@ -62,29 +94,14 @@
     }
   },
   "soc": {
-    "quantile": {
-      "val": {
-        "r2": 1.0,
-        "mae": 4.713844490896274e-14,
-        "coverage": 0.8292682926829268,
-        "width": 3.327419640632664e-14
-      },
-      "test": {
-        "r2": 1.0,
-        "mae": 6.821210263296962e-14,
-        "coverage": 0.8,
-        "width": 2.842170943040401e-14
-      }
-    },
-    "comparison": {
-      "rf": {
-        "val_r2": 0.9989485027814802,
-        "val_mae": 0.3991910184838582
-      },
-      "gb": {
-        "val_r2": 0.999300039305479,
-        "val_mae": 0.27861565898019386
-      }
-    }
+    "status": "not_trained",
+    "reason": "real SoilGrids SOC stock absent from the features CSV; rebuilding the target from NDVI would be circular. Run scripts/ingest_soilgrids.py and a real feature extraction before training SOC.",
+    "removed_stale_artifacts": [
+      "soc_quantile_0.1.pkl",
+      "soc_quantile_0.5.pkl",
+      "soc_quantile_0.9.pkl",
+      "soc_rf.pkl",
+      "soc_gb.pkl"
+    ]
   }
 }

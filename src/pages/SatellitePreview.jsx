@@ -44,7 +44,7 @@ export default function SatellitePreview() {
 
     (async () => {
       try {
-        const farmName = `Survey ${parcel.surveyNumber} (${parcel.village})`;
+        const farmName = `Survey ${parcel.surveyNumber || 'unregistered'} (${parcel.village || 'unknown village'})`;
         const analysis = await analyzeFarm(
           parcel.geojson,
           farmName,
@@ -58,6 +58,7 @@ export default function SatellitePreview() {
 
         let savedFarm = null;
         if (isAuthenticated) {
+          const flagged = Boolean(parcel.flaggedForFpo) || parcel.badge === 'PENDING';
           try {
             const saved = await saveFarm({
               name: farmName,
@@ -75,6 +76,9 @@ export default function SatellitePreview() {
               satellite_source: analysis.satellite_source,
               area_hectares: analysis.area_hectares || parcel.areaHa,
               badge: parcel.badge,
+              // Area-variance flagged parcels must not save as "Verified":
+              // the backend keeps credits blocked until FPO review passes.
+              status: flagged ? 'PENDING' : undefined,
               s2_scene: analysis.s2_scene || null,
               ci90_low: analysis.scan_estimate?.ci90?.low ?? null,
               ci90_high: analysis.scan_estimate?.ci90?.high ?? null,
@@ -108,6 +112,13 @@ export default function SatellitePreview() {
     setStage('Indexing Surface Rasters...');
     // re-run by remounting via key trick: simplest is window reload of state
     window.location.reload();
+  };
+
+  // Formats nullable scan metrics without crashing or inventing values —
+  // "—" means the satellite pass genuinely produced no number.
+  const fmt = (value, digits = 2, suffix = '') => {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${n.toFixed(digits)}${suffix}` : '—';
   };
 
   return (
@@ -171,6 +182,7 @@ export default function SatellitePreview() {
                 {result.stage1.status === 'MATCH' && 'LOCKED : APPROVED MRV RECORD'}
                 {result.stage1.status === 'MISMATCH' && `PAUSED : ${result.stage1.reason}`}
                 {result.stage1.status === 'UNREVIEWED' && 'LOCKED : NO SIGNATURE CHECK AVAILABLE'}
+                {!['MATCH', 'MISMATCH', 'UNREVIEWED'].includes(result.stage1.status) && (result.stage1.reason || `PAUSED : ${result.stage1.status}`)}
               </span>
             </div>
           )}
@@ -183,8 +195,8 @@ export default function SatellitePreview() {
               <Sprout className="w-4 h-4" />
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Surface NDVI</span>
             </div>
-            <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? result.ndvi.toFixed(2) : '—'}</p>
-            <p className="text-[11px] text-emerald-700 font-semibold">{result ? `${result.vegetation_health} Vegetation` : 'Awaiting scan...'}</p>
+            <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? fmt(result.ndvi) : '—'}</p>
+            <p className="text-[11px] text-emerald-700 font-semibold">{result ? `${result.vegetation_health || 'Unknown'} Vegetation` : 'Awaiting scan...'}</p>
           </div>
 
           <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-1">
@@ -192,7 +204,11 @@ export default function SatellitePreview() {
               <Activity className="w-4 h-4" />
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Biodiversity Index</span>
             </div>
-            <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? `${(result.biodiversity_score / 10).toFixed(1)} / 10` : '—'}</p>
+            <p className="text-2xl font-extrabold text-slate-900 font-mono">
+              {result && Number.isFinite(Number(result.biodiversity_score))
+                ? `${(Number(result.biodiversity_score) / 10).toFixed(1)} / 10`
+                : '—'}
+            </p>
             <p className="text-[11px] text-emerald-700 font-semibold">
               {result ? `${result.ml_source || 'ML model'}` : 'Awaiting scan...'}
             </p>
@@ -203,14 +219,28 @@ export default function SatellitePreview() {
               <Layers className="w-4 h-4" />
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Annual Sequestration</span>
             </div>
-            <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? `${result.carbon_tonnes.toFixed(2)} MT` : '—'}</p>
-            <p className="text-[11px] text-emerald-700 font-semibold">{result ? `${result.total_credits} tradeable credits` : 'Awaiting scan...'}</p>
+            <p className="text-2xl font-extrabold text-slate-900 font-mono">{result ? `${fmt(result.carbon_tonnes)} MT` : '—'}</p>
+            <p className="text-[11px] text-emerald-700 font-semibold">
+              {result
+                ? (Number.isFinite(Number(result.total_credits)) ? `${result.total_credits} tradeable credits` : '— tradeable credits')
+                : 'Awaiting scan...'}
+            </p>
           </div>
         </div>
 
+        {result && result.credits_available === false && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-4 text-xs font-semibold flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              {result.message || 'No live satellite data was available for this scan, so no credits are issued.'}
+              {' '}The parcel will be saved for FPO review.
+            </span>
+          </div>
+        )}
+
         {result && (
           <p className="text-center text-[11px] text-slate-500 font-semibold">
-            Data source: {result.satellite_source} · Parcel area {result.area_hectares} ha
+            Data source: {result.satellite_source || 'unavailable'} · Parcel area {fmt(result.area_hectares)} ha
           </p>
         )}
 

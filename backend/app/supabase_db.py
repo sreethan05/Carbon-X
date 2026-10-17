@@ -485,7 +485,7 @@ def list_farms_by_status(status: str, owner_phones: Optional[list] = None) -> li
     if not sb:
         return []
     q = sb.table("farms").select("*").eq("status", status).order("created_at", desc=True)
-    if owner_phones:
+    if owner_phones is not None:
         q = q.in_("owner_phone", owner_phones)
     res = q.execute()
     return res.data or []

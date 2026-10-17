@@ -1,17 +1,19 @@
 """OTP SMS via Textplate API (https://api.textplate.in/v1/send-sms).
 
-Flow: app generates a 6-digit OTP -> stores it in Redis (3-min TTL) ->
-sends it via Textplate -> verifies against Redis on submit.
-Set TEXTPLATE_API_TOKEN + TEXTPLATE_TEMPLATE_ID in backend/.env.
-Without them, dev-mode fallback logs the OTP and returns dev_otp.
+Flow: app generates a 6-digit OTP -> stores it in Redis (10-min TTL,
+app.config.OTP_TTL_SECONDS) -> sends it via Textplate -> verifies against
+Redis on submit. Set TEXTPLATE_API_TOKEN + TEXTPLATE_TEMPLATE_ID in
+backend/.env. Without them, dev-mode fallback logs the OTP and returns dev_otp.
 """
 
 import os
 import random
 import re
 
+from app import config as app_config
+
 TEXTPLATE_URL = "https://api.textplate.in/v1/send-sms"
-OTP_TTL_MINUTES = 3
+OTP_TTL_MINUTES = max(1, app_config.OTP_TTL_SECONDS // 60)
 
 
 def generate_otp() -> str:
@@ -79,7 +81,7 @@ def _send_twilio_otp(phone: str, otp: str) -> tuple[bool, str]:
 
         mobile = phone if phone.startswith("+") else f"+91{phone[-10:]}"
         msg = client.messages.create(
-            body=f"Your CarbonX verification code is: {otp}. Valid for 3 minutes. Do not share this code.",
+            body=f"Your CarbonX verification code is: {otp}. Valid for {OTP_TTL_MINUTES} minutes. Do not share this code.",
             from_=from_num,
             to=mobile,
         )

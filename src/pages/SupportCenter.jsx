@@ -3,10 +3,22 @@ import { PhoneCall, HelpCircle, ChevronDown, ChevronUp, Send, MessageSquare, Use
 import { useNavigate } from 'react-router-dom';
 
 const FAQS = [
-  { q: 'How often does the satellite scan my farm?', a: 'Sentinel-2 scans every 5 days. CarbonX updates your NDVI index every Thursday at 06:00 AM IST.' },
-  { q: 'When do I get my UPI payout?', a: 'As soon as a buyer purchases your carbon credits, funds are locked in escrow and cleared to your bank account via UPI in under 3 minutes.' },
-  { q: 'What if my trees are damaged by a storm?', a: 'Report it to your local coordinator. Our satellite detects canopy loss and logs it under micro-insurance to protect your baseline credit score.' },
-  { q: 'Is my data safe?', a: 'Yes. All documents are encrypted with 256-bit encryption. We are DPI compliant and never share your Aadhaar or bank details.' },
+  {
+    q: 'How often does the satellite scan my farm?',
+    a: 'Sentinel-2 revisits every ~5 days. A monitoring cycle on the same cadence compares your farm\'s stored NDVI against the latest reading and flags a drop of 0.15 or more for FPO review — it is not a fixed-clock Thursday job.',
+  },
+  {
+    q: 'When do I get my UPI payout?',
+    a: 'When a buyer purchases credits, funds are escrowed and the split is written to each farm\'s hash ledger. UPI settlement rails are simulated in this pilot — no live payment provider is connected yet, so payouts are recorded on the ledger rather than bank-cleared.',
+  },
+  {
+    q: 'What if my trees are damaged by a storm?',
+    a: 'Report it to your FPO coordinator. The 5-day monitoring cycle detects canopy loss (NDVI drop of 0.15 or more) and pauses the farm\'s credits for review until the record is cleared. CarbonX does not currently offer micro-insurance.',
+  },
+  {
+    q: 'Is my data safe?',
+    a: 'Documents are used only for eligibility checks. Each upload is fingerprinted with SHA-256 so tampering is detectable, and personal data is reached only through the service backend. We do not share your Aadhaar or bank details with buyers.',
+  },
 ];
 
 const QUICK_REPLIES = [
@@ -31,10 +43,10 @@ export default function SupportCenter() {
     setInput('');
     setTimeout(() => {
       const reply = text.toLowerCase().includes('map') ? 'You can map your farm by clicking "Map New Farm" on your dashboard. Draw the boundary on the satellite map and our system will calculate the area automatically.'
-        : text.toLowerCase().includes('scan') ? 'The next Sentinel-2 scan is scheduled every 5 days. You will see updated NDVI values on your analytics page.'
-        : text.toLowerCase().includes('credit') ? 'Carbon credits are calculated from your farm NDVI, area, and crop type. The formula uses IPCC guidelines for soil organic carbon.'
+        : text.toLowerCase().includes('scan') ? 'The monitoring cycle runs on the Sentinel-2 ~5-day revisit: your farm\'s stored NDVI is compared with the latest reading, and a drop of 0.15 or more is flagged for FPO review.'
+        : text.toLowerCase().includes('credit') ? 'Carbon credits are estimated from your farm\'s NDVI, area, and crop type — the engine combines a crop-calibrated biomass factor with an IPCC-style soil factor, then applies a conservative 10–30% uncertainty deduction based on evidence quality.'
         : text.toLowerCase().includes('ndvi') ? 'NDVI (Normalized Difference Vegetation Index) measures vegetation health using satellite imagery. Values range from -1 to 1, with higher values indicating healthier crops.'
-        : 'I can help with farm mapping, satellite scans, carbon credits, UPI payouts, and KYC verification. What would you like to know?';
+        : 'I can help with farm mapping, satellite scans, carbon credits, and KYC verification. What would you like to know?';
       setMessages(m => [...m, { role: 'bot', text: reply }]);
     }, 1000);
   };
@@ -63,12 +75,12 @@ export default function SupportCenter() {
         ))}
       </div>
 
-      {/* Helpline */}
+      {/* Support contact */}
       <div className="bg-forest-50 border border-forest-100 rounded-2xl p-4 mb-6 flex items-center gap-3">
         <div className="p-2.5 bg-forest-100 text-forest-700 rounded-xl"><PhoneCall className="w-5 h-5" /></div>
         <div className="flex-1">
-          <p className="text-xs font-bold text-carbon-800">Farmer Helpline</p>
-          <p className="text-[11px] text-carbon-500">1800-420-2026 (Toll-Free, 9 AM - 9 PM IST)</p>
+          <p className="text-xs font-bold text-carbon-800">Pilot Support</p>
+          <p className="text-[11px] text-carbon-500">Reach your FPO coordinator during the pilot. A toll-free helpline will be published here once it is provisioned.</p>
         </div>
       </div>
 

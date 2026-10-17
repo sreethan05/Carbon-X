@@ -41,10 +41,14 @@ export default function CreateListing() {
     }
   }, [selectedFarmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live revenue calculations
+  // Live revenue calculations (mirrors backend services/split_engine.py:
+  // farmer 70% floor, FPO 5% only when involvement is proven, platform
+  // keeps the remainder — 25% with FPO / 30% without).
   const grossValue = volume * unitPrice;
-  const platformFee = grossValue * 0.02;
-  const netEarnings = grossValue - platformFee;
+  const hasFpoInvolvement = Boolean(selectedFarm?.fpo_id);
+  const farmerShare = grossValue * 0.70;
+  const fpoShare = hasFpoInvolvement ? grossValue * 0.05 : 0;
+  const platformShare = grossValue - farmerShare - fpoShare;
 
   const handleSubmitListing = async (e) => {
     e.preventDefault();
@@ -180,16 +184,31 @@ export default function CreateListing() {
             </div>
 
             <div className="flex justify-between items-center text-xs">
-              <span className="text-slate-300">2% CarbonX Platform Facilitation Fee</span>
-              <span className="text-rose-400 font-mono font-semibold">- INR {platformFee.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              <span className="text-slate-300">Farmer payout (70% floor)</span>
+              <span className="text-emerald-400 font-mono font-semibold">INR {farmerShare.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
             </div>
 
-            <div className="flex justify-between items-center text-xs pt-1">
-              <span className="text-emerald-300 font-bold uppercase tracking-wider">Net Farmer Earnings</span>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-300">
+                {hasFpoInvolvement ? 'FPO share (5% — involvement proven)' : 'FPO share (none — no FPO on this farm)'}
+              </span>
+              <span className="text-emerald-300 font-mono font-semibold">INR {fpoShare.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-slate-300">Platform & monitoring share ({hasFpoInvolvement ? '25' : '30'}%)</span>
+              <span className="text-slate-300 font-mono font-semibold">INR {platformShare.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+
+            <div className="flex justify-between items-center text-xs pt-1 border-t border-emerald-800/80">
+              <span className="text-emerald-300 font-bold uppercase tracking-wider">Estimated Farmer Payout</span>
               <span className="text-xl font-extrabold text-emerald-400 font-manrope font-mono">
-                INR {netEarnings.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                INR {farmerShare.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
             </div>
+            <p className="text-[10px] text-slate-400">
+              Splits are computed per sale by the backend split engine at the actual sale price; the farmer's 70% floor is guaranteed.
+            </p>
           </div>
 
           <button

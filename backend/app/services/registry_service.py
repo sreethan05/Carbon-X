@@ -9,7 +9,7 @@ def lookup_survey(survey_number: str) -> dict:
     """Return a normalized registry record or a not-found payload.
 
     Table columns: survey_number, owner_name, village, mandal, area_ha,
-    geom, registry_geometry_available, tier.
+    geojson, registry_geometry_available, tier.
     """
     survey = (survey_number or "").strip()
     if not survey:
@@ -29,7 +29,7 @@ def lookup_survey(survey_number: str) -> dict:
     if not row:
         return {"found": False, "survey_number": survey}
 
-    geom = row.get("geom")
+    geom = row.get("geojson")
     geojson = as_geojson_feature(geom)
     has_geom = bool(row.get("registry_geometry_available")) or geojson is not None
     return {

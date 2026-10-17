@@ -50,6 +50,26 @@ def update(listing_id: str, fields: dict):
         return dict(row)
 
 
+def update_cas(listing_id: str, fields: dict, expected_credits: float) -> bool:
+    """Compare-and-swap update for purchases.
+
+    Applies ``fields`` only if the listing is still active and still holds
+    ``expected_credits`` — the same guard ``/marketplace/buy`` enforces on the
+    live DB, so a concurrent purchase can never double-spend a listing.
+    """
+    with _LOCK:
+        _seed()
+        row = _ROWS.get(listing_id)
+        if not row:
+            return False
+        if str(row.get("status") or "Active").lower() not in ("active", ""):
+            return False
+        if abs(float(row.get("total_credits") or 0) - float(expected_credits)) > 1e-9:
+            return False
+        row.update(fields)
+        return True
+
+
 def fpo_for_phone(phone: str) -> str:
     """FPO linked to a sample farmer (drives the conditional 4-way split)."""
     farmer = sample_data.FARMERS.get(phone) or {}

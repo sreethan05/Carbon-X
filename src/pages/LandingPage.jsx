@@ -199,7 +199,7 @@ export default function LandingPage() {
 
         <div className="mt-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
           <p className="text-xs text-emerald-900 font-semibold">
-            <span className="font-extrabold">The farmer's sale screen:</span> Credit sold · Price ₹1,800 · Your share (70%) ₹1,260 · FPO (5%) ₹90 · Platform (25%) ₹450 · Verified record sha256:3a7f…9e21
+            <span className="font-extrabold">Example farmer sale screen:</span> Credit sold · Price ₹1,800 · Your share (70%) ₹1,260 · FPO (5%) ₹90 · Platform (25%) ₹450 · Verified record sha256:3a7f…9e21 (illustrative sample)
           </p>
           <p className="text-[11px] text-emerald-700 mt-1">Every rupee, every recipient, every hash — one screen.</p>
         </div>

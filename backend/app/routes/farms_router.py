@@ -311,11 +311,30 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
         if credits_blocked:
             credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
 
-        stage1 = credit_engine.stage1_verification(farm.get("crop_type"), farm.get("ndvi"))
-        if not stage1["match"] and status not in ("PENDING", "FLAGGED"):
-            status = "PENDING"
-            credits_blocked = True
-            credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
+        ndvi_input = farm.get("ndvi")
+        if ndvi_input is None:
+            # A scan without live satellite NDVI carries no evidence to
+            # cross-check the declared crop. Never record that as "Verified":
+            # keep the arrival state and route the parcel to FPO review.
+            stage1 = {
+                "status": "NO_SATELLITE_DATA",
+                "match": False,
+                "crop": farm.get("crop_type") or "Mixed Crop",
+                "ndvi": None,
+                "expected_range": None,
+                "reason": ("No live satellite NDVI for this scan — credits stay "
+                           "blocked until the parcel is re-scanned or reviewed"),
+            }
+            if status not in ("PENDING", "FLAGGED"):
+                status = "PENDING"
+                credits_blocked = True
+                credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
+        else:
+            stage1 = credit_engine.stage1_verification(farm.get("crop_type"), ndvi_input)
+            if not stage1["match"] and status not in ("PENDING", "FLAGGED"):
+                status = "PENDING"
+                credits_blocked = True
+                credits = {"carbon_credits": 0, "biodiversity_credits": 0, "total_credits": 0}
 
         record = {
             "owner_phone": phone,
@@ -375,39 +394,44 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
 @router.get("/farm/{farm_id}/ndvi-history")
 @router.get("/farms/{farm_id}/ndvi-history")
 def get_farm_ndvi_history(farm_id: str):
+    """Only stored measurements — never an interpolated time series.
+
+    The farm row carries the latest Sentinel-2 NDVI plus (after a monitoring
+    cycle) the last monitored NDVI. A true per-date NDVI curve requires
+    sequential Sentinel-2 pulls; until that pipeline exists we return just
+    the real stored points so the UI can never invent seasons.
+    """
     farm = db.get_farm(farm_id) if db.is_ready() else None
     if not farm:
         return {"success": False, "message": "Farm not found", "history": [], "recommendations": []}
 
     base_ndvi = float(farm.get("ndvi") or 0)
-    months = [
-        ("Kharif", "Jun", 110), ("Kharif", "Aug", 210), ("Kharif", "Oct", 85),
-        ("Rabi", "Dec", 20), ("Rabi", "Feb", 15),
-    ]
     history = []
-    for year in (2023, 2024):
-        for season, month, rainfall in months:
-            offset = {"Jun": -0.12, "Aug": 0.04, "Oct": 0.08, "Dec": -0.10, "Feb": 0.02}[month]
-            ndvi = round(min(max(base_ndvi + offset + (0.02 if year == 2024 else 0.0), 0.05), 0.95), 2)
-            history.append({
-                "season": f"{season} {year}" if season == "Kharif" else f"Rabi {year - 1}-{str(year)[2:]}",
-                "month": month,
-                "ndvi": ndvi,
-                "rainfall_mm": rainfall,
-            })
+    if farm.get("last_monitor_ndvi") is not None:
+        history.append({
+            "month": "Monitoring cycle",
+            "ndvi": round(float(farm["last_monitor_ndvi"]), 3),
+            "date": (farm.get("last_monitored_at") or "")[:10] or None,
+            "kind": "monitoring",
+        })
+    if farm.get("ndvi") is not None:
+        history.append({
+            "month": "Latest scan",
+            "ndvi": round(base_ndvi, 3),
+            "date": (farm.get("updated_at") or farm.get("created_at") or "")[:10] or None,
+            "kind": "scan",
+        })
 
     return {
         "success": True,
         "farm_id": farm_id,
         "farm_name": farm.get("name"),
         "measured_ndvi": base_ndvi,
-        "source": "derived from farm satellite record (Sentinel-2 NDVI)" if farm.get("ndvi") else "no satellite record",
+        "source": "farm record (stored Sentinel-2 NDVI values)" if farm.get("ndvi") is not None else "no satellite record",
+        "message": ("Only stored measurements are shown. A per-date NDVI time series "
+                    "requires sequential Sentinel-2 pulls (MRV roadmap)."),
         "history": history,
-        "recommendations": [
-            "Adopt zero-tillage to increase yield by +0.50 credits/acre",
-            "Maintain cover crops during Rabi interval to avoid soil carbon loss",
-            "Drip fertigation recommended for Kharif cotton block",
-        ],
+        "recommendations": [],
     }
 
 
@@ -764,6 +788,16 @@ def check_farmland(data: CheckFarmlandModel, current_user: dict = Depends(get_cu
     lat = sum(float(p[1]) for p in ring[:-1]) / (len(ring) - 1)
     lon = sum(float(p[0]) for p in ring[:-1]) / (len(ring) - 1)
     ndvi = get_ndvi_at_point(lat, lon)
+    if not ndvi.get("live_satellite") or ndvi.get("ndvi") is None:
+        # Never convert "could not measure" into a negative farmland verdict.
+        return {
+            "success": False,
+            "status": "unavailable",
+            "message": "Live satellite check unavailable — retry later; this is not a negative result.",
+            "ndvi": ndvi,
+            "area_hectares": polygon_area_hectares(data.geojson),
+            "centroid": {"lat": lat, "lon": lon},
+        }
     value = float(ndvi.get("ndvi") or 0)
     return {
         "success": True,

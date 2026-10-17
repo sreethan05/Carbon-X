@@ -1,26 +1,21 @@
 """Auth routes: phone OTP registration/login, JWT sessions, demo login."""
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, field_validator
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
-import time
-import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 import os
 
 from app.security import (
     create_access_token,
     decode_token,
     get_current_user,
-    get_current_user_optional,
-    require_role,
     verify_password,
 )
 from app.phone_service import generate_otp, send_phone_otp
 from app import supabase_db as db
 from app import redis_store
 from app import config as app_config
-from app.services import credit_engine, ledger, market_store, split_engine
-from app.services.kyc_service import analyse_document, validate_aadhaar
+from app.services.kyc_service import validate_aadhaar
 
 router = APIRouter(tags=["auth"])
 
@@ -70,30 +65,7 @@ def _clear_otp(phone: str):
 def _polygon_area_hectares(geojson: dict) -> float:
     """Deprecated alias — canonical implementation is polygon_service.polygon_area_hectares."""
     from app.services.polygon_service import polygon_area_hectares as _canonical
-    import math
-
-    geometry = geojson.get("geometry", {})
-    if geometry.get("type") != "Polygon":
-        raise ValueError("GeoJSON must be a Polygon")
-    rings = geometry.get("coordinates") or []
-    ring = rings[0] if rings else []
-    if len(ring) < 4:
-        raise ValueError("Polygon must have at least 3 points")
-    if ring[0] != ring[-1]:
-        ring = [*ring, ring[0]]
-    lat_mid = sum(float(point[1]) for point in ring[:-1]) / (len(ring) - 1)
-    meters_per_degree_lng = 111320 * math.cos(math.radians(lat_mid))
-    meters_per_degree_lat = 110540
-    area_m2 = 0
-    projected = [
-        (float(lng) * meters_per_degree_lng, float(lat) * meters_per_degree_lat)
-        for lng, lat in ring
-    ]
-    for i in range(len(projected) - 1):
-        x1, y1 = projected[i]
-        x2, y2 = projected[i + 1]
-        area_m2 += x1 * y2 - x2 * y1
-    return round(abs(area_m2) / 20000, 2)
+    return _canonical(geojson)
 
 
 def _sms_ready() -> bool:
@@ -117,27 +89,22 @@ def _env_bool(name: str, default: bool = True) -> bool:
     return default
 
 
-_OTP_SEND_WINDOW_SECONDS = 600
-_OTP_SEND_MAX_PER_WINDOW = 3
-_otp_send_log: dict = {}
-
-
 def _otp_rate_limited(phone: str) -> bool:
-    now = time.monotonic()
-    hits = [t for t in _otp_send_log.get(phone, []) if now - t < _OTP_SEND_WINDOW_SECONDS]
-    if len(hits) >= _OTP_SEND_MAX_PER_WINDOW:
-        _otp_send_log[phone] = hits
-        return True
-    hits.append(now)
-    _otp_send_log[phone] = hits
-    return False
+    """Distributed sliding-window OTP-send limiter (Redis ZSET with in-process
+    memory fallback) — one implementation shared with redis_store."""
+    return redis_store.otp_send_rate_limited(
+        phone,
+        max_sends=app_config.OTP_SEND_MAX_PER_WINDOW,
+        window_seconds=app_config.OTP_SEND_WINDOW_SECONDS,
+    )
 
 
 def _send_otp_flow(phone: str):
     if _otp_rate_limited(phone):
         return {
             "success": False,
-            "message": "Too many OTP requests for this number. Please wait 10 minutes and try again.",
+            "message": ("Too many OTP requests for this number. Please wait "
+                        f"{app_config.OTP_SEND_WINDOW_SECONDS // 60} minutes and try again."),
         }
     otp = generate_otp()
     _store_otp(phone, otp)
@@ -190,7 +157,10 @@ class RegisterModel(BaseModel):
     village: str
     upi: str = ""
     email: Optional[str] = ""
-    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = "farmer"
+    # Self-registration is farmer-only: privileged roles (fpo/verifier/admin)
+    # are never assignable through the public API. Keep the field so existing
+    # clients that send role="farmer" don't break, but reject anything else.
+    role: Optional[Literal["farmer"]] = "farmer"
     preferred_language: Optional[str] = "en"
     otp_verification_token: Optional[str] = ""
 
@@ -274,7 +244,6 @@ def register(data: RegisterModel):
             return {"success": False, "message": "Invalid or expired OTP"}
         existing = _get_user(phone)
         lang = (data.preferred_language or "en")[:2]
-        role = data.role or "farmer"
         if existing:
             profile_fields = {
                 "name": data.name or existing.get("name"),
@@ -284,7 +253,9 @@ def register(data: RegisterModel):
                 "upi": data.upi,
                 "aadhaar_last4": data.aadhaar[-4:],
                 "preferred_language": lang,
-                "role": role,
+                # NOTE: role intentionally not updated on re-registration —
+                # privileged roles (fpo/verifier/admin) must never be
+                # overwritten (or granted) by the public register endpoint.
             }
             if data.email:
                 profile_fields["email"] = data.email.strip().lower()
@@ -306,12 +277,12 @@ def register(data: RegisterModel):
             "village": data.village,
             "upi": data.upi,
             "preferred_language": lang,
-            "role": role,
+            "role": "farmer",
         }
         if data.email:
             user["email"] = data.email.strip().lower()
         _save_user(user)
-        token = create_access_token({"phone": phone, "name": data.name, "role": role})
+        token = create_access_token({"phone": phone, "name": data.name, "role": "farmer"})
         return {
             "success": True,
             "message": "Registration successful",
@@ -382,19 +353,18 @@ def corporate_login(data: CorporateLoginModel):
 
 @router.post("/fpo/login")
 def fpo_login(data: dict):
-    """FPO desk sign-in: registration_no → OTP to linked officer's phone."""
-    from pydantic import BaseModel
-    
-    class FpoLoginModel(BaseModel):
-        model_config = ConfigDict(extra="forbid")
-        registration_no: str
-    
-    fpo_data = FpoLoginModel(**data)
+    """FPO desk sign-in: registration_no → OTP to linked officer's phone.
+
+    Accepts extra fields (older clients send password) — only the
+    registration number is used; auth happens through the standard OTP step.
+    """
+    reg = str((data or {}).get("registration_no") or "").strip()
+    if not reg:
+        return {"success": False, "message": "Registration number is required"}
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database not configured"}
     try:
-        reg = fpo_data.registration_no.strip()
         fpos = (sb.table("fpos").select("id,name").eq("registration_no", reg).execute().data) or []
         if not fpos:
             return {"success": False, "message": "No FPO found for that registration number"}
@@ -464,7 +434,8 @@ class UpdateProfileModel(BaseModel):
     district: Optional[str] = None
     village: Optional[str] = None
     upi: Optional[str] = None
-    role: Optional[Literal["farmer", "buyer", "fpo", "verifier", "admin"]] = None
+    # NOTE: no role field — role changes require an admin-managed process,
+    # never a self-service PATCH.
     preferred_language: Optional[str] = None
 
 

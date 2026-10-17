@@ -190,7 +190,8 @@ def analyse_document(
         if geo:
             geocoded_location = geo
             satellite_ndvi = get_ndvi_at_point(geo["lat"], geo["lon"])
-            geocode_ndvi_available = True
+            # Only claim NDVI evidence when the reading is actually live.
+            geocode_ndvi_available = bool(satellite_ndvi.get("live_satellite"))
 
     return {
         "document_sha256": sha256,

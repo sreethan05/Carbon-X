@@ -22,6 +22,7 @@ _feature_scaler = None
 _bio_score_scaler = None
 _models_loaded = False
 _serving_enabled = {"biodiversity": False, "soc": False}
+_card_features_source = None
 
 # Feature order must match training (extract_features.py)
 FEATURE_ORDER = [
@@ -52,7 +53,7 @@ _MIN_SPATIAL_CV_R2 = 0.2  # Quality gate threshold
 def _load_models():
     """Load quantile models and scalers. Returns dict of what loaded successfully."""
     global _bio_quantiles, _soc_quantiles, _feature_scaler, _bio_score_scaler
-    global _models_loaded, _serving_enabled
+    global _models_loaded, _serving_enabled, _card_features_source
     
     if _models_loaded:
         return _serving_enabled
@@ -94,26 +95,51 @@ def _load_models():
         if os.path.exists(score_scaler_path):
             _bio_score_scaler = joblib.load(score_scaler_path)
         
-        # Quality gate: check model card for spatial CV test R²
+        # Quality gate: check model card for spatial CV test R², training
+        # feature provenance and feature-order compatibility.
         card_path = os.path.join(BASE_DIR, "ml/models/model_card.json")
         if os.path.exists(card_path):
             try:
                 with open(card_path, "r", encoding="utf-8") as fh:
                     card = json.load(fh)
-                
+
+                # Feature order must match serving exactly, otherwise the
+                # scaler/coefs would be applied to misaligned columns.
+                card_features = card.get("feature_cols")
+                features_ok = list(card_features) == FEATURE_ORDER if card_features else False
+                if not features_ok:
+                    logger.warning(
+                        "Model card feature order missing/mismatched vs serving FEATURE_ORDER — refusing to serve")
+
+                # Models trained on backfilled stand-in features are never
+                # served (provenance honesty).
+                features_source = card.get("features_source", "unknown")
+                _card_features_source = features_source
+                provenance_ok = features_source == "extracted"
+                if not provenance_ok:
+                    logger.warning(
+                        "Model card features_source=%r (gate requires 'extracted') — refusing to serve",
+                        features_source)
+
                 # Check biodiversity
                 bio_test_r2 = card.get("biodiversity", {}).get("quantile", {}).get("test", {}).get("r2", -9)
-                _serving_enabled["biodiversity"] = bio_loaded and float(bio_test_r2) >= _MIN_SPATIAL_CV_R2
-                
+                _serving_enabled["biodiversity"] = (
+                    bio_loaded and features_ok and provenance_ok
+                    and float(bio_test_r2) >= _MIN_SPATIAL_CV_R2
+                )
+
                 # Check SOC
                 soc_test_r2 = card.get("soc", {}).get("quantile", {}).get("test", {}).get("r2", -9)
-                _serving_enabled["soc"] = soc_loaded and float(soc_test_r2) >= _MIN_SPATIAL_CV_R2
-                
+                _serving_enabled["soc"] = (
+                    soc_loaded and features_ok and provenance_ok
+                    and float(soc_test_r2) >= _MIN_SPATIAL_CV_R2
+                )
+
                 if not _serving_enabled["biodiversity"]:
-                    logger.warning("Biodiversity model below quality gate (spatial CV test R²=%.3f < %.1f)", 
+                    logger.warning("Biodiversity model below quality gate (spatial CV test R²=%.3f < %.1f)",
                                    bio_test_r2, _MIN_SPATIAL_CV_R2)
                 if not _serving_enabled["soc"]:
-                    logger.warning("SOC model below quality gate (spatial CV test R²=%.3f < %.1f)", 
+                    logger.warning("SOC model below quality gate (spatial CV test R²=%.3f < %.1f)",
                                    soc_test_r2, _MIN_SPATIAL_CV_R2)
                     
             except Exception as e:
@@ -222,17 +248,29 @@ def predict_soc(features: dict = None) -> dict:
         except Exception as e:
             logger.error("SOC predict error: %s", e)
     
-    # Fallback: use SoilGrids prior if available in features
-    if features and "SOILGRIDS_SOC_STOCK" in features:
-        stock = float(features.get("SOILGRIDS_SOC_STOCK", 0)) * 3.67
-        q05 = float(features.get("SOILGRIDS_SOC_Q05", 0)) * 3.67
-        q50 = float(features.get("SOILGRIDS_SOC_Q50", 0)) * 3.67
-        q95 = float(features.get("SOILGRIDS_SOC_Q95", 0)) * 3.67
+    # Fallback: SoilGrids prior from the real features vector. The stock is
+    # the tCO2e/ha point estimate; Q05/Q50/Q95 are concentration quantiles
+    # (g/kg) and are applied as RELATIVE multipliers of the stock so the band
+    # is on the same scale as the median. (The old code multiplied the g/kg
+    # quantiles by 3.67 as if they were stocks, producing a P50 that did not
+    # even bracket the point estimate.)
+    if features and features.get("SOILGRIDS_SOC_STOCK"):
+        stock_tco2e = float(features.get("SOILGRIDS_SOC_STOCK") or 0) * 3.67
+        q05 = float(features.get("SOILGRIDS_SOC_Q05") or 0)
+        q50 = float(features.get("SOILGRIDS_SOC_Q50") or 0)
+        q95 = float(features.get("SOILGRIDS_SOC_Q95") or 0)
+        if q50 > 0 and q05 > 0 and q95 > 0:
+            p10 = min(stock_tco2e, stock_tco2e * (q05 / q50))
+            p90 = max(stock_tco2e, stock_tco2e * (q95 / q50))
+        else:
+            # No usable quantiles — state a ±30% stock uncertainty instead of
+            # inventing one.
+            p10, p90 = stock_tco2e * 0.7, stock_tco2e * 1.3
         return {
-            "soc_tco2e_ha": round(stock, 2),
-            "p10": round(q05, 2),
-            "p50": round(q50, 2),
-            "p90": round(q95, 2),
+            "soc_tco2e_ha": round(stock_tco2e, 2),
+            "p10": round(max(0.0, p10), 2),
+            "p50": round(stock_tco2e, 2),
+            "p90": round(max(0.0, p90), 2),
             "ml_source": "soilgrids_prior",
         }
     
@@ -284,4 +322,5 @@ def get_model_status() -> dict:
         "bio_quantiles_loaded": list(_bio_quantiles.keys()),
         "soc_quantiles_loaded": list(_soc_quantiles.keys()),
         "quality_gate_threshold": _MIN_SPATIAL_CV_R2,
+        "card_features_source": _card_features_source,
     }

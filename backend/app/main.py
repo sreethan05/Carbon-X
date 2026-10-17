@@ -16,31 +16,15 @@ from typing import Literal, Optional
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-import os
 import math
 import time
 
-from app.security import (
-    create_access_token,
-    decode_token,
-    get_current_user,
-    get_current_user_optional,
-    require_role,
-    verify_password,
-)
-from app.phone_service import generate_otp, send_phone_otp
+from app.security import get_current_user_optional
 from app import supabase_db as db
 from app import redis_store
 from app import config as app_config
-from app.services import credit_engine, ledger, market_store, split_engine
-from app.services.kyc_service import analyse_document, validate_aadhaar
-
-
-def _sample_data():
-    """Lazy sample_data access — the fallback dataset is only imported
-    when a demo/fallback path actually needs it."""
-    from app import sample_data as _sd
-    return _sd
+from app.services import credit_engine, ledger
+from app.services.polygon_service import polygon_area_hectares as _polygon_area_hectares
 
 
 app = FastAPI(
@@ -460,8 +444,17 @@ def analyze(data: AnalyzeModel):
                 ml_result = predict_biodiversity(ndvi=ndvi_value, evi=evi_value,
                                                  area_ha=area_hectares, features=real_features)
                 biodiversity_score = ml_result["biodiversity_score"]
-            except Exception:
-                biodiversity_score = round(min(max(ndvi_value * 100, 30), 98), 1)
+            except Exception as e:
+                # One canonical fallback (ml_service heuristic), labelled in
+                # ml_source — never an ad-hoc formula that disagrees with it.
+                print(f"[analyze] biodiversity prediction failed: {e}")
+                from app.services.ml_service import _heuristic_score
+                biodiversity_score = _heuristic_score(ndvi_value)
+                ml_result = {
+                    "biodiversity_score": biodiversity_score,
+                    "source": "Heuristic (prediction error)",
+                    "ml_source": "heuristic_ndvi",
+                }
             satellite_source = "Google Earth Engine · Sentinel-2 SR"
             try:
                 s2_scene = collection.first().get("system:index").getInfo()
@@ -469,7 +462,6 @@ def analyze(data: AnalyzeModel):
                 s2_scene = None
 
             scan_est = credit_engine.quick_scan_estimate(area_hectares, data.crop_type, ndvi_value, features=real_features)
-            scan_est["formula_version"] = app_config.FORMULA_VERSION
             carbon_tonnes = scan_est["credits_tco2e"]
         else:
             # No live satellite data: NEVER fabricate an NDVI, and never turn a
@@ -661,25 +653,3 @@ def run_monitoring_cycle(
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
-
-
-# ── Demo login (only when DB not configured) ──
-@app.post("/demo/login")
-def demo_login(data: dict = None):
-    if db.is_ready():
-        return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
-    body = data or {}
-    phone = str(body.get("phone") or "9000000001")
-    farmer = _sample_data().FARMERS.get(phone)
-    if not farmer:
-        return {"success": False, "message": "Unknown demo farmer"}
-    token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
-    return {
-        "success": True, "demo_mode": True, "token": token,
-        "user": {
-            "phone": phone, "name": farmer["name"], "role": "farmer",
-            "district": farmer.get("district"), "village": farmer.get("village"),
-            "upi": farmer.get("upi"), "demo": True,
-        },
-        "message": f"Demo session started for {farmer['name']}",
-    }

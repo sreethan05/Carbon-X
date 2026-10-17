@@ -1,9 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowRight, AlertTriangle, ShieldCheck, Check, Edit3, X } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import LeafletMap from '../components/LeafletMap';
 import { useAuth } from '../context/AuthContext';
+
+// GeoJSON Polygon/MultiPolygon -> Leaflet [lat, lng] ring for the first ring.
+function geojsonToLatLngs(geojson) {
+  try {
+    let coords = geojson?.geometry?.coordinates || geojson?.coordinates;
+    if (!coords) return null;
+    if (geojson?.geometry?.type === 'MultiPolygon' || geojson?.type === 'MultiPolygon') {
+      coords = coords[0];
+    }
+    const ring = coords[0];
+    if (!Array.isArray(ring) || ring.length < 3) return null;
+    const pts = ring.map(([lng, lat]) => [lat, lng]);
+    // Drop the duplicated closing vertex — Leaflet closes polygons itself.
+    if (pts.length > 3 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) {
+      pts.pop();
+    }
+    return pts;
+  } catch {
+    return null;
+  }
+}
 
 export default function FarmMapRegistration() {
   const navigate = useNavigate();
@@ -12,33 +33,46 @@ export default function FarmMapRegistration() {
 
   // Received state from land-verification step
   const navState = location.state || {};
-  const surveyNumber = navState.surveyNumber || '124/A';
-  const ownerName = navState.ownerName || user?.name || 'K. Ramesh';
-  const village = navState.village || 'Pochampally';
-  const registryAreaHa = navState.areaHa || 1.20;
+  const surveyNumber = navState.surveyNumber || '';
+  const ownerName = navState.ownerName || user?.name || null;
+  const village = navState.village || user?.village || '';
+  const registryAreaHa = typeof navState.areaHa === 'number' && navState.areaHa > 0 ? navState.areaHa : null;
   const tierCode = navState.tierCode || (surveyNumber === '124/A' ? '1A' : surveyNumber === '124/B' ? '1B' : '2');
-  const initialBadge = navState.tier || (tierCode === '1A' ? 'REGISTRY' : tierCode === '1B' ? 'REGISTRY_DOC' : 'DOCUMENT');
-  const isReadOnly = tierCode === '1A';
+
+  // Real registry geometry (Tier 1A) — never a placeholder.
+  const initialPoints = useMemo(() => geojsonToLatLngs(navState.geojson), [navState.geojson]);
+  const hasInitialGeometry = Boolean(initialPoints && initialPoints.length >= 3);
+  // A REGISTRY badge requires the actual cadastral polygon; without it the
+  // record is document-verified at best.
+  const initialBadge = navState.tier
+    || (tierCode === '1A' && hasInitialGeometry ? 'REGISTRY' : tierCode === '1B' ? 'REGISTRY_DOC' : 'DOCUMENT');
+  // 1A is only read-only when the actual cadastral polygon is present; if the
+  // geometry is missing the user must draw the boundary themselves.
+  const isReadOnly = tierCode === '1A' && hasInitialGeometry;
+
+  const hasReference = registryAreaHa != null;
 
   // Live calculated state from map drawing
-  const [drawnAreaHa, setDrawnAreaHa] = useState(registryAreaHa);
+  const [drawnAreaHa, setDrawnAreaHa] = useState(registryAreaHa ?? 0);
   const [assignedBadge, setAssignedBadge] = useState(initialBadge);
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [showAdvisory, setShowAdvisory] = useState(true);
 
-  // Compute variance & tolerance
-  const areaDiffHa = Math.abs(drawnAreaHa - registryAreaHa);
-  const variancePercent = registryAreaHa > 0 ? (areaDiffHa / registryAreaHa) * 100 : 0;
-  const isWithinTolerance = variancePercent <= 20;
+  // Compute variance & tolerance (only when a registry/OCR reference exists)
+  const areaDiffHa = hasReference ? Math.abs(drawnAreaHa - registryAreaHa) : 0;
+  const variancePercent = hasReference && registryAreaHa > 0 ? (areaDiffHa / registryAreaHa) * 100 : 0;
+  const isWithinTolerance = hasReference ? variancePercent <= 20 : true;
 
   useEffect(() => {
-    // If mismatch is outside 20% tolerance, flag as advisory FPO review (without hard-blocking)
-    if (!isWithinTolerance && tierCode !== '1A') {
+    // If mismatch is outside 20% tolerance, flag as advisory FPO review
+    // (without hard-blocking). Locked registry geometry (Tier 1A) is the
+    // authoritative record and is never flagged by the drawn-area check.
+    if (!isReadOnly && hasReference && !isWithinTolerance) {
       setAssignedBadge('PENDING');
     } else {
       setAssignedBadge(initialBadge);
     }
-  }, [drawnAreaHa, registryAreaHa, isWithinTolerance, tierCode, initialBadge]);
+  }, [drawnAreaHa, isReadOnly, hasReference, isWithinTolerance, initialBadge]);
 
   const [parcelGeojson, setParcelGeojson] = useState(null);
 
@@ -49,6 +83,7 @@ export default function FarmMapRegistration() {
   };
 
   const handleFinalSubmit = () => {
+    if (!parcelGeojson) return;
     const parcel = {
       surveyNumber,
       ownerName,
@@ -56,7 +91,7 @@ export default function FarmMapRegistration() {
       areaHa: drawnAreaHa,
       badge: assignedBadge,
       tierCode,
-      flaggedForFpo: !isWithinTolerance,
+      flaggedForFpo: !isReadOnly && hasReference && !isWithinTolerance,
       geojson: parcelGeojson,
     };
     try {
@@ -80,7 +115,7 @@ export default function FarmMapRegistration() {
             <VerificationBadge badge={assignedBadge} showTier size="sm" />
           </div>
           <h1 className="text-lg font-extrabold text-carbon-900 font-manrope mt-1">
-            Parcel Geometry: Survey {surveyNumber} ({village})
+            Parcel Geometry: Survey {surveyNumber || '—'} ({village || '—'})
           </h1>
         </div>
 
@@ -89,7 +124,7 @@ export default function FarmMapRegistration() {
           <div className="flex items-center gap-3">
             <div>
               <span className="text-[10px] text-agriText-subtle font-semibold block uppercase tracking-wider">Registry/OCR Area</span>
-              <span className="font-mono font-bold text-carbon-900">{registryAreaHa} ha</span>
+              <span className="font-mono font-bold text-carbon-900">{hasReference ? `${registryAreaHa} ha` : '—'}</span>
             </div>
             <div className="h-6 border-r border-forest-200" />
             <div>
@@ -99,10 +134,20 @@ export default function FarmMapRegistration() {
           </div>
 
           <div>
-            {isWithinTolerance ? (
+            {!hasReference ? (
+              <span className="text-slate-600 font-bold bg-slate-100 border border-slate-200 px-3 py-1 rounded-full flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-slate-500" />
+                <span>No registry area on record — FPO will verify</span>
+              </span>
+            ) : isWithinTolerance ? (
               <span className="text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full flex items-center gap-1.5">
                 <Check className="w-3.5 h-3.5 text-emerald-700" />
                 <span>Within tolerance ✓</span>
+              </span>
+            ) : isReadOnly ? (
+              <span className="text-emerald-800 font-bold bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Locked registry geometry</span>
               </span>
             ) : (
               <span className="text-amber-800 font-bold bg-amber-50 border border-amber-200 px-3 py-1 rounded-full flex items-center gap-1.5">
@@ -143,6 +188,7 @@ export default function FarmMapRegistration() {
         <div className="z-0 relative h-[520px] rounded-2xl overflow-hidden shadow-card border border-forest-100">
           <LeafletMap
             readOnly={isReadOnly}
+            initialPoints={initialPoints}
             onGeojsonDrawn={setParcelGeojson}
             onAreaCalculated={handleAreaCalculated}
             showHeatmapToggle={true}
@@ -158,16 +204,22 @@ export default function FarmMapRegistration() {
                 <ShieldCheck className="w-4 h-4 text-primary" />
                 Cadastral geometry verified from Telangana Dharani Portal (Tier 1A).
               </span>
-            ) : (
+            ) : parcelGeojson ? (
               <span>
-                Draw polygon vertices on map to align with physical field bunds.
+                Boundary captured. Confirm to continue to the satellite scan.
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5 text-amber-800 font-semibold">
+                <AlertTriangle className="w-4 h-4 text-amber-700" />
+                Draw your parcel boundary on the map (click vertices, then close the polygon) to continue.
               </span>
             )}
           </div>
 
           <button
             onClick={() => setShowConfirmationModal(true)}
-            className="w-full sm:w-auto px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all"
+            disabled={!parcelGeojson}
+            className="w-full sm:w-auto px-6 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all"
           >
             <span>Confirm Boundary & Proceed</span>
             <ArrowRight className="w-4 h-4" />
@@ -183,7 +235,7 @@ export default function FarmMapRegistration() {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-primary" />
                 <h3 className="text-sm font-extrabold text-carbon-900 font-manrope">
-                  Is this your land? Survey {surveyNumber}, {Math.round(drawnAreaHa * 2.471 * 10) / 10} acres, {village}
+                  Is this your land? Survey {surveyNumber || '—'}, {Math.round(drawnAreaHa * 2.471 * 10) / 10} acres, {village || '—'}
                 </h3>
               </div>
               <button
@@ -197,15 +249,15 @@ export default function FarmMapRegistration() {
             <div className="bg-surface-sage/50 border border-forest-200 rounded-xl p-4 space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-agriText-subtle font-semibold">Pattadar Owner:</span>
-                <span className="font-bold text-carbon-900">{ownerName}</span>
+                <span className="font-bold text-carbon-900">{ownerName || '—'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-agriText-subtle font-semibold">Survey Number:</span>
-                <span className="font-mono font-bold text-primary">{surveyNumber}</span>
+                <span className="font-mono font-bold text-primary">{surveyNumber || '—'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-agriText-subtle font-semibold">Village / Mandal:</span>
-                <span className="font-bold text-carbon-900">{village}</span>
+                <span className="font-bold text-carbon-900">{village || '—'}</span>
               </div>
               <div className="flex justify-between border-t border-forest-200 pt-2">
                 <span className="text-agriText-subtle font-semibold">Verified Area:</span>

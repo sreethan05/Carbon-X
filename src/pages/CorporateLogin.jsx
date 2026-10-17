@@ -36,13 +36,6 @@ export default function CorporateLogin() {
       setIsVerifying(false);
     } catch (err) {
       console.warn('Corporate login API unreachable', err);
-      if (import.meta.env.DEV) {
-        // Demo mode (dev builds only): proceed with a locally-forged session
-        await login('cx_corp_token_' + Date.now(), { c_id: 101, name, role: 'buyer' });
-        setIsVerifying(false);
-        navigate('/corporate/dashboard');
-        return;
-      }
       setError('Authentication service unreachable. Please try again shortly.');
       setIsVerifying(false);
     }
