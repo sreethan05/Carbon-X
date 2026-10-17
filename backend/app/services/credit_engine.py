@@ -16,6 +16,8 @@ passports. All math is exposed step-by-step in the response: every number a
 farmer or buyer sees can be recomputed by hand.
 """
 
+import re
+from typing import Optional
 from app.config import FORMULA_VERSION  # noqa: F401 — re-exported for callers/tests
 
 # (base tCO2e/ha/yr at NDVI 0.75, soil tCO2e/ha/yr, label)
@@ -32,6 +34,10 @@ _CROP_FACTORS = {
     "cotton": (33.0, 0.40, "Cotton"),
     "maize": (40.0, 0.35, "Maize"),
     "millets": (21.0, 0.25, "Millets"),
+    "pulses": (25.0, 0.30, "Pulses"),
+    "pulse": (25.0, 0.30, "Pulses"),
+    "red gram": (25.0, 0.30, "Red Gram"),
+    "bengal gram": (25.0, 0.30, "Bengal Gram"),
     "turmeric": (46.0, 0.40, "Turmeric"),
     "chilli": (27.0, 0.30, "Chilli"),
 }
@@ -53,9 +59,27 @@ _CROP_NDVI_WINDOWS = {
     "cotton": (0.40, 0.90),
     "maize": (0.45, 0.92),
     "millets": (0.30, 0.80),
+    "pulses": (0.35, 0.85),
+    "pulse": (0.35, 0.85),
+    "red gram": (0.35, 0.85),
+    "bengal gram": (0.35, 0.85),
     "turmeric": (0.45, 0.90),
     "chilli": (0.35, 0.85),
 }
+
+
+def _resolve_crop_key(crop: str) -> Optional[str]:
+    """Resolve a crop string to a canonical key in _CROP_NDVI_WINDOWS / _CROP_FACTORS."""
+    clean = str(crop or "").strip().lower()
+    if not clean:
+        return None
+    if clean in _CROP_NDVI_WINDOWS:
+        return clean
+    # Check for whole-word / token occurrences (e.g. 'Paddy (Kharif)' -> 'paddy')
+    for k in sorted(_CROP_NDVI_WINDOWS.keys(), key=len, reverse=True):
+        if re.search(r'\b' + re.escape(k) + r'\b', clean):
+            return k
+    return None
 
 
 def stage1_verification(crop: str, ndvi) -> dict:
@@ -66,9 +90,10 @@ def stage1_verification(crop: str, ndvi) -> dict:
     replace human judgment.
     """
     ndvi = round(float(ndvi or 0), 3)
-    key = str(crop or "").strip().lower()
-    window = _CROP_NDVI_WINDOWS.get(key)
-    label = _CROP_FACTORS.get(key, (0, 0, crop or "Mixed Crop"))[2]
+    clean = str(crop or "").strip()
+    key = _resolve_crop_key(clean)
+    window = _CROP_NDVI_WINDOWS.get(key) if key else None
+    label = _CROP_FACTORS.get(key, (0, 0, clean or "Mixed Crop"))[2] if key else (clean or "Mixed Crop")
     if not window:
         return {
             "status": "UNREVIEWED",
@@ -121,9 +146,13 @@ def evidence_quality(
     }
 
 
-def uncertainty_pct(quality_score: float) -> float:
+def uncertainty_pct(quality_score: Optional[float]) -> float:
     """10-30% deduction; perfect evidence still keeps a 10% honesty margin."""
-    return round(max(10.0, min(30.0, 30.0 - 20.0 * float(quality_score))), 1)
+    try:
+        val = 0.0 if quality_score is None else float(quality_score)
+    except (ValueError, TypeError):
+        val = 0.0
+    return round(max(10.0, min(30.0, 30.0 - 20.0 * val)), 1)
 
 
 def estimate_credits(
@@ -143,7 +172,8 @@ def estimate_credits(
     """
     area = max(0.0, float(area_hectares or 0))
     ndvi = max(0.0, min(1.0, float(ndvi or 0)))
-    base, soil, label = _CROP_FACTORS.get(str(crop or "").strip().lower(), _DEFAULT_FACTOR)
+    resolved_key = _resolve_crop_key(crop)
+    base, soil, label = _CROP_FACTORS.get(resolved_key, _DEFAULT_FACTOR) if resolved_key else _DEFAULT_FACTOR
     baseline = float(baseline_ndvi) if baseline_ndvi is not None else max(0.0, ndvi - DEFAULT_BASELINE_GAP)
     baseline = max(0.0, min(1.0, baseline))
 
@@ -159,20 +189,33 @@ def estimate_credits(
     pct = uncertainty_pct(quality_score)
     final = raw_total * (1 - pct / 100.0)
     
-    # CI90: prefer model quantiles if provided, else heuristic
-    if model_quantiles and all(k in model_quantiles for k in ("p10", "p50", "p90")):
-        ci90 = {
-            "low": round(max(0.0, float(model_quantiles["p10"])), 2),
-            "high": round(float(model_quantiles["p90"]), 2),
-        }
-        ci90_source = model_source or "model_quantiles"
-    else:
+    # CI90: prefer model quantiles if provided and valid, else heuristic
+    ci90 = None
+    ci90_source = "heuristic"
+    if (
+        model_quantiles
+        and all(model_quantiles.get(k) is not None for k in ("p10", "p50", "p90"))
+    ):
+        try:
+            p10_val = round(max(0.0, float(model_quantiles["p10"])), 2)
+            p90_val = round(max(p10_val, float(model_quantiles["p90"])), 2)
+            ci90 = {
+                "low": p10_val,
+                "high": p90_val,
+            }
+            ci90_source = model_source or "model_quantiles"
+        except (ValueError, TypeError):
+            ci90 = None
+
+    if ci90 is None:
         # Treat the uncertainty fraction as ~1 sigma: a 90% interval is ±1.64 sigma.
         ci90 = {
             "low": round(max(0.0, final * (1 - 1.64 * pct / 100.0)), 2),
             "high": round(final * (1 + 1.64 * pct / 100.0), 2),
         }
         ci90_source = "heuristic"
+
+    qs_display = float(quality_score) if quality_score is not None else 1.0
 
     return {
         "crop": label,
@@ -207,7 +250,7 @@ def estimate_credits(
             {
                 "step": 5,
                 "name": "Uncertainty deduction",
-                "detail": f"Evidence quality {quality_score:.2f} → −{pct}% (conservative by design)",
+                "detail": f"Evidence quality {qs_display:.2f} → −{pct}% (conservative by design)",
                 "value": -pct,
             },
         ],
@@ -229,8 +272,8 @@ def credit_split(carbon_tonnes: float, biodiversity_score: float) -> dict:
     are a linear index conversion of the biodiversity score (score/40),
     calibrated so demo farms land on their historical values.
     """
-    carbon = round(float(carbon_tonnes or 0), 2)
-    bio = round(float(biodiversity_score or 0) / 40.0, 2)
+    carbon = max(0.0, round(float(carbon_tonnes or 0), 2))
+    bio = max(0.0, round(float(biodiversity_score or 0) / 40.0, 2))
     return {
         "carbon_credits": carbon,
         "biodiversity_credits": bio,
@@ -238,31 +281,63 @@ def credit_split(carbon_tonnes: float, biodiversity_score: float) -> dict:
     }
 
 
-_quick_scan_cache: dict = {}
 _QUICK_SCAN_TTL = 600  # seconds — same composite inputs give identical outputs
+_QUICK_SCAN_CACHE_NAMESPACE = "quick_scan:"
 
 
 def quick_scan_estimate(area_hectares: float, crop: str, ndvi: float, features: dict = None) -> dict:
-    import time as _time
+    """TTL-cached estimate shared across workers via redis_store.
 
-    # Cache key includes features hash if provided
+    Redis-first when configured, per-worker memory otherwise. The cache only
+    stores serialized results of deterministic inputs, so it can never serve
+    a stale number for different inputs.
+    """
+    import logging
+    from app import redis_store
+
+    def _safe_float(v, default=0.0):
+        try:
+            return float(v) if v is not None else default
+        except (ValueError, TypeError):
+            return default
+
+    # Cache key includes a features hash if provided
     if features:
         import hashlib
-        feat_str = "|".join(f"{k}={features.get(k, 0):.4f}" for k in sorted(features.keys()))
+        feat_parts = []
+        for k in sorted(features.keys()):
+            val = _safe_float(features.get(k), 0.0)
+            feat_parts.append(f"{k}={val:.4f}")
+        feat_str = "|".join(feat_parts)
         feat_hash = hashlib.md5(feat_str.encode()).hexdigest()[:8]
     else:
         feat_hash = "nofeat"
-    key = (round(float(area_hectares), 4), str(crop).strip().lower(), round(float(ndvi), 4), feat_hash)
-    
-    hit = _quick_scan_cache.get(key)
-    if hit and _time.time() - hit[0] < _QUICK_SCAN_TTL:
-        import logging
-        logging.getLogger("carbonx.credit_engine").info("quick_scan cache hit")
-        return dict(hit[1])
-    result = _quick_scan_estimate_uncached(area_hectares, crop, ndvi, features)
-    if len(_quick_scan_cache) > 512:
-        _quick_scan_cache.clear()
-    _quick_scan_cache[key] = (_time.time(), result)
+
+    clean_area = round(_safe_float(area_hectares, 0.0), 4)
+    clean_ndvi = round(_safe_float(ndvi, 0.0), 4)
+    clean_crop = str(crop or "").strip().lower()
+
+    key = _QUICK_SCAN_CACHE_NAMESPACE + "|".join((
+        f"{clean_area}",
+        clean_crop,
+        f"{clean_ndvi}",
+        feat_hash,
+    ))
+
+    cached = redis_store.cache_get(key)
+    if cached is not None:
+        try:
+            logging.getLogger("carbonx.credit_engine").info("quick_scan cache hit")
+            import json
+            return json.loads(cached)
+        except ValueError:
+            pass  # corrupt cache entry — recompute
+    result = _quick_scan_estimate_uncached(clean_area, crop, clean_ndvi, features)
+    try:
+        import json
+        redis_store.cache_set(key, json.dumps(result, default=str), _QUICK_SCAN_TTL)
+    except (TypeError, ValueError):
+        pass  # caching is best-effort; the result is already computed
     return dict(result)
 
 
@@ -294,9 +369,9 @@ def _quick_scan_estimate_uncached(area_hectares: float, crop: str, ndvi: float,
                 # SOC quantiles are per hectare; scale by area
                 area = max(0.01, float(area_hectares or 0))
                 model_quantiles = {
-                    "p10": soc_pred.get("p10", 0) * area,
-                    "p50": soc_pred.get("p50", 0) * area,
-                    "p90": soc_pred.get("p90", 0) * area,
+                    "p10": float(soc_pred.get("p10", 0) or 0) * area,
+                    "p50": float(soc_pred.get("p50", 0) or 0) * area,
+                    "p90": float(soc_pred.get("p90", 0) or 0) * area,
                 }
                 model_source = soc_pred.get("ml_source")
         except Exception:

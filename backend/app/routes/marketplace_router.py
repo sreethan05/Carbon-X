@@ -38,7 +38,8 @@ def _get_user(phone: str):
 
 
 def _cert_id_for_listing(listing_id: str) -> str:
-    return f"CX-{datetime.now(timezone.utc).year}-CERT-{listing_id.replace('-', '')[:8].upper()}"
+    lid = str(listing_id or "").replace("-", "")[:8].upper() or "UNKNOWN"
+    return f"CX-{datetime.now(timezone.utc).year}-CERT-{lid}"
 
 
 def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
@@ -55,6 +56,8 @@ def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
 
 def _prior_sale_gross(farm_id: str, listing_id: str) -> float:
     """Sum of SALE proceeds already booked in the hash ledger for this listing."""
+    if not farm_id or not listing_id:
+        return 0.0
     total = 0.0
     for event in ledger.get_chain(farm_id):
         if event.get("type") != "SALE":
@@ -65,7 +68,25 @@ def _prior_sale_gross(farm_id: str, listing_id: str) -> float:
     return round(total, 2)
 
 
-def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update, farm: Optional[dict] = None) -> dict:
+def settle_listing_purchase(
+    listing: dict,
+    credits: float,
+    buyer_name: str,
+    apply_update,
+    farm: Optional[dict] = None,
+    payment_ref: Optional[str] = None,
+) -> dict:
+    """Settle a (partial) credit purchase: CAS → SALE → SPLIT → RETIRE.
+
+    Shared money path for /marketplace/buy (built-in simulated escrow,
+    ``payment_ref=None``) and /payments/checkout (the provider's reference,
+    e.g. a verified Razorpay payment id). ``apply_update(fields)`` must perform
+    the compare-and-swap on the listing row and return truthy only if the row
+    still held the state that was read — a concurrent buyer loses cleanly.
+
+    ``payment_ref``, when provided, is recorded on the SALE ledger event and
+    echoed in the response so the chain links back to the payment provider.
+    """
     available = float(listing.get("total_credits") or 0)
     unit_price = float(listing.get("price_per_credit") or 0)
     gross = round(credits * unit_price, 2)
@@ -99,7 +120,7 @@ def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update,
         }
 
     cert_id = _cert_id_for_listing(listing.get("id"))
-    sale_event = ledger.append_event(farm_id, "SALE", {
+    sale_payload = {
         "listing_id": listing.get("id"),
         "buyer": buyer_name,
         "credits": credits,
@@ -107,8 +128,12 @@ def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update,
         "gross_inr": gross,
         "escrow_ref": escrow_ref,
         "certificate_id": cert_id,
-    })
-    split_event = ledger.append_event(farm_id, "SPLIT", {
+    }
+    if payment_ref:
+        sale_payload["payment_ref"] = payment_ref
+    ledger_entity_id = farm_id or str(listing.get("id") or "unassigned_farm")
+    sale_event = ledger.append_event(ledger_entity_id, "SALE", sale_payload)
+    split_event = ledger.append_event(ledger_entity_id, "SPLIT", {
         "escrow_ref": escrow_ref,
         "model": split["model"],
         "farmer_inr": split["farmer_amount_inr"],
@@ -116,7 +141,7 @@ def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update,
         "platform_inr": split["platform_amount_inr"],
     })
     batch_hash = split_event["hash"]
-    ledger.append_event(farm_id, "RETIRE", {
+    ledger.append_event(ledger_entity_id, "RETIRE", {
         "certificate_id": cert_id,
         "credits_retired": credits,
         "escrow_ref": escrow_ref,
@@ -124,7 +149,8 @@ def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update,
         "buyer": buyer_name,
     })
 
-    return {
+
+    result = {
         "success": True,
         "message": "Purchase complete — escrowed, split paid, credits retired",
         "certificate_id": cert_id,
@@ -146,6 +172,14 @@ def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update,
         "location": listing.get("location"),
         "source": listing.get("_source", "live_db"),
     }
+    if payment_ref:
+        result["payment_ref"] = payment_ref
+    return result
+
+
+def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update, farm: Optional[dict] = None) -> dict:
+    """Legacy name for the marketplace buy path — no payment provider involved."""
+    return settle_listing_purchase(listing, credits, buyer_name, apply_update, farm=farm)
 
 
 # ─── Models ───
@@ -216,7 +250,10 @@ def marketplace_listings(
         if cursor:
             try:
                 import base64 as _b64
-                query_kwargs["offset"] = int(_b64.urlsafe_b64decode(cursor.encode()).decode())
+                decoded_offset = int(_b64.urlsafe_b64decode(cursor.encode()).decode())
+                if decoded_offset < 0:
+                    return {"success": False, "message": "Invalid cursor", "code": "BAD_CURSOR"}
+                query_kwargs["offset"] = decoded_offset
             except Exception:
                 return {"success": False, "message": "Invalid cursor", "code": "BAD_CURSOR"}
         applied = {k: v for k, v in query_kwargs.items() if v is not None}
@@ -239,10 +276,13 @@ def marketplace_listings(
 
         # Build next_cursor (offset may have come from the cursor itself)
         next_cursor = None
-        if len(result["listings"]) == limit:
+        if len(result["listings"]) == limit and (
+            result.get("total") is None or (int(query_kwargs["offset"]) + limit < result["total"])
+        ):
             next_offset = int(query_kwargs["offset"]) + limit
             import base64 as _b64
             next_cursor = _b64.urlsafe_b64encode(str(next_offset).encode()).decode()
+
 
         print(
             f"[marketplace/listings] source={'LIVE DB' if source == 'live_db' else 'FALLBACK sample data'} "
@@ -268,7 +308,9 @@ def create_listing(data: CreateListingModel, current_user: dict = Depends(get_cu
         if data.farm_id:
             from app.services.trust_engine import farm_may_list
             farm = db.get_farm(data.farm_id)
-            if farm and farm.get("owner_phone") != phone:
+            if not farm:
+                return {"success": False, "message": "Farm not found"}
+            if farm.get("owner_phone") != phone:
                 return {"success": False, "message": "Farm does not belong to this user"}
             latest = db.get_kyc_status(phone)
             badge = ((latest or {}).get("extracted_fields") or {}).get("badge") or (farm or {}).get("badge")
@@ -284,6 +326,11 @@ def create_listing(data: CreateListingModel, current_user: dict = Depends(get_cu
             c_credits = float(c_credits or 0)
             b_credits = float(b_credits or 0)
         total = round(c_credits + b_credits, 2)
+        if total <= 0 or c_credits < 0 or b_credits < 0:
+            return {"success": False, "message": "Total credits must be greater than zero"}
+        if float(data.price_per_credit or 0) <= 0:
+            return {"success": False, "message": "Price per credit must be greater than zero"}
+
         listing = {
             "farmer_phone": phone,
             "farmer_name": user.get("name", "Farmer"),
@@ -314,11 +361,37 @@ def create_listing(data: CreateListingModel, current_user: dict = Depends(get_cu
 
 
 @router.post("/listings/{listing_id}/bid")
-def place_bid(listing_id: str, data: BidModel, current_user: dict = Depends(get_current_user)):
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
+def place_bid(listing_id: str, data: BidModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
+    if db.is_ready() and not current_user:
+        raise HTTPException(status_code=401, detail="Sign in to place a bid")
+    bidder_name = data.bidder_name or (current_user or {}).get("name") or "Corporate Buyer"
+    amount = float(data.bid_amount or 0)
+    if amount <= 0:
+        return {"success": False, "message": "Bid amount must be greater than zero"}
+
+    if not db.is_ready():
+        listing = market_store.get(listing_id)
+        if not listing:
+            return {"success": False, "message": "Listing not found"}
+        if str(listing.get("status") or "Active").lower() != "active":
+            return {"success": False, "message": f"Bidding closed (listing status: {listing.get('status')})"}
+        current = float(listing.get("current_bid") or 0)
+        base = float(listing.get("price_per_credit") or 0)
+        floor = current if current > 0 else base
+        if amount <= floor:
+            return {"success": False, "message": f"Bid must exceed the current standing bid of ₹{floor:,.0f}"}
+
+        ok, msg, updated_row = market_store.place_bid_cas(listing_id, amount, current)
+        if not ok:
+            return {"success": False, "message": msg, "code": "CONFLICT"}
+        return {
+            "success": True, "message": "Bid placed successfully", "listing_id": listing_id,
+            "bid_amount": amount, "bidder_name": bidder_name,
+            "previous_bid": current, "bids_count": int((updated_row or {}).get("bids_count") or 1),
+        }
+
     try:
+        sb = db._client()
         rows = (sb.table("marketplace_listings").select("*").eq("id", listing_id).execute().data) or []
         if not rows:
             return {"success": False, "message": "Listing not found"}
@@ -327,23 +400,34 @@ def place_bid(listing_id: str, data: BidModel, current_user: dict = Depends(get_
             return {"success": False, "message": f"Bidding closed (listing status: {listing.get('status')})"}
         current = float(listing.get("current_bid") or 0)
         base = float(listing.get("price_per_credit") or 0)
-        amount = float(data.bid_amount or 0)
-        if amount <= 0:
-            return {"success": False, "message": "Bid amount must be greater than zero"}
         floor = current if current > 0 else base
         if amount <= floor:
             return {"success": False, "message": f"Bid must exceed the current standing bid of ₹{floor:,.0f}"}
-        sb.table("marketplace_listings").update({
+
+        new_bids_count = int(listing.get("bids_count") or 0) + 1
+        q = sb.table("marketplace_listings").update({
             "current_bid": amount,
-            "bids_count": int(listing.get("bids_count") or 0) + 1,
-        }).eq("id", listing_id).execute()
+            "bids_count": new_bids_count,
+        }).eq("id", listing_id)
+        if listing.get("current_bid") is not None and current > 0:
+            q = q.eq("current_bid", listing.get("current_bid"))
+        else:
+            q = q.is_("current_bid", "null")
+        res = q.select("id").execute()
+        if not (res.data or []):
+            return {
+                "success": False,
+                "code": "CONFLICT",
+                "message": "A higher or concurrent bid was placed — refresh and try again",
+            }
         return {
             "success": True, "message": "Bid placed successfully", "listing_id": listing_id,
-            "bid_amount": amount, "bidder_name": data.bidder_name or current_user.get("name"),
-            "previous_bid": current, "bids_count": int(listing.get("bids_count") or 0) + 1,
+            "bid_amount": amount, "bidder_name": bidder_name,
+            "previous_bid": current, "bids_count": new_bids_count,
         }
     except Exception as e:
         return {"success": False, "message": str(e)}
+
 
 
 @router.post("/buy")
@@ -357,9 +441,20 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
     if db.is_ready() and not current_user:
         raise HTTPException(
             status_code=401,
-            detail="Sign in with a farmer or corporate account to purchase credits",
+            detail="Sign in with a corporate buyer account to purchase credits",
         )
+    if current_user:
+        role = str(current_user.get("role", "")).lower()
+        if role in ("farmer",):
+            raise HTTPException(
+                status_code=403,
+                detail="Farmer accounts cannot purchase credits. Corporate buyer account required.",
+            )
     buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
+
+    # Input validation: credit quantity must be positive
+    if data.credits is not None and float(data.credits) <= 0:
+        return {"success": False, "message": "Credit quantity must be greater than zero"}
 
     if not db.is_ready():
         listing = market_store.get(data.listing_id)
@@ -367,6 +462,8 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             return {"success": False, "message": "Listing not found"}
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
+        if current_user and current_user.get("phone") and listing.get("farmer_phone") == current_user.get("phone"):
+            raise HTTPException(status_code=403, detail="Self-purchase / wash trading is prohibited.")
         available = float(listing.get("total_credits") or 0)
         if available <= 0:
             return {"success": False, "message": "This listing has no purchasable credits left"}
@@ -387,6 +484,8 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         listing = rows[0]
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
+        if current_user and current_user.get("phone") and listing.get("farmer_phone") == current_user.get("phone"):
+            raise HTTPException(status_code=403, detail="Self-purchase / wash trading is prohibited.")
         available = float(listing.get("total_credits") or 0)
         if available <= 0:
             return {"success": False, "message": "This listing has no purchasable credits left"}
@@ -402,19 +501,32 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         def _cas_update(fields: dict) -> bool:
             """UPDATE ... WHERE id AND (status | credit balance) matched."""
             q = sb.table("marketplace_listings").update(fields).eq("id", data.listing_id)
-            if "status" in fields:  # full purchase → status becomes Retired
-                q = q.eq("status", listing.get("status") or "Active")
-            else:                   # partial purchase → credit balance drops
-                q = q.eq("total_credits", available)
+            q = q.eq("status", listing.get("status") or "Active").eq("total_credits", available)
             return bool(q.select("id").execute().data)
 
         return _purchase_flow(listing, credits, buyer, _cas_update, farm=farm)
+
     except Exception as e:
         return {"success": False, "message": str(e)}
 
 
 @router.post("/auto-match")
 def auto_match_bulk(data: AutoMatchModel):
+    target_vol = float(data.target_volume or 0)
+    if target_vol <= 0:
+        return {
+            "success": False,
+            "message": "Target volume must be greater than zero",
+            "target_volume": 0.0,
+            "total_matched": 0.0,
+            "gross_value": 0.0,
+            "farmer_total_inr": 0.0,
+            "fpo_total_inr": 0.0,
+            "platform_total_inr": 0.0,
+            "split_model": "3-way",
+            "matched_farms": [],
+        }
+
     rows_source = None
     if not db.is_ready():
         rows_source = [r for r in market_store.all_rows() if r.get("status") == "Active"]
@@ -426,19 +538,103 @@ def auto_match_bulk(data: AutoMatchModel):
         except Exception as e:
             return {"success": False, "message": str(e), "matched_farms": []}
     listings = [l for l in listings if float(l.get("total_credits") or 0) > 0]
+
+    # Apply criteria filters if provided
+    if data.filters and isinstance(data.filters, dict):
+        f_crop = (data.filters.get("crop") or "").lower().strip()
+        f_loc = (data.filters.get("location") or "").lower().strip()
+        f_min_p = data.filters.get("min_price")
+        f_max_p = data.filters.get("max_price")
+        if f_crop:
+            listings = [l for l in listings if f_crop in str(l.get("crop") or "").lower()]
+        if f_loc:
+            listings = [l for l in listings if f_loc in str(l.get("location") or "").lower()]
+        if f_min_p is not None:
+            try:
+                listings = [l for l in listings if float(l.get("price_per_credit") or 0) >= float(f_min_p)]
+            except (ValueError, TypeError):
+                pass
+        if f_max_p is not None:
+            try:
+                listings = [l for l in listings if float(l.get("price_per_credit") or 0) <= float(f_max_p)]
+            except (ValueError, TypeError):
+                pass
+
     farm_ids = list({l.get("farm_id") for l in listings if l.get("farm_id")})
     farms_by_id = {}
     if farm_ids and db.is_ready():
         sb = db._client()
-        farms_by_id = {f.get("id"): f for f in (sb.table("farms").select("id,name,badge,ndvi").in_("id", farm_ids).execute().data or [])}
+        farms_by_id = {f.get("id"): f for f in (sb.table("farms").select("id,name,badge,ndvi,geojson").in_("id", farm_ids).execute().data or [])}
+    elif not db.is_ready():
+        # Demo fallback: populate farms_by_id from sample_data.FARMS
+        from app import sample_data
+        for sf in sample_data.FARMS:
+            fid = sample_data._fallback_farm_id(sf["key"])
+            farms_by_id[fid] = {
+                "id": fid,
+                "name": sf.get("name"),
+                "badge": "REGISTRY" if sf.get("score", 0) > 500 else "REGISTRY_DOC",
+                "ndvi": float(sf.get("ndvi") or 0.7),
+            }
 
+    # Reference coordinates for spatial sorting (Telangana agricultural centroid default: 17.85, 79.15)
+    ref_lat = 17.85
+    ref_lon = 79.15
+    if data.filters and isinstance(data.filters, dict):
+        try:
+            if "latitude" in data.filters:
+                ref_lat = float(data.filters["latitude"])
+            if "longitude" in data.filters:
+                ref_lon = float(data.filters["longitude"])
+        except (ValueError, TypeError):
+            pass
+
+    def _listing_distance(l: dict) -> float:
+        fid = l.get("farm_id")
+        f = farms_by_id.get(fid) or {}
+        coords = None
+        geojson = f.get("geojson")
+        if geojson and isinstance(geojson, dict):
+            try:
+                from app.services.polygon_service import ring_from_geojson
+                ring = ring_from_geojson(geojson)
+                if len(ring) >= 3:
+                    coords = (
+                        sum(float(p[1]) for p in ring[:-1]) / (len(ring) - 1),
+                        sum(float(p[0]) for p in ring[:-1]) / (len(ring) - 1),
+                    )
+            except Exception:
+                coords = None
+        if not coords:
+            loc = str(l.get("location") or "").lower()
+            if "bonakal" in loc or "khammam" in loc:
+                coords = (17.18, 80.20)
+            elif "yellareddy" in loc or "nizamabad" in loc:
+                coords = (18.23, 78.02)
+            elif "jagtial" in loc or "karimnagar" in loc:
+                coords = (18.79, 78.91)
+            elif "devarakonda" in loc or "nalgonda" in loc:
+                coords = (16.70, 78.92)
+            elif "moinabad" in loc or "rangareddy" in loc:
+                coords = (17.33, 78.27)
+            else:
+                coords = (17.85, 79.15)
+        return ((coords[0] - ref_lat) ** 2 + (coords[1] - ref_lon) ** 2) ** 0.5
+
+    # Prioritization: price, ndvi, nearest
     if data.priority == "highest_ndvi":
         listings.sort(key=lambda l: float((farms_by_id.get(l.get("farm_id")) or {}).get("ndvi") or 0), reverse=True)
+    elif data.priority == "nearest":
+        listings.sort(key=_listing_distance)
     else:
         listings.sort(key=lambda l: float(l.get("price_per_credit") or 0))
 
-    volume = float(data.target_volume or 0)
+    volume = target_vol
     matched = []
+    farmer_share_accum = 0.0
+    fpo_share_accum = 0.0
+    platform_share_accum = 0.0
+
     for l in listings:
         if volume <= 0:
             break
@@ -448,23 +644,37 @@ def auto_match_bulk(data: AutoMatchModel):
         line_gross = round(take * float(l.get("price_per_credit") or 0), 2)
         fpo_name = _resolve_fpo_link(farm or None, l.get("farmer_phone") or "")
         line_split = split_engine.compute_split(line_gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
+        farmer_share_accum += line_split["farmer_amount_inr"]
+        fpo_share_accum += line_split["fpo_amount_inr"]
+        platform_share_accum += line_split["platform_amount_inr"]
+
         matched.append({
-            "listing_id": l.get("id"), "farm": farm.get("name") or l.get("location") or "Telangana Parcel",
-            "farmer": l.get("farmer_name") or "Marketplace Farmer", "survey": l.get("location"),
-            "crop": l.get("crop"), "credits": round(take, 2), "rate": float(l.get("price_per_credit") or 0),
-            "badge": badge, "badge_color": "emerald" if badge == "REGISTRY" else ("forest" if badge == "REGISTRY_DOC" else "amber"),
-            "farmer_share_inr": line_split["farmer_amount_inr"], "fpo_name": fpo_name or None,
+            "listing_id": l.get("id"),
+            "farm": farm.get("name") or l.get("location") or "Telangana Parcel",
+            "farmer": l.get("farmer_name") or "Marketplace Farmer",
+            "survey": l.get("location"),
+            "crop": l.get("crop"),
+            "credits": round(take, 2),
+            "rate": float(l.get("price_per_credit") or 0),
+            "badge": badge,
+            "badge_color": "emerald" if badge == "REGISTRY" else ("forest" if badge == "REGISTRY_DOC" else "amber"),
+            "farmer_share_inr": line_split["farmer_amount_inr"],
+            "fpo_name": fpo_name or None,
         })
         volume -= take
 
     gross = round(sum(m["credits"] * m["rate"] for m in matched), 2)
-    overall_split = split_engine.compute_split(
-        gross, fpo_involved=any(m.get("fpo_name") for m in matched)
-    )
+    has_fpo = any(m.get("fpo_name") for m in matched)
+    split_model = "4-way" if has_fpo else "3-way"
+
     return {
-        "success": True, "target_volume": float(data.target_volume or 0),
-        "total_matched": round(sum(m["credits"] for m in matched), 2), "gross_value": gross,
-        "farmer_total_inr": overall_split["farmer_amount_inr"], "fpo_total_inr": overall_split["fpo_amount_inr"],
-        "platform_total_inr": overall_split["platform_amount_inr"], "split_model": overall_split["model"],
+        "success": True,
+        "target_volume": target_vol,
+        "total_matched": round(sum(m["credits"] for m in matched), 2),
+        "gross_value": gross,
+        "farmer_total_inr": round(farmer_share_accum, 2),
+        "fpo_total_inr": round(fpo_share_accum, 2),
+        "platform_total_inr": round(platform_share_accum, 2),
+        "split_model": split_model,
         "matched_farms": matched,
     }

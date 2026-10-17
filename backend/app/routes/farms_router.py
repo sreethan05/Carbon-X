@@ -54,61 +54,10 @@ def _get_user_farms(phone: str):
     return db.get_farms(phone)
 
 
-def _polygon_area_hectares(geojson: dict) -> float:
-    from app.services.polygon_service import polygon_area_hectares as _canonical
-    try:
-        return _canonical(geojson)
-    except Exception:
-        geometry = geojson.get("geometry", {})
-        if geometry.get("type") != "Polygon":
-            raise ValueError("GeoJSON must be a Polygon")
-        rings = geometry.get("coordinates") or []
-        ring = rings[0] if rings else []
-        if len(ring) < 4:
-            raise ValueError("Polygon must have at least 3 points")
-        if ring[0] != ring[-1]:
-            ring = [*ring, ring[0]]
-        lat_mid = sum(float(point[1]) for point in ring[:-1]) / (len(ring) - 1)
-        meters_per_degree_lng = 111320 * math.cos(math.radians(lat_mid))
-        meters_per_degree_lat = 110540
-        area_m2 = 0
-        projected = [
-            (float(lng) * meters_per_degree_lng, float(lat) * meters_per_degree_lat)
-            for lng, lat in ring
-        ]
-        for i in range(len(projected) - 1):
-            x1, y1 = projected[i]
-            x2, y2 = projected[i + 1]
-            area_m2 += x1 * y2 - x2 * y1
-        return round(abs(area_m2) / 20000, 2)
-
-
-def _validate_polygon_geojson(geojson: dict) -> tuple[bool, str]:
-    if not isinstance(geojson, dict):
-        return False, "GeoJSON must be an object"
-    geom = geojson.get("geometry") or {}
-    if geom.get("type") != "Polygon":
-        return False, "GeoJSON geometry type must be Polygon"
-    rings = geom.get("coordinates")
-    if not isinstance(rings, list) or not rings:
-        return False, "Polygon coordinates missing"
-    ring = rings[0]
-    if not isinstance(ring, list) or len(ring) < 4:
-        return False, "Polygon ring needs at least 4 positions"
-    for pos in ring:
-        if (not isinstance(pos, list) or len(pos) < 2
-                or not all(isinstance(c, (int, float)) and math.isfinite(c) for c in pos[:2])):
-            return False, "Invalid coordinate in polygon ring"
-        lon, lat = pos[0], pos[1]
-        if not (-180 <= lon <= 180 and -90 <= lat <= 90):
-            return False, "Coordinate out of WGS84 range"
-    if ring[0][:2] != ring[-1][:2]:
-        return False, "Polygon ring must be closed (first == last position)"
-    lons = [pos[0] for pos in ring]
-    lats = [pos[1] for pos in ring]
-    if (max(lons) - min(lons)) > 60 or (max(lats) - min(lats)) > 60:
-        return False, "Polygon too large — draw a single farm plot"
-    return True, ""
+from app.services.polygon_service import (
+    polygon_area_hectares as _polygon_area_hectares,
+    validate_polygon_geojson as _validate_polygon_geojson,
+)
 
 
 def _decode_upload(content: str) -> bytes:
@@ -286,7 +235,18 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
         geojson = farm.get("geojson")
         if not geojson or not geojson.get("geometry"):
             return {"success": False, "message": "Farm boundary (GeoJSON) is required"}
+        ok, err = _validate_polygon_geojson(geojson)
+        if not ok:
+            return {"success": False, "message": err}
         area_hectares = float(farm.get("area_hectares") or _polygon_area_hectares(geojson))
+        max_area = app_config.ANALYZE_MAX_AREA_HECTARES
+        if area_hectares > max_area:
+            return {
+                "success": False,
+                "message": f"Parcel area {area_hectares:,.0f} ha exceeds the {max_area:,} ha limit — draw a single farm plot",
+            }
+        if area_hectares <= 0:
+            return {"success": False, "message": "Parcel area must be greater than zero"}
         carbon = float(farm.get("carbon_tonnes") or 0)
         bio_score = float(farm.get("biodiversity_score") or 0)
         credits = credit_engine.credit_split(carbon, bio_score)
@@ -438,7 +398,7 @@ def get_farm_ndvi_history(farm_id: str):
 # ─── KYC & Land Verification ───
 
 @router.post("/verify-aadhaar")
-def verify_aadhaar(data: AadhaarVerificationModel, current_user: dict = Depends(get_current_user)):
+def verify_aadhaar(data: AadhaarVerificationModel, current_user: dict = Depends(require_role("farmer", "verifier", "admin"))):
     """OCR Aadhaar front/back and compare it to the registered identity anchor."""
     from PIL import Image
     import io
@@ -485,7 +445,7 @@ def verify_aadhaar(data: AadhaarVerificationModel, current_user: dict = Depends(
 
 
 @router.post("/verify-land")
-def verify_land_document(data: LandVerificationModel, current_user: dict = Depends(get_current_user)):
+def verify_land_document(data: LandVerificationModel, current_user: dict = Depends(require_role("farmer", "fpo", "verifier", "admin"))):
     """Run the trust engine. Backend assigns tier, badge, status, and eligibility."""
     try:
         from app.services.fraud_engine import run_fraud_checks
@@ -666,6 +626,19 @@ def verify_land_document(data: LandVerificationModel, current_user: dict = Depen
 @router.get("/kyc/status/{phone}")
 def get_kyc_status(phone: str, current_user: dict = Depends(get_current_user)):
     """Return the latest KYC verification record for a farmer."""
+    role = str(current_user.get("role", "farmer")).lower()
+    user_phone = str(current_user.get("phone", "")).strip()
+    target_phone = phone.strip()
+    if role in ("buyer",):
+        raise HTTPException(
+            status_code=403,
+            detail="Corporate buyer accounts cannot access farmer KYC verification records",
+        )
+    if role == "farmer" and user_phone and user_phone != target_phone:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied: you can only view your own KYC status",
+        )
     try:
         _require_database()
         record = db.get_kyc_status(phone)
@@ -692,7 +665,7 @@ def get_kyc_status(phone: str, current_user: dict = Depends(get_current_user)):
 @router.post("/documents/parse-pahani")
 def parse_pahani_document(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_role("farmer", "fpo", "verifier", "admin")),
 ):
     """OCR a Pahani (Adangal) record and return structured fields as JSON."""
     from app.services.document_intelligence_service import (
@@ -782,6 +755,9 @@ def check_farmland(data: CheckFarmlandModel, current_user: dict = Depends(get_cu
     from app.services.polygon_service import ring_from_geojson, polygon_area_hectares
     from app.services.fraud_engine import NDVI_FARMLAND_MIN
 
+    ok, err = _validate_polygon_geojson(data.geojson)
+    if not ok:
+        raise HTTPException(status_code=400, detail=err)
     ring = ring_from_geojson(data.geojson)
     if len(ring) < 3:
         raise HTTPException(status_code=400, detail="Valid polygon GeoJSON is required")

@@ -79,6 +79,14 @@ class HealthAndListingsTests(unittest.TestCase):
 
 
 class PurchasePipelineTests(unittest.TestCase):
+    def setUp(self):
+        from app.services import market_store
+        market_store.reset()
+
+    def tearDown(self):
+        from app.services import market_store
+        market_store.reset()
+
     def test_buy_settles_wallet_proceeds_from_ledger(self):
         """Penny-path check: a purchase must show up in the seller's wallet
         with the actual ledger gross — not a fabricated bid value."""

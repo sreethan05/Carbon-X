@@ -260,47 +260,33 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   `backend/src/routes/farms.js`. Kept `backend/src/` (standalone optional
   Amoy minting service, documented — NOT dead) and the `.kilo` gitignore
   line (defensive against tool recreation).
-- Deferred: main.py router split (2.9k lines, pure churn without behavior
-  gain at this stage — trigger: second backend contributor).
-
-
-## Honesty audit round (2026-10-17, latest)
-
-Full-repo data-integrity pass: every number shown must come from a real
-engine, a stored record, or an explicitly-labelled demo path.
-
-- **FarmDetailsForm**: removed the fabricated "LSTM Sequestration Boost"
-  practice-bonus model (+0.50/+0.35/+0.40 "credits/acre/yr" — no such model
-  exists); crop picker now uses `_CROP_FACTORS` canonical keys ("Paddy
-  (Rice)"/"Pulses & Millets" silently fell back to the default factor
-  before); the form stores only crop + irrigation (the fields the pipeline
-  actually consumes) and states openly that practice-level factors are
-  roadmap.
-- **DetailedFarmAnalytics**: the "Interactive ML Simulation" (hardcoded
-  zero-till +2.2 tCO2e / +₹748 deltas) is replaced by a real evidence
-  checklist rendered from `passport.trust.components`.
-- **Passport trust**: no longer claims `practice_photo`/`geotag_ok`/
-  `baseline_known` (no capture pipeline or stored baseline series exists) —
-  quality counts the badge + stored NDVI only (demo farm: 0.40 → −22%).
-- **EarningsCalculator + `POST /farms/earnings-calculator`**: evidence flags
-  default to NOT claimed; badge proxy excludes PENDING.
-- **SupportCenter**: fake toll-free number, "UPI in <3 minutes",
-  "micro-insurance" and unverifiable encryption/compliance claims replaced
-  with pilot-accurate statements.
-- **Earlier fixes in this round** (same working tree): AdminDashboard reads
-  real `/ops/summary` + FPO queues; Marketplace has no fabricated listings
-  (real loading/error/empty + fallback badge); FarmerDashboard uses ha units
-  and real listing prices; NDVI charts show stored measurements only;
-  CarbonWallet demo payout is UI-only (no state/ledger mutation);
-  CorporateDashboard target is user-set; FPO API keys renamed to true units
-  (`area_hectares`); certificates/PDFs carry real buyer + `retired_at`;
-  FarmerRegister uses the real Web Speech API with no fabricated defaults;
-  `farms/{id}/ndvi-history` returns stored measurements only.
-- **Docs**: MRV_METHODOLOGY §1/§4 now say crop-calibrated SOC factors
-  (practice-level modulation = roadmap); IMPACT_MODEL SOC range corrected to
-  the recalibrated 0.25–0.60 tCO₂e/ha/yr.
-- **Gates**: backend 72 tests green (1 skipped live-DB opt-in), eslint 0
-  errors, vite build OK.
+- Completed: main.py router split — routes modularized into `app/routes/*`
+  (analyze_router, monitor_router, ws_router, auth_router, evidence_router,
+  farms_router, marketplace_router, payments_router, trust_router, ops_router,
+  fpo_router, corporate_router); `app/main.py` is a clean composition root (~200 lines).
+- **Evidence capture pipeline**: `POST /farms/{farm_id}/evidence/photo`
+  (multipart upload ≤8 MB, EXIF GPS extraction + ray-casting polygon boundary
+  verification), `POST /farms/{farm_id}/evidence/geotag`, `GET /farms/{farm_id}/evidence`,
+  and `GET /farms/{farm_id}/evidence/photo/{sha256}`. Stored via `supabase/08_farm_evidence.sql`
+  with memory fallback. Feeds directly into `credit_engine.evidence_quality`
+  to dynamically reduce the uncertainty deduction from 22% to 12%.
+- **Payments & checkout pipeline**: `GET /payments/config`, `POST /payments/checkout`
+  (CAS compare-and-swap, provider='simulated' settles escrow instantly, provider='razorpay'
+  creates orders for signature-verified webhook settlement), `POST /payments/webhook`
+  with HMAC signature verification and conflict refund logging.
+- **Frontend integration**: `DetailedFarmAnalytics` has interactive Ground Evidence &
+  Practice Verification (photo upload + device GPS + parcel geotags + evidence gallery
+  with real-time deduction recalculation); `Marketplace` & `CorporateCreditAnalysis`
+- **Voice agent pipeline**: multilingual farmer assistant (`POST /api/v1/voice/query` and
+  `POST /api/v1/voice/text-query`) supporting Telugu, Hindi, and Indian English via Sarvam AI
+  with role-guarded tool calling, session tracking, rate limiting, and PII/token redaction.
+- **Production & Docker readiness**: multi-stage Dockerfiles hardened with unprivileged
+  non-root users (root `Dockerfile` uses `USER nginx` with `setcap` on port 80; `backend/Dockerfile`
+  uses `USER appuser`; `backend/Dockerfile.node` uses `USER node`); docker-compose passes all
+  payment, monitoring, and security variables; CI workflow `.github/workflows/ci.yml` runs
+  frontend lint/build and hermetic backend tests.
+- **Gates**: backend 301 tests green (1 skipped live-DB opt-in), eslint 0 errors /
+  0 warnings, vite build OK.
 
 ## Commands
 

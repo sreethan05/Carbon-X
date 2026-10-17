@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, Volume2, Phone, ShieldCheck, ArrowRight, Lock } from 'lucide-react';
+import { Mic, Volume2, Phone, ShieldCheck, ArrowRight, Lock, RefreshCw, Loader2 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { sendOtp, verifyRegistrationOtp, registerUser } from '../services/api';
@@ -14,6 +14,7 @@ export default function FarmerRegister() {
   const [isListening, setIsListening] = useState(false);
   const [speechText, setSpeechText] = useState('');
   const [formError, setFormError] = useState('');
+  const recognitionRef = useRef(null);
 
   // Form State
   const [name, setName] = useState('');
@@ -32,20 +33,43 @@ export default function FarmerRegister() {
   const [timerActive, setTimerActive] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [isDevOtp, setIsDevOtp] = useState(false);
-  const [, setIsRegistering] = useState(false);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isResendingOtp, setIsResendingOtp] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   useEffect(() => {
-    let interval = null;
-    if (timerActive && otpTimer > 0) {
-      interval = setInterval(() => setOtpTimer((prev) => prev - 1), 1000);
-    } else if (otpTimer === 0) {
-      setTimerActive(false);
-    }
+    if (!timerActive) return;
+    const interval = setInterval(() => {
+      setOtpTimer((prev) => {
+        if (prev <= 1) {
+          setTimerActive(false);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
     return () => clearInterval(interval);
-  }, [timerActive, otpTimer]);
+  }, [timerActive]);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch { /* ignore */ }
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const handleMicClick = () => {
-    if (isListening) return;
+    if (isListening) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch { /* ignore */ }
+      }
+      setIsListening(false);
+      return;
+    }
     setFormError('');
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
@@ -54,6 +78,7 @@ export default function FarmerRegister() {
     }
     try {
       const recognition = new SpeechRecognitionCtor();
+      recognitionRef.current = recognition;
       recognition.lang = currentLang === 'te' ? 'te-IN' : 'en-IN';
       recognition.continuous = false;
       recognition.interimResults = false;
@@ -78,56 +103,117 @@ export default function FarmerRegister() {
     }
   };
 
+  const playVoicePrompt = () => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const promptText = currentLang === 'te'
+      ? 'దయచేసి మీ పూర్తి పేరు, మొబైల్ నంబరు మరియు ఆధార్ వివరాలను నమోదు చేయండి.'
+      : 'Please enter your legal full name, mobile number, and identity details to enroll.';
+    const utterance = new SpeechSynthesisUtterance(promptText);
+    utterance.lang = currentLang === 'te' ? 'te-IN' : 'en-IN';
+    window.speechSynthesis.speak(utterance);
+  };
+
   const handleIdChange = (e) => {
-    const val = e.target.value;
+    const val = e.target.value.replace(/\D/g, '').slice(0, 12);
     setRawIdNumber(val);
     if (val.length === 12) {
       const last4 = val.slice(-4);
       setMaskedId(`XXXX-XXXX-[${last4} Redacted]`);
+    } else if (val.length > 0) {
+      setMaskedId(`XXXX-XXXX-${'•'.repeat(Math.min(val.length, 4))}`);
     } else {
-      setMaskedId(val);
+      setMaskedId('');
     }
   };
 
   const handleSubmitForm = async (e) => {
     e.preventDefault();
-    const cleanPhone = phone.trim().replace(/\s+/g, '');
+    if (isSendingOtp) return;
+    const cleanPhone = phone.trim().replace(/\D/g, '');
+    const cleanAadhaar = rawIdNumber.trim().replace(/\D/g, '');
     setFormError('');
     if (!name.trim()) {
       setFormError('Enter your legal full name.');
       return;
     }
-    if (!/^\d{10}$/.test(cleanPhone)) {
-      setFormError('Enter a valid 10-digit mobile number.');
+    const INDIAN_PHONE_REGEX = /^[6-9]\d{9}$/;
+    if (!INDIAN_PHONE_REGEX.test(cleanPhone)) {
+      setFormError('Enter a valid 10-digit Indian mobile number (starts with 6, 7, 8, or 9).');
       return;
     }
-    if (!/^\d{12}$/.test(rawIdNumber.trim())) {
-      setFormError('Enter the complete 12-digit ID number.');
+    if (!/^\d{12}$/.test(cleanAadhaar)) {
+      setFormError('Enter the complete 12-digit numeric ID number.');
+      return;
+    }
+    if (cleanAadhaar.startsWith('0') || cleanAadhaar.startsWith('1')) {
+      setFormError('Aadhaar number cannot start with 0 or 1.');
+      return;
+    }
+    if (!district.trim()) {
+      setFormError('Please select your district.');
       return;
     }
 
     setOtpError('');
     setOtp('');
     setIsDevOtp(false);
+    setIsSendingOtp(true);
 
-    const res = await sendOtp(cleanPhone);
-    if (!res.success) {
-      setFormError(res.message || 'Could not send the SMS to your phone. Please try again.');
+    try {
+      const res = await sendOtp(cleanPhone);
+      if (!res?.success) {
+        setFormError(res?.message || 'Could not send the SMS to your phone. Please try again.');
+        return;
+      }
+      if (res.dev_otp) {
+        setOtp(res.dev_otp);
+        setIsDevOtp(true);
+      }
+      setShowOtpModal(true);
+      setTimerActive(true);
+      setOtpTimer(600);
+    } catch {
+      setFormError('Could not reach the server. Please check your connection and retry.');
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleModalResendOtp = async () => {
+    if (isResendingOtp || isSendingOtp) return;
+    const cleanPhone = phone.trim().replace(/\D/g, '');
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      setOtpError('Invalid phone number for OTP resend.');
       return;
     }
-    if (res.dev_otp) {
-      setOtp(res.dev_otp);
-      setIsDevOtp(true);
+    setOtpError('');
+    setIsResendingOtp(true);
+    try {
+      const res = await sendOtp(cleanPhone);
+      if (res?.success) {
+        setOtpTimer(600);
+        setTimerActive(true);
+        if (res.dev_otp) {
+          setOtp(res.dev_otp);
+          setIsDevOtp(true);
+        }
+      } else {
+        setOtpError(res?.message || 'Could not resend OTP. Please try again.');
+      }
+    } catch {
+      setOtpError('Could not resend OTP. Please check your connection.');
+    } finally {
+      setIsResendingOtp(false);
     }
-    setShowOtpModal(true);
-    setTimerActive(true);
-    setOtpTimer(600);
   };
 
   const handleVerifyOtpSubmit = async (e) => {
     e.preventDefault();
-    const cleanPhone = phone.trim().replace(/\s+/g, '');
-    if (otp.length !== 6) {
+    if (isRegistering) return;
+    const cleanPhone = phone.trim().replace(/\D/g, '');
+    const cleanOtp = otp.trim().replace(/\D/g, '');
+    if (cleanOtp.length !== 6 || !/^\d{6}$/.test(cleanOtp)) {
       setOtpError('Invalid 6-digit OTP code');
       return;
     }
@@ -135,37 +221,36 @@ export default function FarmerRegister() {
     setIsRegistering(true);
     setOtpError('');
 
-    const verifyRes = await verifyRegistrationOtp(cleanPhone, otp);
-    if (!verifyRes || !verifyRes.success) {
-      setOtpError((verifyRes && verifyRes.message) || 'Invalid or expired OTP');
-      setIsRegistering(false);
-      return;
-    }
-
-    // Step 2: Register user
-    const regPayload = {
-      phone: cleanPhone,
-      otp,
-      otp_verification_token: verifyRes.verification_token,
-      name: name.trim(),
-      aadhaar: rawIdNumber.trim(),
-      state: 'Telangana',
-      district: district.trim(),
-      village: village.trim(),
-      upi: '',
-      role: 'farmer',
-      preferred_language: currentLang || 'en',
-    };
-
     try {
+      const verifyRes = await verifyRegistrationOtp(cleanPhone, cleanOtp);
+      if (!verifyRes || !verifyRes.success) {
+        setOtpError(verifyRes?.message || 'Invalid or expired OTP');
+        return;
+      }
+
+      // Step 2: Register user
+      const regPayload = {
+        phone: cleanPhone,
+        otp: cleanOtp,
+        otp_verification_token: verifyRes.verification_token,
+        name: name.trim(),
+        aadhaar: rawIdNumber.trim().replace(/\D/g, ''),
+        state: 'Telangana',
+        district: district.trim(),
+        village: village.trim(),
+        upi: '',
+        role: 'farmer',
+        preferred_language: currentLang || 'en',
+      };
+
       const regRes = await registerUser(regPayload);
-      if (regRes.success && regRes.token) {
+      if (regRes?.success && regRes?.token) {
         await login(regRes.token, regRes.user);
         setShowOtpModal(false);
         navigate('/farmer/land-verification');
         return;
       }
-      setOtpError(regRes.message || 'Registration failed. Please try again.');
+      setOtpError(regRes?.message || 'Registration failed. Please try again.');
     } catch (err) {
       console.warn('Backend registration unavailable', err);
       setOtpError('Could not reach the registration service. Please check your connection and retry.');
@@ -202,6 +287,8 @@ export default function FarmerRegister() {
             <button
               onClick={handleMicClick}
               type="button"
+              aria-label={isListening ? 'Stop listening' : 'Start voice input'}
+              title={isListening ? 'Stop listening' : 'Speak your name'}
               className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${
                 isListening ? 'bg-rose-600 animate-pulse text-white' : 'bg-[#15803D] hover:bg-[#10B981] text-white'
               }`}
@@ -210,10 +297,16 @@ export default function FarmerRegister() {
             </button>
             <div>
               <div className="flex items-center gap-2">
-                <Volume2 className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">
-                  {currentLang === 'te' ? 'వాయిస్ సహాయం (Telugu / Eng)' : 'Voice-First Input Guidance'}
-                </span>
+                <button
+                  type="button"
+                  onClick={playVoicePrompt}
+                  className="flex items-center gap-1.5 text-xs font-bold text-emerald-300 hover:text-emerald-200 uppercase tracking-wider transition-colors"
+                  title="Listen to audio instructions"
+                  aria-label="Listen to voice guidance"
+                >
+                  <Volume2 className="w-4 h-4 text-emerald-400" />
+                  <span>{currentLang === 'te' ? 'వాయిస్ సహాయం (Telugu / Eng)' : 'Voice-First Input Guidance'}</span>
+                </button>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
                 {speechText || (currentLang === 'te' ? 'మైక్ క్లిక్ చేసి మీ పూర్తి పేరు చెప్పండి' : 'Click mic and say your full name')}
@@ -240,11 +333,15 @@ export default function FarmerRegister() {
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Mobile Number (+91)</label>
               <input
-                type="text"
+                type="tel"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="tel"
+                maxLength={10}
                 required
                 placeholder="e.g. 9876543210"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
                 className="w-full px-3 py-2.5 bg-[#F8FAF8] border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-emerald-600"
               />
             </div>
@@ -266,10 +363,13 @@ export default function FarmerRegister() {
               <label className="block text-xs font-bold text-slate-700 mb-1">Identification Number (Masked)</label>
               <input
                 type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={12}
                 required
-                placeholder="Enter ID (e.g. 123456783210)"
+                placeholder="Enter 12-digit UID (e.g. 123456783210)"
                 value={rawIdNumber}
-                onChange={(e) => handleIdChange(e.target.value)}
+                onChange={handleIdChange}
                 className="w-full px-3 py-2.5 bg-[#F8FAF8] border border-slate-200 rounded-lg text-xs text-slate-900 focus:outline-none focus:border-emerald-600 font-mono"
               />
               {maskedId && (
@@ -326,11 +426,26 @@ export default function FarmerRegister() {
 
           <button
             type="submit"
-            className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-4"
+            disabled={isSendingOtp}
+            className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-4"
           >
-            <span>Verify Phone & Continue</span>
-            <ArrowRight className="w-4 h-4" />
+            {isSendingOtp && <Loader2 className="w-4 h-4 animate-spin" />}
+            <span>{isSendingOtp ? 'Sending OTP…' : 'Verify Phone & Continue'}</span>
+            {!isSendingOtp && <ArrowRight className="w-4 h-4" />}
           </button>
+
+          <div className="text-center pt-2 border-t border-slate-100">
+            <p className="text-xs text-slate-500">
+              Already registered?{' '}
+              <button
+                type="button"
+                onClick={() => navigate('/farmer/login')}
+                className="text-emerald-800 font-bold hover:underline"
+              >
+                Sign In to Account
+              </button>
+            </p>
+          </div>
         </form>
 
         {/* OTP Verification Modal */}
@@ -367,30 +482,49 @@ export default function FarmerRegister() {
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Enter 6-Digit Code</label>
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
                     maxLength={6}
                     required
                     placeholder="Enter 6-digit OTP"
                     value={otp}
-                    onChange={(e) => setOtp(e.target.value)}
+                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-center text-lg font-mono font-bold tracking-widest text-slate-900 focus:outline-none focus:border-emerald-600"
                   />
+                </div>
+
+                <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-600">
+                  <span>Didn't receive code?</span>
+                  <button
+                    type="button"
+                    onClick={handleModalResendOtp}
+                    disabled={isResendingOtp || isSendingOtp}
+                    className="px-2.5 py-1 rounded bg-white hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed border border-slate-200 text-emerald-800 text-xs font-bold transition-all flex items-center gap-1 shadow-xs"
+                  >
+                    {isResendingOtp ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                    <span>{isResendingOtp ? 'Resending…' : 'Resend Code'}</span>
+                  </button>
                 </div>
 
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => setShowOtpModal(false)}
-                    className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
+                    disabled={isRegistering}
+                    className="flex-1 py-2.5 bg-slate-100 text-slate-700 disabled:opacity-50 rounded-lg text-xs font-bold hover:bg-slate-200"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="flex-1 py-2.5 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 flex items-center justify-center gap-1"
+                    disabled={isRegistering || otp.length !== 6}
+                    className="flex-1 py-2.5 bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 flex items-center justify-center gap-1"
                   >
-                    <span>Verify & Route</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
+                    {isRegistering && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>{isRegistering ? 'Registering…' : 'Verify & Route'}</span>
+                    {!isRegistering && <ArrowRight className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               </form>

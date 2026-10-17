@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services import credit_engine, split_engine  # noqa: E402
 from app.services import ledger as ledger_module  # noqa: E402
+from app.services import certificate_pdf  # noqa: E402
 
 
 class SplitEngineTests(unittest.TestCase):
@@ -54,6 +55,13 @@ class SplitEngineTests(unittest.TestCase):
         split = split_engine.compute_split(0, fpo_involved=True)
         self.assertEqual(split["farmer_amount_inr"], 0.0)
         self.assertEqual(len(split["lines"]), 3)
+
+    def test_negative_gross_clamped_to_zero(self):
+        split = split_engine.compute_split(-50.0, fpo_involved=True)
+        self.assertEqual(split["gross_inr"], 0.0)
+        self.assertEqual(split["farmer_amount_inr"], 0.0)
+        self.assertEqual(split["fpo_amount_inr"], 0.0)
+        self.assertEqual(split["platform_amount_inr"], 0.0)
 
 
 class LedgerTests(unittest.TestCase):
@@ -108,6 +116,40 @@ class LedgerTests(unittest.TestCase):
         b = ledger_module.append_event("farm-d", "ISSUE", {"k": "v"})
         self.assertEqual(a["hash"], b["hash"])
 
+    def test_sequence_continuity_tamper_detected(self):
+        ledger_module.append_event("farm-seq", "ISSUE", {"k": 1})
+        ledger_module.append_event("farm-seq", "SALE", {"k": 2})
+        # Alter sequence number of second event
+        ledger_module._CHAINS["farm-seq"][1]["seq"] = 99
+        check = ledger_module.verify_chain("farm-seq")
+        self.assertFalse(check["valid"])
+        self.assertEqual(check["broken_at"], 99)
+
+    def test_listener_subscribe_and_unsubscribe(self):
+        received = []
+        def on_event(ev):
+            received.append(ev)
+
+        ledger_module.subscribe("farm-sub", on_event)
+        ev1 = ledger_module.append_event("farm-sub", "ISSUE", {"x": 10})
+        self.assertEqual(len(received), 1)
+        self.assertEqual(received[0]["hash"], ev1["hash"])
+
+        ledger_module.unsubscribe("farm-sub", on_event)
+        ledger_module.append_event("farm-sub", "SALE", {"x": 20})
+        self.assertEqual(len(received), 1, "Unsubscribed listener must not receive further events")
+
+    def test_summary_structure(self):
+        ledger_module.append_event("farm-sum", "ISSUE", {"credits": 50})
+        ledger_module.append_event("farm-sum", "SALE", {"credits": 50})
+        s = ledger_module.summary("farm-sum")
+        self.assertEqual(s["events"], 2)
+        self.assertTrue(s["verified"])
+        self.assertIsNotNone(s["tail_hash"])
+        self.assertEqual(s["types"], ["ISSUE", "SALE"])
+        self.assertIsNotNone(s["first_ts"])
+        self.assertIsNotNone(s["last_ts"])
+
 
 class CreditEngineTests(unittest.TestCase):
     def test_five_steps_present_and_ordered(self):
@@ -148,6 +190,41 @@ class CreditEngineTests(unittest.TestCase):
         est = credit_engine.estimate_credits(1.0, "Dragonfruit", 0.7, quality_score=1.0)
         self.assertEqual(est["crop"], "Mixed cropping")
 
+    def test_pulses_crop_factor(self):
+        est = credit_engine.estimate_credits(2.0, "Pulses", 0.65, quality_score=1.0)
+        self.assertEqual(est["crop"], "Pulses")
+        # Step 3 soil factor for Pulses is 0.30 tCO2e/ha
+        soil_step = next(s for s in est["steps"] if s["step"] == 3)
+        self.assertEqual(soil_step["value"], 0.30)
+
+    def test_none_quality_score_is_handled_safely(self):
+        est = credit_engine.estimate_credits(1.5, "Rice", 0.75, quality_score=None)
+        self.assertIn("credits_tco2e", est)
+        self.assertGreater(est["credits_tco2e"], 0)
+
+    def test_malformed_model_quantiles_safely_falls_back_to_heuristic(self):
+        est = credit_engine.estimate_credits(
+            1.0, "Rice", 0.8,
+            model_quantiles={"p10": None, "p50": None, "p90": None},
+        )
+        self.assertEqual(est["ci90_source"], "heuristic")
+        self.assertGreater(est["ci90"]["high"], est["ci90"]["low"])
+
+    def test_quick_scan_estimate_handles_none_values_and_caching(self):
+        # features containing None values must not crash string formatting
+        features = {"NDVI": 0.72, "SAVI": None, "B4": 0.08}
+        res1 = credit_engine.quick_scan_estimate(2.5, "Cotton", 0.72, features=features)
+        self.assertIn("credits_tco2e", res1)
+        # Second call hits cache
+        res2 = credit_engine.quick_scan_estimate(2.5, "Cotton", 0.72, features=features)
+        self.assertEqual(res1["credits_tco2e"], res2["credits_tco2e"])
+
+    def test_credit_split_non_negative(self):
+        split = credit_engine.credit_split(-10.0, -50.0)
+        self.assertEqual(split["carbon_credits"], 0.0)
+        self.assertEqual(split["biodiversity_credits"], 0.0)
+        self.assertEqual(split["total_credits"], 0.0)
+
 
 class Stage1VerificationTests(unittest.TestCase):
     def test_match_inside_window(self):
@@ -170,6 +247,131 @@ class Stage1VerificationTests(unittest.TestCase):
         r = credit_engine.stage1_verification("Dragonfruit", 0.2)
         self.assertEqual(r["status"], "UNREVIEWED")
         self.assertTrue(r["match"])
+
+    def test_crop_windows_for_key_crops(self):
+        # Verify Paddy, Cotton, Maize, Pulses, Sugarcane bounds
+        crops_to_check = {
+            "Paddy": (0.55, 0.95),
+            "Cotton": (0.40, 0.90),
+            "Maize": (0.45, 0.92),
+            "Pulses": (0.35, 0.85),
+            "Sugarcane": (0.60, 0.95),
+        }
+        for crop, (lo, hi) in crops_to_check.items():
+            mid = round((lo + hi) / 2, 2)
+            match_res = credit_engine.stage1_verification(crop, mid)
+            self.assertEqual(match_res["status"], "MATCH", f"Failed match for {crop} at {mid}")
+            self.assertEqual(match_res["expected_range"], [lo, hi])
+
+            mismatch_res = credit_engine.stage1_verification(crop, lo - 0.1)
+            self.assertEqual(mismatch_res["status"], "MISMATCH", f"Failed mismatch for {crop}")
+
+    def test_crop_token_matching(self):
+        # Real-world declarations with qualifiers should match their base crop window
+        res = credit_engine.stage1_verification("Paddy (Kharif)", 0.75)
+        self.assertEqual(res["status"], "MATCH")
+        self.assertEqual(res["crop"], "Paddy")
+
+        res_cotton = credit_engine.stage1_verification("Bt Cotton", 0.65)
+        self.assertEqual(res_cotton["status"], "MATCH")
+        self.assertEqual(res_cotton["crop"], "Cotton")
+
+class CertificatePdfTests(unittest.TestCase):
+    def setUp(self):
+        certificate_pdf.clear_certificate_pdf_cache()
+
+    def test_pdf_generation_retired(self):
+        cert = {
+            "id": "CX-2026-CERT-A1B2C3D4",
+            "buyer": "Telangana Sustainable Agro Pvt Ltd",
+            "farmer_name": "Ramesh Kumar",
+            "crop": "Paddy",
+            "volume": 25.5,
+            "value": 38250.0,
+            "location": "Siddipet, Telangana",
+            "issued_date": "2026-10-15",
+            "retired_date": "2026-10-16",
+            "status": "RETIRED",
+            "batch_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        }
+        pdf = certificate_pdf.render_certificate_pdf(cert)
+        self.assertIsInstance(pdf, bytes)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertGreater(len(pdf), 2000)
+
+    def test_pdf_generation_escrow(self):
+        cert = {
+            "id": "CX-2026-CERT-ESCROW01",
+            "buyer": "Global Green Corp",
+            "farmer_name": "Sita Devi",
+            "crop": "Cotton",
+            "volume": 10.0,
+            "value": 15000.0,
+            "location": "Warangal, Telangana",
+            "issued_date": "2026-10-15",
+            "status": "HELD_IN_ESCROW",
+            "batch_hash": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+        }
+        pdf = certificate_pdf.render_certificate_pdf(cert)
+        self.assertIsInstance(pdf, bytes)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+    def test_pdf_handles_very_long_fields(self):
+        cert = {
+            "id": "CX-2026-CERT-LONG0001",
+            "buyer": "A" * 200,
+            "farmer_name": "B" * 200,
+            "crop": "C" * 150,
+            "volume": 999999.99,
+            "value": 999999999.0,
+            "location": "D" * 300,
+            "issued_date": "2026-10-15",
+            "status": "RETIRED",
+            "batch_hash": "a" * 64,
+        }
+        # Must not raise an error even with extremely long strings
+        pdf = certificate_pdf.render_certificate_pdf(cert)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+    def test_lru_cache_and_invalidation(self):
+        cert = {
+            "id": "CX-2026-CERT-CACHE01",
+            "buyer": "Test Buyer",
+            "farmer_name": "Test Farmer",
+            "crop": "Rice",
+            "volume": 5.0,
+            "value": 5000.0,
+            "location": "Hyderabad",
+            "issued_date": "2026-10-15",
+            "status": "RETIRED",
+            "batch_hash": "b" * 64,
+        }
+        pdf1 = certificate_pdf.render_certificate_pdf(cert)
+        # Direct cache hit
+        cached = certificate_pdf.get_cached_certificate_pdf("CX-2026-CERT-CACHE01")
+        self.assertEqual(cached, pdf1)
+
+        # Invalidation
+        certificate_pdf.invalidate_certificate_pdf("CX-2026-CERT-CACHE01")
+        self.assertIsNone(certificate_pdf.get_cached_certificate_pdf("CX-2026-CERT-CACHE01"))
+
+    def test_lru_eviction(self):
+        cache = certificate_pdf.CertificatePdfCache(maxsize=3)
+        cache.set("c1", b"pdf1")
+        cache.set("c2", b"pdf2")
+        cache.set("c3", b"pdf3")
+        self.assertEqual(len(cache), 3)
+
+        # Access c1 to make c2 the LRU
+        self.assertEqual(cache.get("c1"), b"pdf1")
+
+        # Insert c4, should evict c2
+        cache.set("c4", b"pdf4")
+        self.assertEqual(len(cache), 3)
+        self.assertIsNone(cache.get("c2"), "c2 should have been evicted")
+        self.assertIsNotNone(cache.get("c1"), "c1 was recently accessed and should remain")
+        self.assertIsNotNone(cache.get("c3"))
+        self.assertIsNotNone(cache.get("c4"))
 
 
 if __name__ == "__main__":

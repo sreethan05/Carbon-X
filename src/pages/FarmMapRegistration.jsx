@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowRight, AlertTriangle, ShieldCheck, Check, Edit3, X } from 'lucide-react';
+import { ArrowRight, AlertTriangle, ShieldCheck, Check, Edit3, X, Loader2 } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import LeafletMap from '../components/LeafletMap';
 import { useAuth } from '../context/AuthContext';
@@ -31,12 +31,19 @@ export default function FarmMapRegistration() {
   const location = useLocation();
   const { user } = useAuth();
 
-  // Received state from land-verification step
-  const navState = location.state || {};
+  // Received state from land-verification step (with storage fallback for reload resilience)
+  const navState = useMemo(() => {
+    if (location.state && typeof location.state === 'object') return location.state;
+    try {
+      return JSON.parse(localStorage.getItem('carbonx_land_verification') || localStorage.getItem('carbonx_farm_parcel') || '{}');
+    } catch {
+      return {};
+    }
+  }, [location.state]);
   const surveyNumber = navState.surveyNumber || '';
   const ownerName = navState.ownerName || user?.name || null;
   const village = navState.village || user?.village || '';
-  const registryAreaHa = typeof navState.areaHa === 'number' && navState.areaHa > 0 ? navState.areaHa : null;
+  const registryAreaHa = typeof navState.areaHa === 'number' && !isNaN(navState.areaHa) && navState.areaHa > 0 ? navState.areaHa : null;
   const tierCode = navState.tierCode || (surveyNumber === '124/A' ? '1A' : surveyNumber === '124/B' ? '1B' : '2');
 
   // Real registry geometry (Tier 1A) — never a placeholder.
@@ -57,6 +64,8 @@ export default function FarmMapRegistration() {
   const [assignedBadge, setAssignedBadge] = useState(initialBadge);
   const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [showAdvisory, setShowAdvisory] = useState(true);
+  const [submitError, setSubmitError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Compute variance & tolerance (only when a registry/OCR reference exists)
   const areaDiffHa = hasReference ? Math.abs(drawnAreaHa - registryAreaHa) : 0;
@@ -72,18 +81,44 @@ export default function FarmMapRegistration() {
     } else {
       setAssignedBadge(initialBadge);
     }
-  }, [drawnAreaHa, isReadOnly, hasReference, isWithinTolerance, initialBadge]);
+  }, [isReadOnly, hasReference, isWithinTolerance, initialBadge]);
 
-  const [parcelGeojson, setParcelGeojson] = useState(null);
+  const [parcelGeojson, setParcelGeojson] = useState(navState.geojson || null);
 
   const handleAreaCalculated = (res) => {
-    if (res && res.area > 0) {
+    if (res && typeof res.area === 'number' && !isNaN(res.area) && res.area > 0) {
       setDrawnAreaHa(res.area);
+      setSubmitError('');
     }
   };
 
   const handleFinalSubmit = () => {
-    if (!parcelGeojson) return;
+    if (isSubmitting) return;
+
+    if (!parcelGeojson || (!parcelGeojson.coordinates && !parcelGeojson.geometry?.coordinates)) {
+      setSubmitError('Please complete your farm parcel boundary on the map before submitting.');
+      return;
+    }
+
+    if (typeof drawnAreaHa !== 'number' || isNaN(drawnAreaHa) || drawnAreaHa <= 0) {
+      setSubmitError('Calculated farm area must be a positive number greater than 0 ha.');
+      return;
+    }
+
+    if (drawnAreaHa > 10000) {
+      setSubmitError('Calculated area exceeds maximum allowable limit (10,000 ha). Please adjust the boundary.');
+      return;
+    }
+
+    const SURVEY_NUMBER_REGEX = /^[a-zA-Z0-9\s/_\-.]+$/;
+    if (surveyNumber && !SURVEY_NUMBER_REGEX.test(surveyNumber)) {
+      setSubmitError('Survey number contains invalid characters.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitError('');
+
     const parcel = {
       surveyNumber,
       ownerName,
@@ -93,6 +128,8 @@ export default function FarmMapRegistration() {
       tierCode,
       flaggedForFpo: !isReadOnly && hasReference && !isWithinTolerance,
       geojson: parcelGeojson,
+      crop: navState.crop || null,
+      irrigation: navState.irrigation || null,
     };
     try {
       localStorage.setItem('carbonx_farm_parcel', JSON.stringify(parcel));
@@ -218,7 +255,7 @@ export default function FarmMapRegistration() {
 
           <button
             onClick={() => setShowConfirmationModal(true)}
-            disabled={!parcelGeojson}
+            disabled={!parcelGeojson || typeof drawnAreaHa !== 'number' || drawnAreaHa <= 0}
             className="w-full sm:w-auto px-6 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all"
           >
             <span>Confirm Boundary & Proceed</span>
@@ -235,12 +272,13 @@ export default function FarmMapRegistration() {
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-primary" />
                 <h3 className="text-sm font-extrabold text-carbon-900 font-manrope">
-                  Is this your land? Survey {surveyNumber || '—'}, {Math.round(drawnAreaHa * 2.471 * 10) / 10} acres, {village || '—'}
+                  Is this your land? Survey {surveyNumber || '—'}, {typeof drawnAreaHa === 'number' && !isNaN(drawnAreaHa) && drawnAreaHa > 0 ? Math.round(drawnAreaHa * 2.471 * 10) / 10 : 0} acres, {village || '—'}
                 </h3>
               </div>
               <button
                 onClick={() => setShowConfirmationModal(false)}
-                className="p-1 text-agriText-subtle hover:text-carbon-900 rounded-lg hover:bg-surface-sage"
+                disabled={isSubmitting}
+                className="p-1 text-agriText-subtle hover:text-carbon-900 disabled:opacity-50 rounded-lg hover:bg-surface-sage"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -261,13 +299,22 @@ export default function FarmMapRegistration() {
               </div>
               <div className="flex justify-between border-t border-forest-200 pt-2">
                 <span className="text-agriText-subtle font-semibold">Verified Area:</span>
-                <span className="font-mono font-bold text-primary">{drawnAreaHa} ha ({Math.round(drawnAreaHa * 2.471 * 100) / 100} acres)</span>
+                <span className="font-mono font-bold text-primary">
+                  {drawnAreaHa} ha ({typeof drawnAreaHa === 'number' && !isNaN(drawnAreaHa) && drawnAreaHa > 0 ? Math.round(drawnAreaHa * 2.471 * 100) / 100 : 0} acres)
+                </span>
               </div>
               <div className="flex justify-between items-center border-t border-forest-200 pt-2">
                 <span className="text-agriText-subtle font-semibold">Assigned Tier Badge:</span>
                 <VerificationBadge badge={assignedBadge} showTier size="sm" />
               </div>
             </div>
+
+            {submitError && (
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3 text-[11px] font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
 
             {!isWithinTolerance && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900">
@@ -278,17 +325,19 @@ export default function FarmMapRegistration() {
             <div className="flex gap-2">
               <button
                 onClick={() => setShowConfirmationModal(false)}
-                className="flex-1 py-2.5 bg-surface-sage border border-forest-200 text-carbon-800 text-xs font-bold rounded-xl hover:bg-forest-100 transition-all flex items-center justify-center gap-1.5"
+                disabled={isSubmitting}
+                className="flex-1 py-2.5 bg-surface-sage border border-forest-200 text-carbon-800 text-xs font-bold rounded-xl hover:bg-forest-100 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>Edit Polygon</span>
               </button>
               <button
                 onClick={handleFinalSubmit}
-                className="flex-1 py-2.5 bg-primary hover:bg-primary-hover text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5"
+                disabled={isSubmitting || !parcelGeojson || typeof drawnAreaHa !== 'number' || drawnAreaHa <= 0}
+                className="flex-1 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5"
               >
-                <Check className="w-3.5 h-3.5" />
-                <span>Confirm & Submit</span>
+                {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                <span>{isSubmitting ? 'Saving…' : 'Confirm & Submit'}</span>
               </button>
             </div>
           </div>

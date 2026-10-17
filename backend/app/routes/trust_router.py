@@ -16,7 +16,7 @@ from app.security import (
 )
 from app import supabase_db as db
 from app import config as app_config
-from app.services import credit_engine, ledger, market_store, split_engine
+from app.services import credit_engine, evidence_service, ledger, market_store, split_engine
 
 router = APIRouter(tags=["trust"])
 
@@ -134,17 +134,54 @@ def list_certificates():
     return {"success": True, "certificates": certificates}
 
 
+@router.get("/certificates/{cert_id}")
+def get_certificate(cert_id: str):
+    rows = None
+    if not db.is_ready():
+        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
+    else:
+        try:
+            sb = db._client()
+            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+    row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    if not row:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    farm_id = row.get("farm_id") or ""
+    chain = ledger.summary(farm_id) if farm_id else {}
+    sales = _ledger_sales(farm_id, row.get("id"))
+    retired = str(row.get("status")).lower() == "retired"
+    loc = row.get("location") or "Location not recorded"
+    crop_label = f" ({row.get('crop')})" if row.get("crop") else ""
+    return {
+        "success": True,
+        "certificate": {
+            "id": cert_id,
+            "listing_id": row.get("id"),
+            "issued_to": sales.get("buyer") or None,
+            "farmer_name": row.get("farmer_name"),
+            "crop": row.get("crop"),
+            "volume_mt": sales["credits"] if sales["found"] else row.get("total_credits"),
+            "value_inr": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
+            "source_parcels": [f"{loc}{crop_label}"],
+            "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
+            "retired_at": ((row.get("updated_at") or "")[:10] or None) if retired else None,
+            "status": "RETIRED" if retired else "HELD_IN_ESCROW",
+            "batch_hash": chain.get("tail_hash"),
+            "ledger_verified": chain.get("verified", False),
+            "tx_hash": row.get("tx_hash"),
+            "on_chain": False,
+        },
+    }
+
+
 @router.get("/certificates/{cert_id}/pdf")
 def download_certificate_pdf(cert_id: str):
     from fastapi.responses import Response
-    from app.services.certificate_pdf import render_certificate_pdf
+    from app.services.certificate_pdf import render_certificate_pdf, get_cached_certificate_pdf
 
-    global _pdf_cache
-    if "_pdf_cache" not in globals():
-        _pdf_cache = {}
-    if len(_pdf_cache) > app_config.PDF_CACHE_MAX_ENTRIES:
-        _pdf_cache.clear()
-    cached = _pdf_cache.get(cert_id)
+    cached = get_cached_certificate_pdf(cert_id)
     if cached:
         return Response(
             content=cached,
@@ -163,7 +200,7 @@ def download_certificate_pdf(cert_id: str):
             return {"success": False, "message": str(e)}
     row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
     if not row:
-        return {"success": False, "message": "Certificate not found"}
+        raise HTTPException(status_code=404, detail="Certificate not found")
     farm_id = row.get("farm_id") or ""
     chain = ledger.summary(farm_id) if farm_id else {}
     sales = _ledger_sales(farm_id, row.get("id"))
@@ -180,7 +217,6 @@ def download_certificate_pdf(cert_id: str):
         "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
     }
     pdf_bytes = render_certificate_pdf(cert)
-    _pdf_cache[cert_id] = pdf_bytes
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
@@ -214,10 +250,14 @@ def retire_certificate(
             return {"success": False, "message": str(e)}
     target = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
     if not target:
-        return {
-            "success": True, "message": f"Certificate {cert_id} is already permanently retired",
-            "cert_id": cert_id, "status": "RETIRED", "already_retired": True,
-        }
+        all_rows = market_store.all_rows() if not db.is_ready() else (sb.table("marketplace_listings").select("id,status,farm_id").execute().data or [])
+        already = next((r for r in all_rows if _cert_id_for_listing(r.get("id")) == cert_id and str(r.get("status")).lower() == "retired"), None)
+        if already:
+            return {
+                "success": True, "message": f"Certificate {cert_id} is already permanently retired",
+                "cert_id": cert_id, "status": "RETIRED", "already_retired": True,
+            }
+        raise HTTPException(status_code=404, detail="Certificate not found")
     retired_ts = datetime.now(timezone.utc).isoformat()
     if not db.is_ready():
         market_store.update(target["id"], {"status": "Retired", "updated_at": retired_ts})
@@ -228,6 +268,8 @@ def retire_certificate(
         ledger.append_event(target["farm_id"], "RETIRE", {
             "certificate_id": cert_id, "scope": scope, "manual": True,
         })
+    from app.services.certificate_pdf import invalidate_certificate_pdf
+    invalidate_certificate_pdf(cert_id)
     return {
         "success": True, "message": f"Certificate {cert_id} permanently retired for {scope}",
         "cert_id": cert_id, "listing_id": target["id"], "status": "RETIRED",
@@ -240,8 +282,24 @@ def get_carbon_passport(farm_id: str):
     if db.is_ready():
         farm = db.get_farm(farm_id)
         if not farm:
-            return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
-        demo_mode = False
+            if farm_id == "demo":
+                demo_mode = True
+                farm = {
+                    "id": farm_id, "name": "Sri Venkateswara Organic Farm",
+                    "owner_phone": "9000000001", "crop_type": "Rice", "area_hectares": 2.4,
+                    "ndvi": 0.78, "evi": 0.65, "soil_moisture": 41, "tree_cover": 28,
+                    "biodiversity_score": 720, "carbon_tonnes": 82, "total_credits": 96.0,
+                    "biodiversity_credits": 18.0, "satellite_source": "Sentinel-2 (demo)",
+                    "ai_confidence": 0.87, "status": "verified", "badge": "REGISTRY",
+                    "irrigation": "Drip", "updated_at": "2026-09-10T12:00:00+00:00",
+                    "credits_ci90_low": 85.0, "credits_ci90_high": 107.0,
+                    "formula_version": app_config.FORMULA_VERSION,
+                    "s2_scene": "COPERNICUS/S2_SR_HARMONIZED/20231115T052631_20231115T052631_T43RGP",
+                }
+            else:
+                return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
+        else:
+            demo_mode = False
     else:
         # DB off: serve the documented demo farm for any id (clearly flagged)
         demo_mode = True
@@ -268,12 +326,13 @@ def get_carbon_passport(farm_id: str):
 
     verified_status = str(farm.get("status", "")).lower() in ("verified", "ver")
     # Only evidence the platform actually holds counts: the badge is a real
-    # verification fact and a stored NDVI is real current satellite evidence.
-    # There is no practice-photo / geotag capture pipeline, and no stored
-    # baseline NDVI series, so those components stay unclaimed rather than
-    # being assumed for a smaller deduction.
+    # verification fact, a stored NDVI is real current satellite evidence, and
+    # practice photos / geotags come from the real capture pipeline
+    # (evidence_service). No stored baseline NDVI series exists yet, so that
+    # component stays unclaimed rather than being assumed.
+    evidence = evidence_service.evidence_flags(farm_id)
     quality = credit_engine.evidence_quality(
-        has_photo=False, geotag_ok=False,
+        has_photo=evidence["practice_photo"], geotag_ok=evidence["geotag_inside_boundary"],
         fpo_or_registry=badge in ("REGISTRY", "REGISTRY_DOC", "FPO"),
         ndvi_current=farm.get("ndvi") is not None, baseline_known=False,
     )
@@ -286,6 +345,7 @@ def get_carbon_passport(farm_id: str):
             "carbon_tonnes": farm.get("carbon_tonnes"), "badge": badge, "status": farm.get("status"),
         }, ts=(farm.get("updated_at") or "") or None)
     chain = ledger.summary(farm_id)
+    chain["history"] = [{k: v for k, v in e.items() if not k.startswith("_")} for e in ledger.get_chain(farm_id)]
     farm_status = farm.get("status")
     monitoring = {
         "last_monitored_at": farm.get("last_monitored_at"),
@@ -318,6 +378,14 @@ def get_carbon_passport(farm_id: str):
             "evidence_quality": quality["score"],
             "uncertainty_pct": credit_engine.uncertainty_pct(quality["score"]),
             "components": quality["components"],
+            "evidence": {
+                "practice_photo": evidence["practice_photo"],
+                "geotag_inside_boundary": evidence["geotag_inside_boundary"],
+                "photo_count": evidence["photo_count"],
+                "geotag_count": evidence["geotag_count"],
+                "last_photo_at": evidence["last_photo_at"],
+                "demo_mode": evidence["demo_mode"],
+            },
             "verification_hash": verification_hash,
         },
         "ledger": chain,

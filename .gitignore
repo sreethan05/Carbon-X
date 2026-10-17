@@ -38,6 +38,10 @@ lerna-debug.log*
 *.pid
 *.pid.lock
 
+# Test-generated ledger snapshots
+backend/tests/_test_ledger.json
+backend/tests/_test_monitor_ledger.json
+
 # Frontend and backend build output
 dist/
 dist-ssr/

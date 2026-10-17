@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wallet, ArrowRight, CheckCircle2, Building, ArrowLeft, ShieldCheck } from 'lucide-react';
+import { Wallet, ArrowRight, CheckCircle2, Building, ArrowLeft, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getWallet, demoLogin } from '../services/api';
 
@@ -23,6 +23,7 @@ export default function CarbonWallet() {
   const [selectedBank, setSelectedBank] = useState('State Bank of India (SBI)');
   const [upiIdInput, setUpiIdInput] = useState(user?.upi || '');
   const [withdrawAmt, setWithdrawAmt] = useState('1000');
+  const [withdrawError, setWithdrawError] = useState('');
   const [isTransferring, setIsTransferring] = useState(false);
   const [transferSuccess, setTransferSuccess] = useState(false);
 
@@ -86,8 +87,16 @@ export default function CarbonWallet() {
 
   const handleWithdrawSubmit = (e) => {
     e.preventDefault();
-    const amt = parseFloat(withdrawAmt) || 0;
-    if (amt <= 0 || amt > withdrawableUpi) return;
+    setWithdrawError('');
+    const amt = parseFloat(withdrawAmt);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      setWithdrawError('Withdrawal amount must be greater than zero.');
+      return;
+    }
+    if (amt > withdrawableUpi) {
+      setWithdrawError(`Requested amount (₹${amt.toLocaleString('en-IN')}) exceeds your withdrawable balance (₹${withdrawableUpi.toLocaleString('en-IN')}).`);
+      return;
+    }
 
     setIsTransferring(true);
     // UI-only demo of the future payout rails: no payments provider is wired
@@ -164,6 +173,9 @@ export default function CarbonWallet() {
               <p className="text-3xl font-extrabold font-manrope text-primary mt-2">
                 ₹{totalEarned.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </p>
+              <p className="text-xs font-bold text-emerald-800 mt-1">
+                {transactions.reduce((acc, t) => acc + (parseFloat(t.creditsSold) || 0), 0).toFixed(2)} MT Carbon Credits Settled
+              </p>
             </div>
             <p className="text-[11px] text-agriText-muted mt-4">Settled into linked bank account via simulated UPI</p>
           </div>
@@ -187,11 +199,16 @@ export default function CarbonWallet() {
             </div>
 
             <button
-              onClick={() => setShowWithdrawModal(true)}
-              className="mt-4 w-full py-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+              onClick={() => {
+                setShowWithdrawModal(true);
+                setWithdrawError('');
+                setWithdrawAmt(withdrawableUpi > 0 ? String(Math.min(1000, Math.floor(withdrawableUpi))) : '0');
+              }}
+              disabled={withdrawableUpi <= 0}
+              className="mt-4 w-full py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <Wallet className="w-4 h-4" />
-              <span>Simulate Instant UPI Payout</span>
+              <span>{withdrawableUpi > 0 ? 'Simulate Instant UPI Payout' : 'No Withdrawable Balance'}</span>
             </button>
           </div>
         </div>
@@ -203,9 +220,9 @@ export default function CarbonWallet() {
             <p className="text-xs font-bold text-carbon-900">Conditional split across all settled sales</p>
           </div>
           <div className="flex flex-wrap gap-4 text-xs font-semibold">
-            <span className="text-primary">Farmer: ₹{farmerShareTotal.toLocaleString('en-IN')}</span>
-            <span className="text-emerald-700">FPO (5% when involved): ₹{fpoShareTotal.toLocaleString('en-IN')}</span>
-            <span className="text-slate-500">Platform: ₹{platformShareTotal.toLocaleString('en-IN')}</span>
+            <span className="text-primary font-bold">Farmer (70% floor): ₹{farmerShareTotal.toLocaleString('en-IN')}</span>
+            <span className="text-emerald-700 font-bold">FPO (5% when involved): ₹{fpoShareTotal.toLocaleString('en-IN')}</span>
+            <span className="text-slate-500 font-bold">Platform: ₹{platformShareTotal.toLocaleString('en-IN')}</span>
           </div>
         </div>
 
@@ -228,7 +245,7 @@ export default function CarbonWallet() {
                 <tr className="border-b border-forest-100 bg-surface-sage/40 text-agriText-muted font-semibold uppercase tracking-wider">
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Transaction ID</th>
-                  <th className="py-3 px-4">Source / Buyer</th>
+                  <th className="py-3 px-4">Source & Volume</th>
                   <th className="py-3 px-4">Gross</th>
                   <th className="py-3 px-4">Your Share</th>
                   <th className="py-3 px-4">FPO / Platform</th>
@@ -237,13 +254,16 @@ export default function CarbonWallet() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-forest-50 font-medium">
-                {transactions.map((tx) => (
-                  <tr key={tx.txId} className="hover:bg-surface-sage/30 transition-colors">
+                {transactions.map((tx, idx) => (
+                  <tr key={tx.txId || idx} className="hover:bg-surface-sage/30 transition-colors">
                     <td className="py-3 px-4 text-agriText-muted">{tx.date}</td>
                     <td className="py-3 px-4 font-mono text-carbon-900">{tx.txId}</td>
                     <td className="py-3 px-4 font-bold text-carbon-900">
-                      {tx.source}
-                      <span className="ml-2 text-[10px] font-semibold text-agriText-subtle">({tx.splitModel} split)</span>
+                      <div>{tx.source}</div>
+                      <div className="text-[10px] font-medium text-agriText-muted mt-0.5">
+                        {tx.creditsSold ? `${tx.creditsSold} MT` : '—'}
+                        {tx.rate ? ` @ ₹${tx.rate}/credit` : ''} · <span className="text-agriText-subtle">{tx.splitModel} split</span>
+                      </div>
                     </td>
                     <td className="py-3 px-4 text-carbon-800">₹{Number(tx.gross || 0).toLocaleString('en-IN')}</td>
                     <td className="py-3 px-4 font-extrabold text-primary">₹{Number(tx.farmerShare || 0).toLocaleString('en-IN')}</td>
@@ -302,6 +322,13 @@ export default function CarbonWallet() {
                 </div>
               ) : (
                 <form onSubmit={handleWithdrawSubmit} className="space-y-4">
+                  {withdrawError && (
+                    <div className="bg-rose-50 border border-rose-200 p-2.5 rounded-xl flex items-start gap-2 text-xs text-rose-800">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <p className="font-semibold">{withdrawError}</p>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-bold text-carbon-800 mb-1">Destination Bank Account</label>
                     <select
@@ -328,14 +355,32 @@ export default function CarbonWallet() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-carbon-800 mb-1">Withdrawal Amount (₹)</label>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="text-xs font-bold text-carbon-800">Withdrawal Amount (₹)</label>
+                      <div className="flex items-center gap-1">
+                        {[0.25, 0.5, 1.0].map((ratio) => {
+                          const val = Math.floor(withdrawableUpi * ratio);
+                          return (
+                            <button
+                              key={ratio}
+                              type="button"
+                              onClick={() => { setWithdrawAmt(String(val)); setWithdrawError(''); }}
+                              disabled={withdrawableUpi <= 0}
+                              className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-surface-sage border border-forest-200 hover:bg-forest-100 text-carbon-800 disabled:opacity-40"
+                            >
+                              {ratio === 1.0 ? 'Max' : `${ratio * 100}%`}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                     <input
                       type="number"
                       max={withdrawableUpi}
-                      min="100"
+                      min="1"
                       required
                       value={withdrawAmt}
-                      onChange={e => setWithdrawAmt(e.target.value)}
+                      onChange={e => { setWithdrawAmt(e.target.value); setWithdrawError(''); }}
                       className="w-full px-3 py-2 bg-surface-sage/40 border border-forest-200 rounded-xl text-sm font-bold text-carbon-900 focus:outline-none"
                     />
                     <p className="text-[10px] text-agriText-subtle mt-1">Available balance: ₹{withdrawableUpi.toFixed(2)}</p>
@@ -351,8 +396,8 @@ export default function CarbonWallet() {
                     </button>
                     <button
                       type="submit"
-                      disabled={isTransferring}
-                      className="flex-1 py-2.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary-hover flex items-center justify-center gap-1 shadow-sm"
+                      disabled={isTransferring || withdrawableUpi <= 0 || !withdrawAmt || parseFloat(withdrawAmt) <= 0 || parseFloat(withdrawAmt) > withdrawableUpi}
+                      className="flex-1 py-2.5 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary-hover disabled:opacity-50 flex items-center justify-center gap-1 shadow-sm"
                     >
                       <span>{isTransferring ? 'Processing...' : 'Confirm Demo Transfer'}</span>
                       <ArrowRight className="w-3.5 h-3.5" />

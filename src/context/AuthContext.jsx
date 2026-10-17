@@ -1,107 +1,226 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getMe } from '../services/api';
 
 const AuthContext = createContext(null);
 
+function safeGetStorage(key, fallback = null) {
+  try {
+    const val = localStorage.getItem(key);
+    if (val === null || val === undefined || val === 'undefined') return fallback;
+    return val;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeGetJson(key, fallback = null) {
+  try {
+    const val = safeGetStorage(key);
+    if (!val || val === 'null') return fallback;
+    return JSON.parse(val);
+  } catch {
+    return fallback;
+  }
+}
+
+function safeSetStorage(key, value) {
+  try {
+    if (value === null || value === undefined) {
+      localStorage.removeItem(key);
+    } else {
+      localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+    }
+  } catch (e) {
+    console.warn(`Failed to persist ${key} to localStorage:`, e);
+  }
+}
+
+function safeRemoveStorage(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch (e) {
+    console.warn(`Failed to remove ${key} from localStorage:`, e);
+  }
+}
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('carbonx_user') || 'null'); } catch { return null; }
+  const [user, setUser] = useState(() => safeGetJson('carbonx_user', null));
+  const [token, setToken] = useState(() => {
+    const t = safeGetStorage('carbonx_token');
+    return (t && t !== 'null' && t !== 'undefined' && t.trim() !== '') ? t.trim() : null;
   });
-  const [token, setToken] = useState(() => localStorage.getItem('carbonx_token') || null);
-  const [farms, setFarms] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('carbonx_farms') || '[]'); } catch { return []; }
-  });
-  const [kyc, setKyc] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('carbonx_kyc') || 'null'); } catch { return null; }
-  });
+  const [farms, setFarms] = useState(() => safeGetJson('carbonx_farms', []));
+  const [kyc, setKyc] = useState(() => safeGetJson('carbonx_kyc', null));
   const [loading, setLoading] = useState(false);
 
+  // Track mounted state to prevent state updates after unmount
+  const isMountedRef = useRef(true);
   useEffect(() => {
-    if (token) refreshUser();
-  }, [token]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
-  async function refreshUser() {
+  const logout = useCallback(() => {
+    setToken(null);
+    setUser(null);
+    setFarms([]);
+    setKyc(null);
+    safeRemoveStorage('carbonx_token');
+    safeRemoveStorage('carbonx_user');
+    safeRemoveStorage('carbonx_farms');
+    safeRemoveStorage('carbonx_kyc');
+  }, []);
+
+  const syncLanguage = useCallback((lang) => {
+    if (!lang) return;
+    safeSetStorage('carbonx_lang', lang);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('carbonx:language', { detail: { lang } }));
+    }
+  }, []);
+
+  const refreshUser = useCallback(async (explicitToken) => {
+    const activeToken = explicitToken || safeGetStorage('carbonx_token');
+    if (!activeToken || activeToken === 'null' || activeToken === 'undefined') {
+      return;
+    }
+
     try {
-      setLoading(true);
+      if (isMountedRef.current) setLoading(true);
       const data = await getMe();
+
+      // Guard: Discard if unmounted or if the session was cleared/changed while awaiting
+      if (!isMountedRef.current) return;
+      const currentToken = safeGetStorage('carbonx_token');
+      if (!currentToken || currentToken !== activeToken) return;
+
       if (data.success) {
         setUser(data.user);
         setFarms(data.farms || []);
         setKyc(data.kyc || null);
-        localStorage.setItem('carbonx_user', JSON.stringify(data.user));
-        localStorage.setItem('carbonx_farms', JSON.stringify(data.farms || []));
-        localStorage.setItem('carbonx_kyc', JSON.stringify(data.kyc || null));
+        safeSetStorage('carbonx_user', data.user);
+        safeSetStorage('carbonx_farms', data.farms || []);
+        safeSetStorage('carbonx_kyc', data.kyc || null);
         if (data.user?.preferred_language) {
-          localStorage.setItem('carbonx_lang', data.user.preferred_language);
+          syncLanguage(data.user.preferred_language);
         }
       } else if (data.code === 'UNAUTHORIZED' || data.status === 401) {
-        // Stale/expired token — drop the session instead of pretending to be
-        // signed in while every authenticated action fails.
+        // Stale/expired token — drop the session instead of pretending to be signed in
         logout();
       }
     } catch (e) {
       console.warn('Could not refresh user:', e);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }
+  }, [logout, syncLanguage]);
 
-  async function login(tokenValue, userData) {
-    setToken(tokenValue);
-    setUser(userData);
-    localStorage.setItem('carbonx_token', tokenValue);
-    localStorage.setItem('carbonx_user', JSON.stringify(userData));
-    if (userData?.preferred_language) {
-      localStorage.setItem('carbonx_lang', userData.preferred_language);
+  useEffect(() => {
+    if (token) {
+      refreshUser(token);
     }
-    try {
-      const data = await getMe();
-      if (data.success) {
-        setUser(data.user);
-        setFarms(data.farms || []);
-        setKyc(data.kyc || null);
-        localStorage.setItem('carbonx_user', JSON.stringify(data.user));
-        localStorage.setItem('carbonx_farms', JSON.stringify(data.farms || []));
-        localStorage.setItem('carbonx_kyc', JSON.stringify(data.kyc || null));
-        if (data.user?.preferred_language) {
-          localStorage.setItem('carbonx_lang', data.user.preferred_language);
+  }, [token, refreshUser]);
+
+  // Global listener for 401 UNAUTHORIZED notifications dispatched by api.js
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      logout();
+    };
+    window.addEventListener('carbonx:unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('carbonx:unauthorized', handleUnauthorized);
+    };
+  }, [logout]);
+
+  // Cross-tab synchronization via localStorage storage event
+  useEffect(() => {
+    const handleStorageChange = (e) => {
+      if (e.key === 'carbonx_token') {
+        const newToken = e.newValue;
+        if (!newToken || newToken === 'null') {
+          logout();
+        } else if (newToken !== token) {
+          setToken(newToken);
+          const newUser = safeGetJson('carbonx_user', null);
+          if (newUser) setUser(newUser);
         }
       }
-    } catch {
-      /* keep local user */
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [token, logout]);
+
+  const login = useCallback(async (tokenValue, userData) => {
+    const cleanToken = typeof tokenValue === 'string' ? tokenValue.trim() : tokenValue;
+    setToken(cleanToken);
+    setUser(userData);
+    safeSetStorage('carbonx_token', cleanToken);
+    safeSetStorage('carbonx_user', userData);
+    if (userData?.preferred_language) {
+      syncLanguage(userData.preferred_language);
     }
-  }
+    // Perform background refresh to fetch latest farms & kyc
+    await refreshUser(cleanToken);
+  }, [refreshUser, syncLanguage]);
 
-  function logout() {
-    setToken(null);
-    setUser(null);
-    setFarms([]);
-    setKyc(null);
-    localStorage.removeItem('carbonx_token');
-    localStorage.removeItem('carbonx_user');
-    localStorage.removeItem('carbonx_farms');
-    localStorage.removeItem('carbonx_kyc');
-  }
+  const addFarm = useCallback((farm) => {
+    if (!farm) return;
+    setFarms((prevFarms) => {
+      const currentList = Array.isArray(prevFarms) ? prevFarms : [];
+      const updated = [farm, ...currentList.filter((f) => f.id !== farm.id)];
+      safeSetStorage('carbonx_farms', updated);
+      return updated;
+    });
+  }, []);
 
-  function addFarm(farm) {
-    const updated = [farm, ...farms.filter((f) => f.id !== farm.id)];
-    setFarms(updated);
-    localStorage.setItem('carbonx_farms', JSON.stringify(updated));
-  }
-
-  function setUserProfile(profile) {
+  const setUserProfile = useCallback((profile) => {
+    if (!profile) return;
     setUser(profile);
-    localStorage.setItem('carbonx_user', JSON.stringify(profile));
-  }
+    safeSetStorage('carbonx_user', profile);
+    if (profile.preferred_language) {
+      syncLanguage(profile.preferred_language);
+    }
+  }, [syncLanguage]);
 
   const role = user?.role || 'farmer';
   const isAuthenticated = !!token && !!user;
 
+  const contextValue = useMemo(() => ({
+    user,
+    token,
+    farms,
+    kyc,
+    role,
+    isAuthenticated,
+    loading,
+    login,
+    logout,
+    addFarm,
+    refreshUser,
+    setUserProfile,
+  }), [
+    user,
+    token,
+    farms,
+    kyc,
+    role,
+    isAuthenticated,
+    loading,
+    login,
+    logout,
+    addFarm,
+    refreshUser,
+    setUserProfile,
+  ]);
+
   return (
-    <AuthContext.Provider value={{
-      user, token, farms, kyc, role, isAuthenticated, loading,
-      login, logout, addFarm, refreshUser, setUserProfile,
-    }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );
@@ -109,5 +228,22 @@ export function AuthProvider({ children }) {
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
-  return useContext(AuthContext);
+  const context = useContext(AuthContext);
+  if (!context) {
+    return {
+      user: null,
+      token: null,
+      farms: [],
+      kyc: null,
+      role: 'farmer',
+      isAuthenticated: false,
+      loading: false,
+      login: async () => {},
+      logout: () => {},
+      addFarm: () => {},
+      refreshUser: async () => {},
+      setUserProfile: () => {},
+    };
+  }
+  return context;
 }

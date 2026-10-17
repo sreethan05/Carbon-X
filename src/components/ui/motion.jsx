@@ -66,11 +66,14 @@ export function ProgressRing({ value = 0, size = 72, stroke = 8, color = "#10B98
 }
 
 /** Stagger container + item for lists/grids. */
+// eslint-disable-next-line react-refresh/only-export-components
 export const staggerContainer = {
   hidden: {},
   show: { transition: { staggerChildren: 0.07 } },
 };
+// eslint-disable-next-line react-refresh/only-export-components
 export const staggerItem = {
   hidden: { opacity: 0, y: 16 },
   show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.2, 0.7, 0.3, 1] } },
 };
+

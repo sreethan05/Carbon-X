@@ -184,6 +184,74 @@ class TestVoiceRoutes(unittest.TestCase):
         self.assertNotIn("raw-audio-or-document", logs)
         self.assertIn("my score", logs)
 
+    def test_multilingual_intent_classification(self):
+        from app.voice_agent.voice_agent import fallback_tool_for_text
+
+        # Telugu intents
+        tool, _ = fallback_tool_for_text("నా భూమి నమోదు ఎలా చేయాలి?")
+        self.assertEqual(tool, "explain_land_onboarding")
+        tool, _ = fallback_tool_for_text("నా పట్టా పాస్ బుక్ స్థితి ఏమిటి?")
+        self.assertEqual(tool, "get_my_document_status")
+        tool, _ = fallback_tool_for_text("నా ఆదాయం మరియు డబ్బు వివరాలు")
+        self.assertEqual(tool, "get_my_earnings")
+        tool, _ = fallback_tool_for_text("నా పొలం సరిహద్దు మ్యాప్ చూపించు")
+        self.assertEqual(tool, "navigate_to")
+        tool, _ = fallback_tool_for_text("గ్రామం వెతకండి")
+        self.assertEqual(tool, "search_location")
+
+        # Hindi intents
+        tool, _ = fallback_tool_for_text("भूमि पंजीकरण प्रक्रिया कैसे करें?")
+        self.assertEqual(tool, "explain_land_onboarding")
+        tool, _ = fallback_tool_for_text("दस्तावेज सत्यापन स्थिति क्या है?")
+        self.assertEqual(tool, "get_my_document_status")
+        tool, _ = fallback_tool_for_text("मेरी कुल कमाई और पैसे")
+        self.assertEqual(tool, "get_my_earnings")
+        tool, _ = fallback_tool_for_text("खेत का नक्शा और सीमा दिखाएं")
+        self.assertEqual(tool, "navigate_to")
+        tool, _ = fallback_tool_for_text("गांव की खोज करें")
+        self.assertEqual(tool, "search_location")
+
+        # English intents
+        tool, _ = fallback_tool_for_text("how to register my farm onboarding steps")
+        self.assertEqual(tool, "explain_land_onboarding")
+        tool, _ = fallback_tool_for_text("show my kyc document status")
+        self.assertEqual(tool, "get_my_document_status")
+        tool, _ = fallback_tool_for_text("what is my estimated earning")
+        self.assertEqual(tool, "get_my_earnings")
+        tool, _ = fallback_tool_for_text("draw boundary on map")
+        self.assertEqual(tool, "navigate_to")
+
+    def test_multilingual_response_formatting(self):
+        from app.voice_agent.prompt_templates import format_tool_response
+
+        # Plots formatting
+        plots_result = {"count": 2, "plots": [{"area_hectares": 1.5}, {"area_hectares": 2.5}]}
+        te_resp = format_tool_response("get_my_plots", plots_result, "te-IN")
+        self.assertIn("2 పొలాలు", te_resp)
+        hi_resp = format_tool_response("get_my_plots", plots_result, "hi-IN")
+        self.assertIn("2 खेत", hi_resp)
+        en_resp = format_tool_response("get_my_plots", plots_result, "en-IN")
+        self.assertIn("2 registered plot", en_resp)
+
+        # Score formatting
+        score_result = {"scores": {"total_credits": 15.0, "carbon_tonnes": 12.0, "biodiversity_score": 75.0}, "plots_count": 2}
+        te_score = format_tool_response("get_my_score", score_result, "te-IN")
+        self.assertIn("15.0", te_score)
+        self.assertIn("జీవవైవిధ్య", te_score)
+        hi_score = format_tool_response("get_my_score", score_result, "hi-IN")
+        self.assertIn("15.0", hi_score)
+        self.assertIn("जैव विविधता", hi_score)
+
+    def test_transcript_from_stt_variations(self):
+        from app.voice_agent.voice_agent import transcript_from_stt
+
+        self.assertEqual(transcript_from_stt({"transcript": "hello world"}), "hello world")
+        self.assertEqual(transcript_from_stt({"text": "hello text"}), "hello text")
+        self.assertEqual(transcript_from_stt({"transcribed_text": "hello transcribed"}), "hello transcribed")
+        self.assertEqual(transcript_from_stt({"data": {"transcript": "nested transcript"}}), "nested transcript")
+        self.assertEqual(transcript_from_stt({}), "")
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -17,8 +17,17 @@ export default function CreateListing() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  // Pick the first verified farm with credits as the listing source
-  const sellableFarms = (farms || []).filter((f) => (f.total_credits || 0) > 0);
+  const getBadgeBenchmark = (badge) => {
+    switch (badge) {
+      case 'REGISTRY': return 340;
+      case 'REGISTRY_DOC': return 320;
+      case 'FPO': return 300;
+      default: return 310;
+    }
+  };
+
+  // Pick verified farms with available credits
+  const sellableFarms = (farms || []).filter((f) => (parseFloat(f.total_credits) || 0) > 0);
 
   useEffect(() => {
     refreshUser();
@@ -31,20 +40,28 @@ export default function CreateListing() {
   }, [sellableFarms.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedFarm = sellableFarms.find((f) => f.id === selectedFarmId) || sellableFarms[0] || null;
-  const maxVolume = selectedFarm ? Math.max(parseFloat(selectedFarm.total_credits), 1) : 25;
+  const rawAvail = parseFloat(selectedFarm?.total_credits);
+  const maxVolume = selectedFarm && Number.isFinite(rawAvail) ? Math.max(0, rawAvail) : 0;
+  const minVolume = maxVolume > 0 ? (maxVolume < 0.5 ? 0.1 : 0.5) : 0;
 
   useEffect(() => {
     if (selectedFarm) {
-      setVolume(Math.min(volume, parseFloat(selectedFarm.total_credits) || 1));
-      if (selectedFarm.badge) setAssignedBadge(selectedFarm.badge);
-      if (selectedFarm.benchmark) setUnitPrice(selectedFarm.benchmark);
+      const raw = parseFloat(selectedFarm.total_credits);
+      const avail = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+      const minV = avail > 0 ? (avail < 0.5 ? 0.1 : 0.5) : 0;
+      setVolume(avail > 0 ? Math.min(avail, Math.max(minV, 1)) : 0);
+      const badge = selectedFarm.badge || 'DOCUMENT';
+      setAssignedBadge(badge);
+      setUnitPrice(selectedFarm.benchmark || getBadgeBenchmark(badge));
     }
-  }, [selectedFarmId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFarmId, selectedFarm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live revenue calculations (mirrors backend services/split_engine.py:
   // farmer 70% floor, FPO 5% only when involvement is proven, platform
   // keeps the remainder — 25% with FPO / 30% without).
-  const grossValue = volume * unitPrice;
+  const effectivePrice = Number.isFinite(parseFloat(unitPrice)) ? Math.max(0, parseFloat(unitPrice)) : 0;
+  const effectiveVolume = Number.isFinite(parseFloat(volume)) ? Math.max(0, parseFloat(volume)) : 0;
+  const grossValue = effectiveVolume * effectivePrice;
   const hasFpoInvolvement = Boolean(selectedFarm?.fpo_id);
   const farmerShare = grossValue * 0.70;
   const fpoShare = hasFpoInvolvement ? grossValue * 0.05 : 0;
@@ -57,11 +74,27 @@ export default function CreateListing() {
       setError('No verified farm with credits found. Enroll and scan a parcel first.');
       return;
     }
+    if (maxVolume <= 0) {
+      setError('This parcel has 0 available credits remaining to list.');
+      return;
+    }
+    if (effectiveVolume <= 0) {
+      setError('Listing volume must be greater than zero.');
+      return;
+    }
+    if (effectiveVolume > maxVolume) {
+      setError(`Listing volume (${effectiveVolume} MT) cannot exceed available credits (${maxVolume} MT).`);
+      return;
+    }
+    if (effectivePrice <= 0) {
+      setError('Benchmark price must be greater than zero.');
+      return;
+    }
     setIsPublishing(true);
     try {
       const res = await createMarketplaceListing({
-        credits: volume,
-        price_per_credit: unitPrice,
+        credits: effectiveVolume,
+        price_per_credit: effectivePrice,
         farm_id: selectedFarm.id,
         crop: selectedFarm.crop_type || 'Mixed Crop',
       });
@@ -145,35 +178,75 @@ export default function CreateListing() {
             </div>
           )}
 
-          {/* Interactive Volume Slider */}
+          {/* Interactive Volume Controls */}
           <div className="space-y-2">
             <div className="flex justify-between items-center text-xs font-bold">
               <label className="text-slate-700 uppercase tracking-wider">Volume to List (MT CO2e)</label>
-              <span className="text-emerald-800 font-mono text-base">{volume} MT</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={minVolume}
+                  max={maxVolume}
+                  step="0.1"
+                  value={volume}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    if (isNaN(val)) {
+                      setVolume('');
+                    } else {
+                      setVolume(Math.max(0, Math.min(maxVolume, val)));
+                    }
+                  }}
+                  disabled={maxVolume <= 0}
+                  className="w-20 px-2 py-0.5 text-right font-mono font-bold text-emerald-800 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:border-emerald-600 disabled:opacity-50"
+                />
+                <span className="text-slate-600 text-xs font-semibold">MT</span>
+              </div>
             </div>
             <input
               type="range"
-              min="0.5"
-              max={maxVolume}
-              step="0.5"
-              value={volume}
-              onChange={(e) => setVolume(parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-700"
+              min={minVolume}
+              max={Math.max(minVolume, maxVolume)}
+              step={maxVolume > 20 ? "1" : "0.1"}
+              value={Number(volume) || 0}
+              onChange={(e) => setVolume(parseFloat(e.target.value) || 0)}
+              disabled={maxVolume <= 0}
+              className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-700 disabled:opacity-40"
             />
+            <div className="flex justify-between text-[10px] text-slate-400">
+              <span>Min: {minVolume} MT</span>
+              <span>Available: {maxVolume} MT</span>
+            </div>
           </div>
 
           {/* Unit Benchmark Price Input */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-              Benchmark Price per Credit (INR)
-            </label>
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Benchmark Price per Credit (INR)
+              </label>
+              <button
+                type="button"
+                onClick={() => setUnitPrice(getBadgeBenchmark(assignedBadge))}
+                className="text-[10px] font-bold text-emerald-700 hover:underline"
+              >
+                Reset to Benchmark (₹{getBadgeBenchmark(assignedBadge)})
+              </button>
+            </div>
             <input
               type="number"
+              min="1"
+              max="10000"
               value={unitPrice}
-              onChange={(e) => setUnitPrice(parseFloat(e.target.value) || 300)}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                setUnitPrice(isNaN(val) ? '' : Math.max(0, val));
+              }}
               className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm font-bold text-slate-900 focus:outline-none focus:border-emerald-600"
             />
-            <p className="text-[10px] text-slate-500 mt-1">Recommended benchmark for REGISTRY badge: INR 340 / Credit</p>
+            <p className="text-[10px] text-slate-500 mt-1">
+              Recommended benchmark for {assignedBadge} badge: INR {getBadgeBenchmark(assignedBadge)} / Credit
+            </p>
           </div>
 
           {/* Live Revenue Projection Box */}
@@ -213,7 +286,7 @@ export default function CreateListing() {
 
           <button
             type="submit"
-            disabled={isPublishing || !selectedFarm}
+            disabled={isPublishing || !selectedFarm || maxVolume <= 0 || effectiveVolume <= 0 || effectiveVolume > maxVolume || effectivePrice <= 0}
             className="w-full py-3 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
           >
             <Sparkles className="w-4 h-4" />

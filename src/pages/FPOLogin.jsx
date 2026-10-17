@@ -146,9 +146,18 @@ export default function FPOLogin() {
                     className="w-full px-3 py-2.5 bg-transparent text-xs font-bold text-slate-900 focus:outline-none"
                   />
                 </div>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Only mobile numbers registered as FPO officers can access this desk.
-                </p>
+                <div className="flex justify-between items-center mt-1">
+                  <p className="text-[10px] text-slate-500">
+                    Only mobile numbers registered as FPO officers can access this desk.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setPhone('9000000001')}
+                    className="text-[10px] text-emerald-800 font-bold hover:underline"
+                  >
+                    Demo Officer
+                  </button>
+                </div>
               </div>
 
               <button
@@ -171,8 +180,27 @@ export default function FPOLogin() {
                     <input
                       key={idx}
                       type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
                       maxLength={1}
                       value={digit}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+                        if (pasted) {
+                          const digits = pasted.split('');
+                          const next = [...otpDigits];
+                          digits.forEach((d, i) => { if (i < 6) next[i] = d; });
+                          setOtpDigits(next);
+                          const focusIdx = Math.min(digits.length, 5);
+                          e.target.parentElement.children[focusIdx]?.focus();
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Backspace' && !digit && idx > 0) {
+                          e.target.parentElement.children[idx - 1]?.focus();
+                        }
+                      }}
                       onChange={(e) => {
                         const v = (e.target.value || '').replace(/\D/g, '').slice(-1);
                         const next = [...otpDigits];

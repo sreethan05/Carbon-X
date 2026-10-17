@@ -129,6 +129,9 @@ def prepare_data():
         if col not in df.columns:
             df[col] = value
             BACKFILLED[col] = note
+        elif df[col].isna().any():
+            df[col] = df[col].fillna(value)
+            BACKFILLED[col] = note
 
     _backfill("NDRE", ((df["B8"] - df["B4"]) / (df["B8"] + df["B4"] + 1e-6) * 0.75).clip(-0.5, 0.95),
               "NDVI-family stand-in (no red-edge bands in CSV)")
@@ -163,7 +166,7 @@ def prepare_data():
               "NDVI stand-in (no SoilGrids in CSV)")
 
     # SOC target availability is decided BEFORE any stand-in is added.
-    soc_target_available = "SOILGRIDS_SOC_STOCK" in df.columns
+    soc_target_available = "SOILGRIDS_SOC_STOCK" in df.columns and df["SOILGRIDS_SOC_STOCK"].notna().any()
     _backfill("SOILGRIDS_SOC_STOCK", (35.0 + df["NDVI"] * 40.0).clip(10.0, 150.0),
               "linear NDVI stand-in — input feature only, NEVER usable as a target")
     _backfill("SOILGRIDS_SOC_Q05", (df["SOILGRIDS_SOC_STOCK"] * 0.6).clip(5.0, 100.0),

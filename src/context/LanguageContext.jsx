@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, useMemo } from 'react';
 
 const LanguageContext = createContext();
 
@@ -184,7 +184,70 @@ const translations = {
     score: "Score",
     canopy: "Canopy",
     accuracy: "Accuracy",
-    liveGps: "Live GPS"
+    liveGps: "Live GPS",
+
+    // Layout & Navigation additions
+    dashboard: "Dashboard",
+    landVerification: "Land Verification",
+    carbonPassport: "Carbon Passport",
+    creditPooling: "Credit Pooling",
+    esgDashboard: "ESG Dashboard",
+    fpoDashboard: "FPO Dashboard",
+    adminDashboard: "Admin Dashboard",
+    adminCompliance: "Admin Compliance",
+    bulkAutoMatch: "Bulk Auto-Match",
+    certificates: "Certificates",
+    fpoAuditDesk: "FPO Audit Desk",
+    fpoDesk: "FPO Desk",
+    walletLedger: "Wallet & UPI Ledger",
+    notifications: "Notifications",
+    noNotifications: "No notifications yet",
+    login: "Login",
+
+    // Tutorial additions
+    skip: "Skip",
+    step: "Step",
+    of: "of",
+    completed: "Completed",
+    tutorialNavHint: "Use left/right arrow keys or buttons to navigate",
+    restartTutorial: "Restart walkthrough",
+    nextStep: "Next Step",
+    proceedToFarm: "Proceed to My Farm",
+
+    // Role Selection additions
+    backToGateway: "Back to Gateway",
+    roleAccessPortal: "Role-Based Access Portal",
+    selectEcosystemRole: "Select Ecosystem Role",
+    selectRoleSubtitle: "Choose your role to access customized dashboards, verification workflows, and marketplace portals.",
+    enterPortal: "Enter Portal",
+    farmerLandOwner: "Farmer & Land Owner",
+    farmerLandOwnerDesc: "Register farm parcels via Telugu/Hindi/English voice input, upload land deeds for AI verification, and receive direct UPI carbon credit payouts.",
+    fpoOfficer: "FPO / Cooperative Officer",
+    fpoOfficerDesc: "Manage member farmers, perform bulk direct onboarding, inspect flagged ground-truth records, and execute cooperative credit pooling.",
+    corporateBuyer: "Corporate Buyer & ESG Officer",
+    corporateBuyerDesc: "Browse verified carbon credit listings, run bulk auto-match allocation algorithms, and manage Scope 1-3 retirement certificates.",
+
+    // Voice & Registration additions
+    voicePrompt: "Please enter your legal full name, mobile number, and identity details to enroll.",
+    voiceNotSupported: "Voice input is not supported in this browser. Please type your details.",
+    voiceCaptureError: "Could not capture your voice. Please type your details.",
+    voiceDeviceError: "Could not start voice input on this device. Please type your details.",
+    phoneOtpVerification: "Phone OTP Verification",
+    enter6DigitCode: "Enter 6-Digit Code",
+    resendCode: "Resend Code",
+    resendingCode: "Resending…",
+    didntReceiveCode: "Didn't receive code?",
+    cancel: "Cancel",
+    verifyAndRoute: "Verify & Route",
+    codeDispatchedTo: "A 6-digit authentication code has been dispatched to",
+
+    // Farmland & Dashboard additions
+    enrollFirstParcel: "Enroll Your First Parcel",
+    switchFarm: "Switch Farm:",
+    selectedLandParcel: "Selected Land Parcel:",
+    noFarmsEnrolled: "No farms enrolled yet",
+    monitoringFlagged: "Monitoring Flagged",
+    fpoInspected: "FPO Inspected Record"
   },
   hi: {
     // General / Navigation
@@ -366,7 +429,70 @@ const translations = {
     score: "स्कोर",
     canopy: "वन canopy",
     accuracy: "सटीकता",
-    liveGps: "लाइव GPS"
+    liveGps: "लाइव GPS",
+
+    // Layout & Navigation additions
+    dashboard: "डैशबोर्ड",
+    landVerification: "भूमि सत्यापन",
+    carbonPassport: "कार्बन पासपोर्ट",
+    creditPooling: "क्रेडिट पूलिंग",
+    esgDashboard: "ईएसजी डैशबोर्ड",
+    fpoDashboard: "एफपीओ डैशबोर्ड",
+    adminDashboard: "व्यवस्थापक डैशबोर्ड",
+    adminCompliance: "व्यवस्थापक अनुपालन",
+    bulkAutoMatch: "थोक ऑटो-मैच",
+    certificates: "प्रमाणपत्र",
+    fpoAuditDesk: "एफपीओ ऑडिट डेस्क",
+    fpoDesk: "एफपीओ डेस्क",
+    walletLedger: "वॉलेट और यूपीआई लेज़र",
+    notifications: "सूचनाएं",
+    noNotifications: "अभी कोई सूचना नहीं है",
+    login: "लॉगिन",
+
+    // Tutorial additions
+    skip: "छोड़ें",
+    step: "चरण",
+    of: "का",
+    completed: "पूर्ण",
+    tutorialNavHint: "नेविगेट करने के लिए बाएँ/दाएँ तीर कुंजियों या बटनों का उपयोग करें",
+    restartTutorial: "ट्यूटोरियल पुनः आरंभ करें",
+    nextStep: "अगला चरण",
+    proceedToFarm: "मेरे खेत पर जाएँ",
+
+    // Role Selection additions
+    backToGateway: "गेटवे पर वापस जाएँ",
+    roleAccessPortal: "भूमिका-आधारित एक्सेस पोर्टल",
+    selectEcosystemRole: "पारिस्थितिकी तंत्र भूमिका चुनें",
+    selectRoleSubtitle: "अनुकूलित डैशबोर्ड, सत्यापन वर्कफ़्लो और बाज़ार पोर्टल तक पहुँचने के लिए अपनी भूमिका चुनें।",
+    enterPortal: "पोर्टल में प्रवेश करें",
+    farmerLandOwner: "किसान और भूमि स्वामी",
+    farmerLandOwnerDesc: "तेलुगु/हिन्दी/अंग्रेजी वॉयस इनपुट के माध्यम से खेत पार्सल पंजीकृत करें, एआई सत्यापन के लिए भूमि दस्तावेज अपलोड करें, और प्रत्यक्ष यूपीआई कार्बन क्रेडिट भुगतान प्राप्त करें।",
+    fpoOfficer: "एफपीओ / सहकारी अधिकारी",
+    fpoOfficerDesc: "सदस्य किसानों का प्रबंधन करें, बल्क ऑनबोर्डिंग करें, ग्राउंड-ट्रुथ रिकॉर्ड का निरीक्षण करें और सहकारी क्रेडिट पूलिंग निष्पादित करें।",
+    corporateBuyer: "कॉर्पोरेट खरीदार और ईएसजी अधिकारी",
+    corporateBuyerDesc: "सत्यापित कार्बन क्रेडिट लिस्टिंग ब्राउज़ करें, बल्क ऑटो-मैच आवंटन एल्गोरिदम चलाएं और स्कोप 1-3 सेवानिवृत्ति प्रमाणपत्र प्रबंधित करें।",
+
+    // Voice & Registration additions
+    voicePrompt: "नामांकन के लिए कृपया अपना कानूनी पूरा नाम, मोबाइल नंबर और पहचान विवरण दर्ज करें।",
+    voiceNotSupported: "इस ब्राउज़र में वॉयस इनपुट समर्थित नहीं है। कृपया अपना विवरण टाइप करें।",
+    voiceCaptureError: "आपकी आवाज़ रिकॉर्ड नहीं की जा सकी। कृपया अपना विवरण टाइप करें।",
+    voiceDeviceError: "इस डिवाइस पर वॉयस इनपुट शुरू नहीं किया जा सका। कृपया अपना विवरण टाइप करें।",
+    phoneOtpVerification: "फ़ोन ओटीपी सत्यापन",
+    enter6DigitCode: "6-अंकों का कोड दर्ज करें",
+    resendCode: "कोड पुनः भेजें",
+    resendingCode: "पुनः भेजा जा रहा है…",
+    didntReceiveCode: "कोड प्राप्त नहीं हुआ?",
+    cancel: "रद्द करें",
+    verifyAndRoute: "सत्यापित करें और आगे बढ़ें",
+    codeDispatchedTo: "एक 6-अंकीय प्रमाणीकरण कोड भेजा गया है",
+
+    // Farmland & Dashboard additions
+    enrollFirstParcel: "अपना पहला पार्सल नामांकित करें",
+    switchFarm: "खेत बदलें:",
+    selectedLandParcel: "चयनित भूमि पार्सल:",
+    noFarmsEnrolled: "अभी तक कोई खेत नामांकित नहीं है",
+    monitoringFlagged: "निगरानी में चिह्नित",
+    fpoInspected: "एफपीओ निरीक्षण रिकॉर्ड"
   },
   te: {
     // General / Navigation
@@ -548,38 +674,180 @@ const translations = {
     score: "స్కోరు",
     canopy: "canopy",
     accuracy: "ఖచ్చితత్వం",
-    liveGps: "లైవ్ GPS"
+    liveGps: "లైవ్ GPS",
+
+    // Layout & Navigation additions
+    dashboard: "డ్యాష్‌బోర్డ్",
+    landVerification: "భూమి ధృవీకరణ",
+    carbonPassport: "కార్బన్ పాస్‌పోర్ట్",
+    creditPooling: "క్రెడిట్ పూలింగ్",
+    esgDashboard: "ESG డ్యాష్‌బోర్డ్",
+    fpoDashboard: "FPO డ్యాష్‌బోర్డ్",
+    adminDashboard: "అడ్మిన్ డ్యాష్‌బోర్డ్",
+    adminCompliance: "అడ్మిన్ సమ్మతి",
+    bulkAutoMatch: "బల్క్ ఆటో-మ్యాచ్",
+    certificates: "ధృవీకరణ పత్రాలు",
+    fpoAuditDesk: "FPO ఆడిట్ డెస్క్",
+    fpoDesk: "FPO డెస్క్",
+    walletLedger: "వాలెట్ & UPI ఖాతా పుస్తకం",
+    notifications: "నోటిఫికేషన్‌లు",
+    noNotifications: "ఇంకా నోటిఫికేషన్‌లు లేవు",
+    login: "లాగిన్",
+
+    // Tutorial additions
+    skip: "దాటవేయి",
+    step: "దశ",
+    of: "లో",
+    completed: "పూర్తయింది",
+    tutorialNavHint: "ముందుకు వెళ్ళడానికి కుడి/ఎడమ బాణం లేదా బటన్ క్లిక్ చేయండి",
+    restartTutorial: "ట్యుటోరియల్ పునఃప్రారంభించండి",
+    nextStep: "తదుపరి దశ",
+    proceedToFarm: "నా పొలానికి వెళ్లండి",
+
+    // Role Selection additions
+    backToGateway: "గేట్‌వేకి తిరిగి వెళ్లండి",
+    roleAccessPortal: "పాత్ర-ఆధారిత యాక్సెస్ పోర్టల్",
+    selectEcosystemRole: "పర్యావరణ వ్యవస్థ పాత్రను ఎంచుకోండి",
+    selectRoleSubtitle: "అనుకూలీకరించిన డ్యాష్‌బోర్డ్‌లు, ధృవీకరణ ప్రక్రియలు మరియు మార్కెట్‌ప్లేస్ పోర్టల్‌లను యాక్సెస్ చేయడానికి మీ పాత్రను ఎంచుకోండి.",
+    enterPortal: "పోర్టల్‌లోకి ప్రవేశించండి",
+    farmerLandOwner: "రైతు & భూ యజమాని",
+    farmerLandOwnerDesc: "తెలుగు/హిందీ/ఇంగ్లీష్ వాయిస్ ఇన్‌పుట్ ద్వారా వ్యవసాయ ప్లాట్లను నమోదు చేసుకోండి, AI ధృవీకరణ కోసం భూమి పత్రాలను అప్‌లోడ్ చేయండి మరియు ప్రత్యక్ష UPI కార్బన్ క్రెడిట్ చెల్లింపులను పొందండి.",
+    fpoOfficer: "FPO / సహకార సంఘం అధికారి",
+    fpoOfficerDesc: "సభ్యులైన రైతులను నిర్వహించండి, బల్క్ ఆన్‌బోర్డింగ్ చేయండి, క్షేత్రస్థాయి రికార్డులను తనిఖీ చేయండి మరియు సహకార క్రెడిట్ పూలింగ్‌ను అమలు చేయండి.",
+    corporateBuyer: "కార్పొరేట్ కొనుగోలుదారు & ESG అధికారి",
+    corporateBuyerDesc: "ధృవీకరించబడిన కార్బన్ క్రెడిట్ జాబితాలను బ్రౌజ్ చేయండి, బల్క్ ఆటో-మ్యాచ్ కేటాయింపు అల్గోరిథంలను అమలు చేయండి మరియు స్కోప్ 1-3 పదవీ విరమణ ధృవీకరణ పత్రాలను నిర్వహించండి.",
+
+    // Voice & Registration additions
+    voicePrompt: "నమోదు కొరకు దయచేసి మీ పూర్తి పేరు, మొబైల్ నంబరు మరియు గుర్తింపు వివరాలను నమోదు చేయండి.",
+    voiceNotSupported: "ఈ బ్రౌజర్‌లో వాయిస్ ఇన్‌పుట్ మద్దతు లేదు. దయచేసి వివరాలను టైప్ చేయండి.",
+    voiceCaptureError: "మీ వాయిస్ రికార్డ్ చేయలేకపోయాము. దయచేసి వివరాలను టైప్ చేయండి.",
+    voiceDeviceError: "ఈ పరికరంలో వాయిస్ ఇన్‌పుట్ ప్రారంభించలేకపోయాము. దయచేసి వివరాలను టైప్ చేయండి.",
+    phoneOtpVerification: "ఫోన్ ఓటీపీ ధృవీకరణ",
+    enter6DigitCode: "6-అంకెల కోడ్‌ను నమోదు చేయండి",
+    resendCode: "కోడ్‌ను మళ్లీ పంపండి",
+    resendingCode: "మళ్లీ పంపుతోంది…",
+    didntReceiveCode: "కోడ్ రాలేదా?",
+    cancel: "రద్దు చేయండి",
+    verifyAndRoute: "ధృవీకరించి కొనసాగించండి",
+    codeDispatchedTo: "6-అంకెల ప్రామాణీకరణ కోడ్ పంపబడింది",
+
+    // Farmland & Dashboard additions
+    enrollFirstParcel: "మీ మొదటి ప్లాట్‌ను నమోదు చేసుకోండి",
+    switchFarm: "పొలం మార్చండి:",
+    selectedLandParcel: "ఎంచుకున్న భూమి ప్లాట్:",
+    noFarmsEnrolled: "ఇంకా పొలాలు నమోదు కాలేదు",
+    monitoringFlagged: "పర్యవేక్షణలో గుర్తించబడింది",
+    fpoInspected: "FPO తనిఖీ చేసిన రికార్డు"
   }
 };
 
+const SUPPORTED_LANGUAGES = [
+  { code: 'en', label: 'English', nativeLabel: 'English' },
+  { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी' },
+  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు' },
+];
+
+function sanitizeLang(lang) {
+  if (!lang || typeof lang !== 'string') return 'en';
+  const lower = lang.toLowerCase().trim();
+  if (lower.startsWith('te') || lower === 'తెలుగు') return 'te';
+  if (lower.startsWith('hi') || lower === 'हिन्दी' || lower === 'हिंदी') return 'hi';
+  if (lower.startsWith('en')) return 'en';
+  return 'en';
+}
+
 export function LanguageProvider({ children }) {
-  // Try to load language from localStorage
   const [currentLang, setCurrentLang] = useState(() => {
-    return localStorage.getItem('carbonx_lang') || 'en';
+    try {
+      const stored = localStorage.getItem('carbonx_lang');
+      if (stored) return sanitizeLang(stored);
+      const userStr = localStorage.getItem('carbonx_user');
+      if (userStr) {
+        try {
+          const userObj = JSON.parse(userStr);
+          if (userObj?.preferred_language) {
+            return sanitizeLang(userObj.preferred_language);
+          }
+        } catch { /* ignore */ }
+      }
+      return 'en';
+    } catch {
+      return 'en';
+    }
   });
 
+  // Listen for storage events (multi-tab sync) and custom language sync events (AuthContext)
   useEffect(() => {
-    const stored = localStorage.getItem('carbonx_lang');
-    if (stored && ['en', 'hi', 'te'].includes(stored)) {
-      setCurrentLang(stored);
+    const handleCustomLang = (e) => {
+      const lang = e?.detail?.lang;
+      if (lang) {
+        const target = sanitizeLang(lang);
+        setCurrentLang((prev) => (prev !== target ? target : prev));
+      }
+    };
+
+    const handleStorage = (e) => {
+      if (e.key === 'carbonx_lang' && e.newValue) {
+        const target = sanitizeLang(e.newValue);
+        setCurrentLang((prev) => (prev !== target ? target : prev));
+      }
+    };
+
+    window.addEventListener('carbonx:language', handleCustomLang);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('carbonx:language', handleCustomLang);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  const changeLanguage = useCallback((lang) => {
+    const target = sanitizeLang(lang);
+    setCurrentLang(target);
+    try {
+      localStorage.setItem('carbonx_lang', target);
+      const userStr = localStorage.getItem('carbonx_user');
+      if (userStr) {
+        try {
+          const userObj = JSON.parse(userStr);
+          if (userObj && typeof userObj === 'object') {
+            userObj.preferred_language = target;
+            localStorage.setItem('carbonx_user', JSON.stringify(userObj));
+          }
+        } catch { /* ignore */ }
+      }
+    } catch (e) {
+      console.warn('Failed to persist language to localStorage:', e);
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('carbonx:language', { detail: { lang: target } }));
     }
   }, []);
 
-  const changeLanguage = (lang) => {
-    const validLangs = ['en', 'hi', 'te'];
-    const matched = validLangs.find(l => lang.toLowerCase().startsWith(l));
-    const target = matched || 'en';
-    setCurrentLang(target);
-    localStorage.setItem('carbonx_lang', target);
-  };
+  const t = useCallback((key, fallback) => {
+    if (!key) return fallback !== undefined ? fallback : '';
+    const section = translations[currentLang] || translations.en;
+    const val = section?.[key];
+    if (val !== undefined && val !== null && val !== '') {
+      return val;
+    }
+    const enVal = translations.en?.[key];
+    if (enVal !== undefined && enVal !== null && enVal !== '') {
+      return enVal;
+    }
+    return fallback !== undefined ? fallback : key;
+  }, [currentLang]);
 
-  const t = (key) => {
-    const section = translations[currentLang] || translations['en'];
-    return section[key] || translations['en'][key] || key;
-  };
+  const value = useMemo(() => ({
+    currentLang,
+    changeLanguage,
+    t,
+    supportedLanguages: SUPPORTED_LANGUAGES,
+    translations,
+  }), [currentLang, changeLanguage, t]);
 
   return (
-    <LanguageContext.Provider value={{ currentLang, changeLanguage, t }}>
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   );
@@ -587,5 +855,22 @@ export function LanguageProvider({ children }) {
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useLanguage() {
-  return useContext(LanguageContext);
+  const context = useContext(LanguageContext);
+  if (!context) {
+    return {
+      currentLang: 'en',
+      changeLanguage: () => {},
+      t: (key, fallback) => {
+        const enVal = translations.en?.[key];
+        if (enVal !== undefined && enVal !== null && enVal !== '') {
+          return enVal;
+        }
+        return fallback !== undefined ? fallback : key || '';
+      },
+      supportedLanguages: SUPPORTED_LANGUAGES,
+      translations,
+    };
+  }
+  return context;
 }
+

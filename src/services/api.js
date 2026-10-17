@@ -1,12 +1,82 @@
 // API bases: Vite dev proxies /py-api and /bc-api; in production set
 // VITE_PY_API_BASE / VITE_BC_API_BASE (e.g. https://api.example.com).
-export const PY_API_BASE = import.meta.env.VITE_PY_API_BASE || '/py-api';
-const BC = import.meta.env.VITE_BC_API_BASE || '/bc-api';
+export const PY_API_BASE = (import.meta.env.VITE_PY_API_BASE || '/py-api').replace(/\/+$/, '');
+const BC = (import.meta.env.VITE_BC_API_BASE || '/bc-api').replace(/\/+$/, '');
 const PY = PY_API_BASE;
 
 function authHeaders() {
-  const token = localStorage.getItem('carbonx_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  try {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('carbonx_token') : null;
+    if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+      return { Authorization: `Bearer ${token.trim()}` };
+    }
+  } catch {
+    // Storage access might be restricted in some browser privacy modes
+  }
+  return {};
+}
+
+function notifyUnauthorized(status, code, message) {
+  if (typeof window !== 'undefined') {
+    try {
+      const token = localStorage.getItem('carbonx_token');
+      // Only dispatch if a session token was present (avoid false triggers on initial unauthenticated calls)
+      if (token && token !== 'null' && token !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('carbonx:unauthorized', {
+            detail: { status, code: code || 'UNAUTHORIZED', message },
+          })
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function extractErrorMessage(data, status) {
+  if (data?.message && typeof data.message === 'string' && data.message.trim() !== '') {
+    return data.message;
+  }
+  if (typeof data?.detail === 'string' && data.detail.trim() !== '') {
+    return data.detail;
+  }
+  if (Array.isArray(data?.detail)) {
+    // Format FastAPI 422 validation errors into clean human-readable text
+    const parts = data.detail
+      .map((item) => {
+        if (!item) return '';
+        if (typeof item === 'string') return item;
+        const loc = Array.isArray(item.loc)
+          ? item.loc.filter((x) => x !== 'body' && x !== '__root__').join('.')
+          : '';
+        const msg = item.msg || item.message || JSON.stringify(item);
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+  }
+  if (data?.error && typeof data.error === 'string' && data.error.trim() !== '') {
+    return data.error;
+  }
+  if (status === 401) return 'Session expired or unauthorized. Please sign in again.';
+  if (status === 403) return 'You do not have permission to perform this action.';
+  if (status === 404) return 'The requested resource was not found.';
+  if (status === 422) return 'Validation error. Please verify the submitted data.';
+  if (status >= 500) return `Server error (HTTP ${status}). Please try again later.`;
+  return `Request failed (HTTP ${status})`;
+}
+
+function extractErrorCode(data, status) {
+  if (data?.code && typeof data.code === 'string' && data.code.trim() !== '') {
+    return data.code;
+  }
+  if (status === 401) return 'UNAUTHORIZED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 422) return 'VALIDATION_ERROR';
+  if (status >= 500) return `SERVER_ERROR_${status}`;
+  return `HTTP_${status}`;
 }
 
 // Normalize every response into a JSON envelope:
@@ -21,24 +91,59 @@ async function parseResponse(res) {
   } catch {
     data = null;
   }
+
+  // Handle 401 UNAUTHORIZED globally to notify AuthContext for auto-logout
+  if (res.status === 401 || (data && typeof data === 'object' && data.code === 'UNAUTHORIZED')) {
+    notifyUnauthorized(res.status, data?.code, extractErrorMessage(data, res.status));
+  }
+
   if (data && typeof data === 'object') {
-    if (!res.ok && data.success !== false) {
+    // Array response safety
+    if (Array.isArray(data)) {
+      if (!res.ok) {
+        return {
+          success: false,
+          code: extractErrorCode(null, res.status),
+          message: extractErrorMessage(null, res.status),
+          data,
+          status: res.status,
+        };
+      }
+      return { success: true, data, status: res.status };
+    }
+
+    // Error response normalization
+    if (!res.ok || data.success === false) {
+      const code = extractErrorCode(data, res.status);
+      const message = extractErrorMessage(data, res.status);
       return {
-        success: false,
-        code: data.code || `HTTP_${res.status}`,
-        message: data.message || data.detail || `Request failed (HTTP ${res.status})`,
         ...data,
+        success: false,
+        code,
+        message,
         status: res.status,
       };
     }
-    return { ...data, status: res.status };
+
+    return {
+      success: true,
+      ...data,
+      status: res.status,
+    };
   }
+
+  // Successful empty response (e.g. 204 No Content, 200 with empty body)
+  if (res.ok) {
+    return {
+      success: true,
+      status: res.status,
+    };
+  }
+
   return {
     success: false,
-    code: res.ok ? 'EMPTY_RESPONSE' : `HTTP_${res.status}`,
-    message: res.ok
-      ? 'The server returned an empty response.'
-      : `The server returned a non-JSON response (HTTP ${res.status}).`,
+    code: extractErrorCode(null, res.status),
+    message: extractErrorMessage(null, res.status),
     status: res.status,
   };
 }
@@ -137,7 +242,7 @@ export async function verifyLandDocument(payload) {
 }
 
 export async function getKycStatus(phone) {
-  return get(`${PY}/kyc/status/${phone}`);
+  return get(`${PY}/kyc/status/${encodeURIComponent(phone)}`);
 }
 
 // ── Farms & satellite (GEE + ML) ──
@@ -156,7 +261,7 @@ export async function saveFarm(farm) {
 }
 
 export async function predictBiodiversity(longitude, latitude) {
-  return get(`${PY}/predict?longitude=${longitude}&latitude=${latitude}`);
+  return get(`${PY}/predict?longitude=${encodeURIComponent(longitude)}&latitude=${encodeURIComponent(latitude)}`);
 }
 
 export async function lookupLandRegistry(surveyNumber) {
@@ -180,7 +285,7 @@ export async function createMarketplaceListing(payload) {
 }
 
 export async function placeListingBid(listingId, bidAmount, bidderName) {
-  return post(`${PY}/marketplace/listings/${listingId}/bid`, { bid_amount: bidAmount, bidder_name: bidderName });
+  return post(`${PY}/marketplace/listings/${encodeURIComponent(listingId)}/bid`, { bid_amount: bidAmount, bidder_name: bidderName });
 }
 
 export async function buyCredits(payload) {
@@ -203,7 +308,7 @@ export async function getCertificates() {
 
 export async function retireCertificate(certId, scope) {
   const qs = scope ? `?scope=${encodeURIComponent(scope)}` : '';
-  return post(`${PY}/certificates/${certId}/retire${qs}`, {});
+  return post(`${PY}/certificates/${encodeURIComponent(certId)}/retire${qs}`, {});
 }
 
 // ── Trust & transparency (split engine, hash ledger, earnings calculator) ──
@@ -213,7 +318,7 @@ export async function calculateEarnings(payload) {
 }
 
 export async function getFarmLedger(farmId) {
-  return get(`${PY}/ledger/${farmId}`);
+  return get(`${PY}/ledger/${encodeURIComponent(farmId)}`);
 }
 
 export async function demoLogin(phone) {
@@ -227,11 +332,48 @@ export async function runMonitoring() {
 // ── Farm passport & history ──
 
 export async function getFarmPassport(farmId) {
-  return get(`${PY}/passport/${farmId}`);
+  return get(`${PY}/passport/${encodeURIComponent(farmId)}`);
 }
 
 export async function getNdviHistory(farmId) {
-  return get(`${PY}/farm/${farmId}/ndvi-history`);
+  return get(`${PY}/farm/${encodeURIComponent(farmId)}/ndvi-history`);
+}
+
+// ── Evidence capture (practice photos & geotags) ──
+
+export async function uploadEvidencePhoto(farmId, file, { latitude, longitude, capturedAt } = {}) {
+  const form = new FormData();
+  form.append('file', file);
+  if (latitude !== undefined && latitude !== null && latitude !== '') form.append('latitude', latitude.toString());
+  if (longitude !== undefined && longitude !== null && longitude !== '') form.append('longitude', longitude.toString());
+  if (capturedAt) form.append('captured_at', capturedAt);
+  return request(`${PY}/farms/${encodeURIComponent(farmId)}/evidence/photo`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: form,
+  });
+}
+
+export async function addEvidenceGeotag(farmId, payload) {
+  return post(`${PY}/farms/${encodeURIComponent(farmId)}/evidence/geotag`, payload);
+}
+
+export async function getFarmEvidence(farmId) {
+  return get(`${PY}/farms/${encodeURIComponent(farmId)}/evidence`);
+}
+
+export function getEvidencePhotoUrl(farmId, sha256) {
+  return `${PY}/farms/${encodeURIComponent(farmId)}/evidence/photo/${encodeURIComponent(sha256)}`;
+}
+
+// ── Payments & Checkout ──
+
+export async function getPaymentsConfig() {
+  return get(`${PY}/payments/config`);
+}
+
+export async function createCheckout(payload) {
+  return post(`${PY}/payments/checkout`, payload);
 }
 
 // ── FPO ──
@@ -248,6 +390,14 @@ export async function getFpos() {
 
 export async function getOpsSummary() {
   return get(`${PY}/ops/summary`);
+}
+
+export async function getGroundTruthEval() {
+  return get(`${PY}/ops/ground-truth/eval`);
+}
+
+export async function getSystemHealth() {
+  return get(`${PY}/health`);
 }
 
 export async function getFpoFarmers() {
@@ -267,11 +417,11 @@ export async function fpoOnboardFarmer(payload) {
 }
 
 export async function fpoConfirmFarm(farmId) {
-  return post(`${PY}/fpo/confirm/${farmId}`, {});
+  return post(`${PY}/fpo/confirm/${encodeURIComponent(farmId)}`, {});
 }
 
 export async function fpoReviewFarm(farmId, payload) {
-  return post(`${PY}/fpo/review/${farmId}`, payload);
+  return post(`${PY}/fpo/review/${encodeURIComponent(farmId)}`, payload);
 }
 
 // ── Corporate ──
@@ -311,7 +461,7 @@ export async function retireCredit(tokenId, ownerPrivateKey) {
 }
 
 export async function getCreditData(tokenId) {
-  return get(`${BC}/api/credits/${tokenId}`);
+  return get(`${BC}/api/credits/${encodeURIComponent(tokenId)}`);
 }
 
 export async function getBlockchainHealth() {
@@ -330,10 +480,10 @@ export function combinedCredits(row) {
     parseFloat(row?.biodiversity_credits ?? 0) ||
     (parseFloat(row?.biodiversity_score ?? 0) / 40) ||
     0;
-  const total = parseFloat(row?.total_credits ?? 0) || carbon + bio;
+  const total = parseFloat(row?.total_credits ?? 0) || (carbon + bio);
   return {
-    carbon: Math.round(carbon * 100) / 100,
-    biodiversity: Math.round(bio * 100) / 100,
-    total: Math.round(total * 100) / 100,
+    carbon: Number.isFinite(carbon) ? Math.round(carbon * 100) / 100 : 0,
+    biodiversity: Number.isFinite(bio) ? Math.round(bio * 100) / 100 : 0,
+    total: Number.isFinite(total) ? Math.round(total * 100) / 100 : 0,
   };
 }

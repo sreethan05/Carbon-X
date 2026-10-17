@@ -1,10 +1,12 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles, Building2, FileText, ShieldCheck, Target } from 'lucide-react';
 import BadgePill from '../components/BadgePill';
+import { useAuth } from '../context/AuthContext';
 
 export default function CorporateWelcome() {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   return (
     <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-8 px-4 md:px-10">
@@ -24,6 +26,24 @@ export default function CorporateWelcome() {
             </p>
 
             <div className="flex flex-wrap gap-4 pt-2">
+              {user ? (
+                <button
+                  onClick={() => navigate('/corporate/dashboard')}
+                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <Building2 className="w-4 h-4 text-emerald-800" />
+                  <span>Go to Corporate ESG Desk ({user.name || 'Corporate'})</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate('/corporate/login')}
+                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  <Building2 className="w-4 h-4 text-emerald-800" />
+                  <span>Sign In to Corporate ESG Desk</span>
+                </button>
+              )}
+
               <button
                 onClick={() => navigate('/marketplace')}
                 className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
@@ -40,6 +60,39 @@ export default function CorporateWelcome() {
                 <span>Run Bulk Auto-Match Engine</span>
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Enterprise ESG Capabilities */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 rounded-xl p-5 space-y-2">
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-800 rounded-xl flex items-center justify-center">
+              <Target className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-900">Offset Portfolio Targets</h3>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Define corporate decarbonization milestones across Scope 1 (Direct), Scope 2 (Power), and Scope 3 (Agri Supply Chain) with real-time fulfillment tracking.
+            </p>
+          </div>
+
+          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 rounded-xl p-5 space-y-2">
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-800 rounded-xl flex items-center justify-center">
+              <FileText className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-900">BRSR Regulatory Audit Export</h3>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Export one-click SEBI BRSR-aligned compliance packages containing certificate SHA-256 hashes, source cadastral parcels, and permanent retirement timestamps.
+            </p>
+          </div>
+
+          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 rounded-xl p-5 space-y-2">
+            <div className="w-10 h-10 bg-emerald-50 text-emerald-800 rounded-xl flex items-center justify-center">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <h3 className="text-sm font-bold text-slate-900">Cryptographic Retirement Chain</h3>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Credits transition instantly from escrow to permanent retirement on the farm's SHA-256 hash ledger, eliminating double-counting and greenwashing risk.
+            </p>
           </div>
         </div>
 

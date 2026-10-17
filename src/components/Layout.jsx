@@ -6,6 +6,7 @@ import {
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import OfflineBanner from './OfflineBanner';
+import InstallPrompt from './InstallPrompt';
 import FarmerVoiceAssistant from '../features/voice-agent/FarmerVoiceAssistant';
 
 const ROLE_NAV = {
@@ -277,6 +278,7 @@ export default function Layout({ children }) {
           );
         })}
       </nav>
+      <InstallPrompt />
     </div>
   );
 }

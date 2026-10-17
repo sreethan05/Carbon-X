@@ -19,8 +19,44 @@ create table if not exists public.ground_truth_samples (
 alter table public.ground_truth_samples enable row level security;
 grant select, insert, update, delete on public.ground_truth_samples to anon, authenticated, service_role;
 
+-- 1b. Ledger events store (tamper-evident SHA-256 hash chain per farm)
+create table if not exists public.ledger_events (
+  id uuid primary key default gen_random_uuid(),
+  entity_id text not null,
+  seq integer not null,
+  event_type text not null,
+  payload jsonb,
+  payload_json text,
+  ts timestamptz not null default now(),
+  prev_hash text not null,
+  hash text not null,
+  created_at timestamptz not null default now(),
+  unique(entity_id, seq)
+);
+alter table public.ledger_events enable row level security;
+grant select, insert, update on public.ledger_events to service_role;
+
+-- 1c. Land registry survey parcels (Telangana cadastre)
+create table if not exists public.land_registry (
+  id uuid primary key default gen_random_uuid(),
+  survey_number text not null,
+  owner_name text not null,
+  area_ha numeric not null default 0,
+  village text not null,
+  mandal text not null,
+  district text not null,
+  tier text,
+  registry_geometry_available boolean not null default false,
+  geojson jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.land_registry enable row level security;
+grant select on public.land_registry to service_role;
+create index if not exists land_registry_survey_idx on public.land_registry(survey_number);
+
 -- 2. Performance indexes for the hot paths
 create index if not exists farms_status_idx on public.farms(status);
+create index if not exists marketplace_listings_farm_id_idx on public.marketplace_listings(farm_id);
 create index if not exists marketplace_listings_farmer_status_idx
   on public.marketplace_listings(farmer_phone, status);
 create index if not exists kyc_verifications_owner_created_idx

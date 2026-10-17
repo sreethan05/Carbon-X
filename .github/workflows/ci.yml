@@ -23,18 +23,23 @@ jobs:
     name: Backend — tests
     runs-on: ubuntu-latest
     env:
-      # Keep external services off during tests; the trust-layer tests are hermetic.
+      # Keep external services off during tests; the test suite is hermetic.
       SUPABASE_URL: ""
       SUPABASE_SERVICE_ROLE_KEY: ""
       VITE_SUPABASE_URL: ""
       VITE_SUPABASE_ANON_KEY: ""
       CARBONX_ALLOW_DEV_OTP: "1"
+      CARBONX_TEST_LIVE_DB: "0"
+      CARBONX_PAYMENTS_PROVIDER: "simulated"
+      JWT_SECRET_KEY: "ci-test-secret-key-do-not-use-in-production-random-value-32chars"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
       - name: Install dependencies
         working-directory: backend
         run: pip install -r requirements.txt

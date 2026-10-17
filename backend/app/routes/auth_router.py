@@ -4,12 +4,12 @@ from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 from datetime import timedelta
 import os
+import re
 
 from app.security import (
     create_access_token,
     decode_token,
     get_current_user,
-    verify_password,
 )
 from app.phone_service import generate_otp, send_phone_otp
 from app import supabase_db as db
@@ -30,6 +30,14 @@ def _require_database():
         )
 
 
+def _normalize_phone(phone: str) -> str:
+    """Normalize phone number to 10 digits (strips +91, 0 prefix, spaces, symbols)."""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits
+
+
 def _get_user(phone: str):
     _require_database()
     return db.get_profile(phone)
@@ -45,27 +53,12 @@ def _get_user_farms(phone: str):
     return db.get_farms(phone)
 
 
-def _save_farm(farm: dict):
-    _require_database()
-    return db.insert_farm(farm)
-
-
 def _store_otp(phone: str, otp: str):
     redis_store.store_otp(phone, otp)
 
 
 def _verify_otp(phone: str, otp: str) -> bool:
     return redis_store.verify_otp(phone, otp)
-
-
-def _clear_otp(phone: str):
-    redis_store.clear_otp(phone)
-
-
-def _polygon_area_hectares(geojson: dict) -> float:
-    """Deprecated alias — canonical implementation is polygon_service.polygon_area_hectares."""
-    from app.services.polygon_service import polygon_area_hectares as _canonical
-    return _canonical(geojson)
 
 
 def _sms_ready() -> bool:
@@ -143,13 +136,14 @@ def _user_response(user: dict, phone: str):
 # ─── Models ───
 
 class SendOtpModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     phone: str
 
 
 class RegisterModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     phone: str
-    otp: str
+    otp: Optional[str] = ""
     name: str
     aadhaar: str
     state: str
@@ -177,10 +171,28 @@ class RegistrationOtpVerifyModel(BaseModel):
     otp: str
 
 
-class CorporateLoginModel(BaseModel):
+class FpoLoginModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    registration_no: str
+    password: Optional[str] = None
+
+
+class DemoLoginModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str
-    password: str
+    phone: Optional[str] = "9000000001"
+
+
+class UpdateProfileModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: Optional[str] = None
+    state: Optional[str] = None
+    district: Optional[str] = None
+    village: Optional[str] = None
+    upi: Optional[str] = None
+    email: Optional[str] = None
+    # NOTE: no role field — role changes require an admin-managed process,
+    # never a self-service PATCH.
+    preferred_language: Optional[str] = None
 
 
 # ─── Endpoints ───
@@ -188,8 +200,8 @@ class CorporateLoginModel(BaseModel):
 @router.post("/send-otp")
 def send_otp(data: SendOtpModel):
     try:
-        phone = data.phone.strip().replace(" ", "")
-        if len(phone) != 10 or not phone.isdigit():
+        phone = _normalize_phone(data.phone)
+        if len(phone) != 10:
             return {"success": False, "message": "Enter a valid 10-digit phone number"}
         return _send_otp_flow(phone)
     except HTTPException:
@@ -201,9 +213,9 @@ def send_otp(data: SendOtpModel):
 @router.post("/register/verify-otp")
 def verify_registration_otp(data: RegistrationOtpVerifyModel):
     try:
-        phone = data.phone.strip().replace(" ", "")
+        phone = _normalize_phone(data.phone)
         otp = data.otp.strip()
-        if len(phone) != 10 or not phone.isdigit():
+        if len(phone) != 10:
             return {"success": False, "message": "Enter a valid 10-digit phone number"}
         if len(otp) != 6 or not otp.isdigit():
             return {"success": False, "message": "Enter the complete 6-digit OTP"}
@@ -231,8 +243,11 @@ def verify_registration_otp(data: RegistrationOtpVerifyModel):
 @router.post("/register")
 def register(data: RegisterModel):
     try:
-        phone = data.phone.strip().replace(" ", "")
-        if not validate_aadhaar(data.aadhaar):
+        phone = _normalize_phone(data.phone)
+        if len(phone) != 10:
+            return {"success": False, "message": "Enter a valid 10-digit phone number"}
+        clean_aadhaar = re.sub(r"\D", "", data.aadhaar or "")
+        if not validate_aadhaar(clean_aadhaar):
             return {"success": False, "message": "Enter a valid 12-digit Aadhaar number"}
         token_payload = decode_token(data.otp_verification_token) if data.otp_verification_token else None
         token_verified = bool(
@@ -240,18 +255,18 @@ def register(data: RegisterModel):
             and token_payload.get("purpose") == "registration_otp_verified"
             and token_payload.get("phone") == phone
         )
-        if not token_verified and not _verify_otp(phone, data.otp):
+        if not token_verified and not _verify_otp(phone, (data.otp or "").strip()):
             return {"success": False, "message": "Invalid or expired OTP"}
         existing = _get_user(phone)
         lang = (data.preferred_language or "en")[:2]
         if existing:
             profile_fields = {
-                "name": data.name or existing.get("name"),
-                "state": data.state,
-                "district": data.district,
-                "village": data.village,
-                "upi": data.upi,
-                "aadhaar_last4": data.aadhaar[-4:],
+                "name": data.name.strip() if data.name else existing.get("name"),
+                "state": data.state.strip() if data.state else existing.get("state"),
+                "district": data.district.strip() if data.district else existing.get("district"),
+                "village": data.village.strip() if data.village else existing.get("village"),
+                "upi": (data.upi or "").strip(),
+                "aadhaar_last4": clean_aadhaar[-4:],
                 "preferred_language": lang,
                 # NOTE: role intentionally not updated on re-registration —
                 # privileged roles (fpo/verifier/admin) must never be
@@ -270,19 +285,19 @@ def register(data: RegisterModel):
             }
         user = {
             "phone": phone,
-            "name": data.name,
-            "aadhaar_last4": data.aadhaar[-4:],
-            "state": data.state,
-            "district": data.district,
-            "village": data.village,
-            "upi": data.upi,
+            "name": data.name.strip(),
+            "aadhaar_last4": clean_aadhaar[-4:],
+            "state": data.state.strip(),
+            "district": data.district.strip(),
+            "village": data.village.strip(),
+            "upi": (data.upi or "").strip(),
             "preferred_language": lang,
             "role": "farmer",
         }
         if data.email:
             user["email"] = data.email.strip().lower()
         _save_user(user)
-        token = create_access_token({"phone": phone, "name": data.name, "role": "farmer"})
+        token = create_access_token({"phone": phone, "name": user["name"], "role": "farmer"})
         return {
             "success": True,
             "message": "Registration successful",
@@ -298,7 +313,9 @@ def register(data: RegisterModel):
 @router.post("/login/send-otp")
 def login_send_otp(data: SendOtpModel):
     try:
-        phone = data.phone.strip().replace(" ", "")
+        phone = _normalize_phone(data.phone)
+        if len(phone) != 10:
+            return {"success": False, "message": "Enter a valid 10-digit phone number"}
         existing = _get_user(phone)
         if not existing:
             return {"success": False, "message": "Phone not registered. Please sign up first."}
@@ -315,8 +332,11 @@ def login_send_otp(data: SendOtpModel):
 @router.post("/login")
 def login(data: LoginOtpModel):
     try:
-        phone = data.phone.strip().replace(" ", "")
-        if not _verify_otp(phone, data.otp):
+        phone = _normalize_phone(data.phone)
+        otp = data.otp.strip()
+        if len(phone) != 10:
+            return {"success": False, "message": "Enter a valid 10-digit phone number"}
+        if not _verify_otp(phone, otp):
             return {"success": False, "message": "Invalid or expired OTP"}
         user = _get_user(phone)
         if not user:
@@ -329,43 +349,34 @@ def login(data: LoginOtpModel):
         return {"success": False, "message": str(e)}
 
 
-@router.post("/corporate/login")
-def corporate_login(data: CorporateLoginModel):
-    sb = db._client()
-    if not sb:
-        return {"success": False, "message": "Database unavailable"}
-    try:
-        rows = (sb.table("corporates").select("*").ilike("name", data.name.strip()).execute().data) or []
-        if not rows:
-            return {"success": False, "message": "Unknown corporate account. Ask the platform admin to register your organisation."}
-        row = rows[0]
-        if not row.get("password_hash") or not verify_password(data.password, row["password_hash"]):
-            return {"success": False, "message": "Incorrect password"}
-        token = create_access_token({"c_id": row.get("c_id"), "name": row.get("name"), "role": "buyer"})
-        return {
-            "success": True,
-            "token": token,
-            "user": {"name": row.get("name"), "role": "buyer", "c_id": row.get("c_id")},
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
 @router.post("/fpo/login")
-def fpo_login(data: dict):
+def fpo_login(data: FpoLoginModel):
     """FPO desk sign-in: registration_no → OTP to linked officer's phone.
 
     Accepts extra fields (older clients send password) — only the
     registration number is used; auth happens through the standard OTP step.
     """
-    reg = str((data or {}).get("registration_no") or "").strip()
+    reg = data.registration_no.strip()
     if not reg:
         return {"success": False, "message": "Registration number is required"}
     sb = db._client()
     if not sb:
+        # Demo fallback when database is not configured
+        if reg.lower() in ("fpo-tg-001", "fpo-khammam", "khammam fpo", "fpo001"):
+            demo_phone = "9000000001"
+            flow = _send_otp_flow(demo_phone)
+            masked = demo_phone[:2] + "xxxxxx" + demo_phone[-3:]
+            return {
+                "success": True,
+                "message": f"OTP sent to the registered officer's phone ({masked}). Verify it on the farmer login to enter the FPO desk.",
+                "fpo_name": "Khammam Farmer Producer Org",
+                "officer_phone_masked": masked,
+                "next": "login",
+                "dev_otp": flow.get("dev_otp"),
+            }
         return {"success": False, "message": "Database not configured"}
     try:
-        fpos = (sb.table("fpos").select("id,name").eq("registration_no", reg).execute().data) or []
+        fpos = (sb.table("fpos").select("id,name").ilike("registration_no", reg).execute().data) or []
         if not fpos:
             return {"success": False, "message": "No FPO found for that registration number"}
         fpo = fpos[0]
@@ -377,7 +388,8 @@ def fpo_login(data: dict):
         flow = _send_otp_flow(officer["phone"])
         if not flow.get("success"):
             return {"success": False, "message": flow.get("message") or "Could not send OTP to the officer's phone"}
-        masked = officer["phone"][:2] + "xxxxxx" + officer["phone"][-3:]
+        phone = officer.get("phone", "")
+        masked = (phone[:2] + "xxxxxx" + phone[-3:]) if len(phone) >= 5 else "xxxxxx"
         return {
             "success": True,
             "message": f"OTP sent to the registered officer's phone ({masked}). Verify it on the farmer login to enter the FPO desk.",
@@ -390,11 +402,10 @@ def fpo_login(data: dict):
 
 
 @router.post("/demo/login")
-def demo_login(data: dict = None):
+def demo_login(data: Optional[DemoLoginModel] = None):
     if db.is_ready():
         return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
-    body = data or {}
-    phone = str(body.get("phone") or "9000000001")
+    phone = _normalize_phone((data.phone if data else None) or "9000000001")
     from app import sample_data
     farmer = sample_data.FARMERS.get(phone)
     if not farmer:
@@ -419,7 +430,37 @@ def demo_login(data: dict = None):
 
 @router.get("/me")
 def get_me(current_user: dict = Depends(get_current_user)):
+    role = current_user.get("role", "farmer")
+    if role == "buyer":
+        c_id = current_user.get("c_id")
+        name = current_user.get("name", "Corporate Buyer")
+        return {
+            "success": True,
+            "user": {"name": name, "role": "buyer", "c_id": c_id},
+            "farms": [],
+            "kyc": None,
+        }
+    if current_user.get("demo") or not db.is_ready():
+        phone = current_user.get("phone") or "9000000001"
+        from app import sample_data
+        farmer = sample_data.FARMERS.get(phone) or {"name": current_user.get("name", "Demo Farmer")}
+        return {
+            "success": True,
+            "user": {
+                "phone": phone,
+                "name": farmer.get("name", "Demo Farmer"),
+                "role": role,
+                "district": farmer.get("district", "Khammam"),
+                "village": farmer.get("village", "Bonakal"),
+                "upi": farmer.get("upi"),
+                "demo": True,
+            },
+            "farms": [],
+            "kyc": None,
+        }
     phone = current_user.get("phone")
+    if not phone:
+        raise HTTPException(status_code=404, detail="User not found")
     user = _get_user(phone)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -428,26 +469,21 @@ def get_me(current_user: dict = Depends(get_current_user)):
     return {"success": True, "user": _user_response(user, phone), "farms": farms, "kyc": kyc}
 
 
-class UpdateProfileModel(BaseModel):
-    name: Optional[str] = None
-    state: Optional[str] = None
-    district: Optional[str] = None
-    village: Optional[str] = None
-    upi: Optional[str] = None
-    # NOTE: no role field — role changes require an admin-managed process,
-    # never a self-service PATCH.
-    preferred_language: Optional[str] = None
-
-
 @router.patch("/profile")
 def update_profile(data: UpdateProfileModel, current_user: dict = Depends(get_current_user)):
     try:
         phone = current_user.get("phone")
+        if not phone:
+            return {"success": False, "message": "User phone not found in session"}
         fields = {k: v for k, v in data.model_dump().items() if v is not None}
         if not fields:
             return {"success": False, "message": "No fields to update"}
         if "preferred_language" in fields and fields["preferred_language"]:
             fields["preferred_language"] = fields["preferred_language"][:2]
+        if "email" in fields and fields["email"]:
+            fields["email"] = fields["email"].strip().lower()
+        if "name" in fields and fields["name"]:
+            fields["name"] = fields["name"].strip()
         updated = db.update_profile(phone, fields)
         if not updated:
             return {"success": False, "message": "Profile update failed"}
