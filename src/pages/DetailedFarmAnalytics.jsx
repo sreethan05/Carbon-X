@@ -1,10 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { ArrowLeft, ShieldCheck, Hash, Download } from 'lucide-react';
+import {
+  ArrowLeft,
+  ShieldCheck,
+  Hash,
+  Download,
+  Camera,
+  Upload,
+  MapPin,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  RefreshCw,
+  FileText,
+} from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
-import { getFarmPassport, getNdviHistory, getFarmLedger } from '../services/api';
+import {
+  getFarmPassport,
+  getNdviHistory,
+  getFarmLedger,
+  uploadEvidencePhoto,
+  addEvidenceGeotag,
+  getFarmEvidence,
+  getEvidencePhotoUrl,
+  PY_API_BASE,
+} from '../services/api';
 
 export default function DetailedFarmAnalytics() {
   const navigate = useNavigate();
@@ -16,9 +38,32 @@ export default function DetailedFarmAnalytics() {
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(true);
 
+  // Evidence capture state
+  const [evidenceData, setEvidenceData] = useState(null);
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(null);
+  const [useDeviceLocation, setUseDeviceLocation] = useState(true);
+  const [photoStatus, setPhotoStatus] = useState(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const [geotagLat, setGeotagLat] = useState('');
+  const [geotagLon, setGeotagLon] = useState('');
+  const [submittingGeotag, setSubmittingGeotag] = useState(false);
+  const [geotagStatus, setGeotagStatus] = useState(null);
+  const [fetchingGps, setFetchingGps] = useState(false);
+
   // Resolve which farm we're looking at: route param first, else the first real
   // farm, else the backend's demo passport (works with the database offline).
   const farmId = routeFarmId || (farms && farms[0] && farms[0].id) || 'demo';
+
+  const reloadEvidenceAndPassport = async () => {
+    if (!farmId) return;
+    try {
+      const [pp, ev] = await Promise.all([getFarmPassport(farmId), getFarmEvidence(farmId)]);
+      if (pp && pp.success) setPassport(pp);
+      if (ev && ev.success) setEvidenceData(ev);
+    } catch { /* ignore */ }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -31,18 +76,30 @@ export default function DetailedFarmAnalytics() {
         return;
       }
       try {
-        const [pp, hist] = await Promise.all([getFarmPassport(farmId), getNdviHistory(farmId)]);
+        const [pp, hist, ev] = await Promise.all([
+          getFarmPassport(farmId),
+          getNdviHistory(farmId),
+          getFarmEvidence(farmId),
+        ]);
         if (cancelled) return;
         if (pp && pp.success) {
           setPassport(pp);
         } else {
           setLoadError((pp && pp.message) || 'Could not load the carbon passport');
         }
+        if (ev && ev.success) {
+          setEvidenceData(ev);
+        }
         if (hist && hist.success && Array.isArray(hist.history) && hist.history.length) {
           setTrendData(hist.history.map((h) => ({
             month: h.date ? `${h.month} (${h.date})` : h.month,
             ndvi: h.ndvi,
           })));
+        } else if (pp && pp.success && pp.sentinel_ndvi != null) {
+          setTrendData([{
+            month: 'Baseline / Latest Scan',
+            ndvi: parseFloat(pp.sentinel_ndvi),
+          }]);
         } else {
           setTrendData([]);
         }
@@ -64,15 +121,27 @@ export default function DetailedFarmAnalytics() {
     let closed = false;
 
     const mergeChain = (payload) => {
-      setPassport((prev) => (prev ? {
-        ...prev,
-        ledger: {
-          events: payload.events ?? prev.ledger?.events ?? 0,
-          verified: payload.verified ?? prev.ledger?.verified ?? false,
-          tail_hash: payload.tail_hash ?? prev.ledger?.tail_hash,
-          types: payload.types ?? prev.ledger?.types ?? [],
-        },
-      } : prev));
+      setPassport((prev) => {
+        if (!prev) return prev;
+        const currentEvents = prev.ledger?.events;
+        const eventCount = typeof payload.events === 'number'
+          ? payload.events
+          : Array.isArray(payload.events)
+          ? payload.events.length
+          : typeof currentEvents === 'number'
+          ? currentEvents
+          : 0;
+
+        return {
+          ...prev,
+          ledger: {
+            events: eventCount,
+            verified: payload.verified ?? prev.ledger?.verified ?? false,
+            tail_hash: payload.tail_hash ?? prev.ledger?.tail_hash,
+            types: payload.types ?? prev.ledger?.types ?? [],
+          },
+        };
+      });
     };
 
     const refresh = async () => {
@@ -81,7 +150,7 @@ export default function DetailedFarmAnalytics() {
         const chain = await getFarmLedger(farmId);
         if (!chain || !chain.success) return;
         mergeChain({
-          events: chain.verification?.length ?? chain.events?.length,
+          events: chain.verification?.length ?? chain.events?.length ?? 0,
           verified: chain.verification?.valid,
           tail_hash: chain.verification?.tail_hash,
           types: (chain.events || []).map((e) => e.type),
@@ -90,13 +159,31 @@ export default function DetailedFarmAnalytics() {
     };
 
     try {
-      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${wsProto}//${window.location.host}/py-api/ws/ledger/${farmId}`);
+      let wsUrl = '';
+      if (PY_API_BASE && (PY_API_BASE.startsWith('http://') || PY_API_BASE.startsWith('https://'))) {
+        const wsProto = PY_API_BASE.startsWith('https') ? 'wss:' : 'ws:';
+        wsUrl = `${wsProto}//${PY_API_BASE.replace(/^https?:\/\//, '')}/ws/ledger/${farmId}`;
+      } else {
+        const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${wsProto}//${window.location.host}${PY_API_BASE || '/py-api'}/ws/ledger/${farmId}`;
+      }
+
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        refresh();
+      };
       ws.onmessage = (msg) => {
         try {
           const data = JSON.parse(msg.data);
           if (data.type === 'snapshot') {
-            mergeChain({ events: data.events, verified: data.verified, tail_hash: data.tail_hash });
+            const eventList = Array.isArray(data.events) ? data.events : [];
+            mergeChain({
+              events: eventList.length,
+              verified: data.verified ?? (eventList.length > 0),
+              tail_hash: data.tail_hash || (eventList.length ? eventList[eventList.length - 1]?.hash : undefined),
+              types: data.types || eventList.map((e) => e.type),
+            });
+            refresh();
           } else {
             refresh(); // pull authoritative state on each pushed event
           }
@@ -123,18 +210,32 @@ export default function DetailedFarmAnalytics() {
       ["passport_id", pp.passport_id],
       ["farm_name", pp.farm_name],
       ["owner_name", pp.owner_name],
+      ["phone", pp.phone],
+      ["village", pp.village],
+      ["district", pp.district],
       ["crop", pp.crop],
       ["acreage_ha", pp.acreage],
       ["badge", pp.badge],
       ["sentinel_ndvi", pp.sentinel_ndvi],
+      ["evi", pp.evi],
       ["carbon_tonnes", pp.carbon_tonnes],
       ["annual_credits", pp.annual_credits],
+      ["credits_ci90_low", pp.credits_ci90?.low],
+      ["credits_ci90_high", pp.credits_ci90?.high],
+      ["formula_version", pp.formula_version],
+      ["s2_scene", pp.s2_scene],
       ["status", pp.status],
+      ["verification_hash", pp.verification_hash],
       ["expected_income_inr", pp.expected_earnings?.expected_income_inr],
       ["income_low_inr", pp.expected_earnings?.range_inr?.min],
       ["income_high_inr", pp.expected_earnings?.range_inr?.max],
       ["evidence_quality", pp.trust?.evidence_quality],
       ["uncertainty_pct", pp.trust?.uncertainty_pct],
+      ["practice_photo_verified", pp.trust?.components?.practice_photo?.passed ?? evidenceData?.components?.practice_photo ?? false],
+      ["geotag_inside_boundary", pp.trust?.components?.geotag_inside_boundary?.passed ?? evidenceData?.components?.geotag_inside_boundary ?? false],
+      ["photo_count", evidenceData?.photo_count ?? 0],
+      ["geotag_count", evidenceData?.geotag_count ?? 0],
+      ["ledger_events", pp.ledger?.events ?? 0],
       ["ledger_verified", pp.ledger?.verified],
       ["ledger_tail_hash", pp.ledger?.tail_hash],
       ["last_monitored_at", pp.monitoring?.last_monitored_at],
@@ -142,6 +243,12 @@ export default function DetailedFarmAnalytics() {
     ];
     summary.forEach(([k, v]) => rows.push(["passport", k, v ?? ""]));
     trendData.forEach((d) => rows.push(["ndvi_history", d.month, d.ndvi]));
+    (evidenceData?.geotags || []).forEach((g, idx) => {
+      rows.push(["geotag", `geotag_${idx + 1}`, `${g.latitude},${g.longitude} (inside: ${g.inside_boundary})`]);
+    });
+    (evidenceData?.photos || []).forEach((p, idx) => {
+      rows.push(["photo", `photo_${idx + 1}`, `${p.sha256} (inside: ${p.inside_boundary})`]);
+    });
     const csv = rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -153,16 +260,122 @@ export default function DetailedFarmAnalytics() {
   };
 
   // Evidence components the credit engine actually implements (docs/MRV_METHODOLOGY.md §6).
-  // This card renders the passport's real trust block — no projected practice
-  // deltas are invented client-side, because no practice-factor model exists yet.
   const COMPONENT_META = [
-    ['practice_photo', 'Practice photo captured', '0.25', 'No photo-capture flow exists in the app yet.'],
-    ['geotag_inside_boundary', 'Geotag inside boundary', '0.25', 'A GPS-stamped ground photo — not captured yet.'],
+    ['practice_photo', 'Practice photo captured', '0.25', 'Ground photo verifying regenerative practices.'],
+    ['geotag_inside_boundary', 'Geotag inside boundary', '0.25', 'GPS-stamped coordinate verified within parcel polygon.'],
     ['fpo_or_registry_verified', 'FPO / registry verified', '0.25', 'Granted by REGISTRY, REGISTRY_DOC or FPO badges.'],
     ['current_satellite_ndvi', 'Current satellite NDVI', '0.15', 'Passes when the farm has a stored Sentinel-2 NDVI.'],
     ['baseline_established', 'Baseline established', '0.10', 'Needs a stored pre-enrollment baseline series (roadmap).'],
   ];
   const trustComponents = passport?.trust?.components || null;
+
+  const handlePhotoUpload = async (e) => {
+    e.preventDefault();
+    if (!photoFile) return;
+    setUploadingPhoto(true);
+    setPhotoStatus(null);
+    try {
+      let lat = null;
+      let lon = null;
+      if (useDeviceLocation && navigator.geolocation) {
+        try {
+          const pos = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 6000 });
+          });
+          lat = pos.coords.latitude;
+          lon = pos.coords.longitude;
+        } catch {
+          // GPS read failed or denied — upload proceeds without explicit coords
+        }
+      }
+      const res = await uploadEvidencePhoto(farmId, photoFile, {
+        latitude: lat,
+        longitude: lon,
+        capturedAt: new Date().toISOString(),
+      });
+      if (res && res.success) {
+        const geotag = res.photo?.geotag;
+        const inside = geotag?.inside_boundary;
+        setPhotoStatus({
+          type: 'success',
+          message: inside
+            ? '✓ Photo accepted! GPS confirmed inside farm boundary.'
+            : '✓ Photo stored! ' + (geotag ? '(Geotag was outside boundary)' : '(No GPS in EXIF; consider enabling device GPS)'),
+        });
+        if (photoPreview) URL.revokeObjectURL(photoPreview);
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        await reloadEvidenceAndPassport();
+      } else {
+        setPhotoStatus({
+          type: 'error',
+          message: res?.message || 'Could not upload photo.',
+        });
+      }
+    } catch (err) {
+      setPhotoStatus({ type: 'error', message: err.message || 'Photo upload failed.' });
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleFetchGps = () => {
+    if (!navigator.geolocation) {
+      setGeotagStatus({ type: 'error', message: 'Geolocation is not supported by your browser.' });
+      return;
+    }
+    setFetchingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGeotagLat(pos.coords.latitude.toFixed(6));
+        setGeotagLon(pos.coords.longitude.toFixed(6));
+        setFetchingGps(false);
+        setGeotagStatus({ type: 'success', message: 'Current location fetched successfully.' });
+      },
+      (err) => {
+        setFetchingGps(false);
+        setGeotagStatus({ type: 'error', message: `Could not fetch GPS: ${err.message}` });
+      },
+      { timeout: 8000 }
+    );
+  };
+
+  const handleGeotagSubmit = async (e) => {
+    e.preventDefault();
+    const lat = parseFloat(geotagLat);
+    const lon = parseFloat(geotagLon);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
+      setGeotagStatus({ type: 'error', message: 'Please enter valid coordinates (-90 to 90 lat, -180 to 180 lon).' });
+      return;
+    }
+    setSubmittingGeotag(true);
+    setGeotagStatus(null);
+    try {
+      const res = await addEvidenceGeotag(farmId, {
+        latitude: lat,
+        longitude: lon,
+        captured_at: new Date().toISOString(),
+      });
+      if (res && res.success) {
+        const inside = res.geotag?.inside_boundary;
+        setGeotagStatus({
+          type: 'success',
+          message: inside
+            ? '✓ Geotag verified inside farm boundary!'
+            : `⚠️ Recorded point: ${res.geotag?.reason || 'outside boundary'}`,
+        });
+        setGeotagLat('');
+        setGeotagLon('');
+        await reloadEvidenceAndPassport();
+      } else {
+        setGeotagStatus({ type: 'error', message: res?.message || 'Could not record geotag.' });
+      }
+    } catch (err) {
+      setGeotagStatus({ type: 'error', message: err.message || 'Geotag submission failed.' });
+    } finally {
+      setSubmittingGeotag(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-surface font-inter text-agriText-main py-8 px-4 md:px-10">
@@ -196,6 +409,90 @@ export default function DetailedFarmAnalytics() {
             <ArrowLeft className="w-4 h-4" />
             <span>Back to Dashboard</span>
           </button>
+        </div>
+
+        {/* Carbon Passport Overview Card */}
+        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-forest-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-primary" />
+                <h2 className="text-base font-bold text-carbon-900">Carbon Passport &amp; MRV Record</h2>
+              </div>
+              <p className="text-xs text-agriText-muted mt-0.5">
+                Official registry passport linking satellite verification, uncertainty intervals, and cryptographic identity.
+              </p>
+            </div>
+            {passport && (
+              <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
+                passport.status === 'APPROVED MRV RECORD'
+                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                  : 'bg-amber-100 text-amber-900 border border-amber-200'
+              }`}>
+                {passport.status || 'PENDING MRV REVIEW'}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-bold uppercase tracking-wider block">Annual Carbon Credits</span>
+              <p className="text-2xl font-extrabold text-carbon-900 font-manrope">
+                {passport?.annual_credits ?? '—'} <span className="text-xs text-agriText-muted font-bold">tCO2e/yr</span>
+              </p>
+              <p className="text-[11px] text-agriText-muted">
+                {passport?.carbon_tonnes ? `${passport.carbon_tonnes} tonnes soil/biomass` : 'Estimate pending'}
+              </p>
+              {passport?.credits_ci90 && (passport.credits_ci90.low != null || passport.credits_ci90.high != null) && (
+                <p className="text-[10px] text-emerald-800 font-mono font-semibold">
+                  CI90: {passport.credits_ci90.low ?? '—'} – {passport.credits_ci90.high ?? '—'} tCO2e
+                </p>
+              )}
+            </div>
+
+            <div className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-bold uppercase tracking-wider block">Satellite Vegetative Scan</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-extrabold text-primary font-manrope">
+                  {passport?.sentinel_ndvi != null ? Number(passport.sentinel_ndvi).toFixed(2) : '—'}
+                </span>
+                <span className="text-xs text-agriText-muted font-medium">NDVI</span>
+                {passport?.evi != null && (
+                  <span className="text-xs text-agriText-muted font-mono">({Number(passport.evi).toFixed(2)} EVI)</span>
+                )}
+              </div>
+              <p className="text-[11px] text-agriText-muted truncate" title={passport?.s2_scene || 'Copernicus Sentinel-2'}>
+                {passport?.satellite_source || 'Sentinel-2 Harmonized'}
+              </p>
+            </div>
+
+            <div className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-bold uppercase tracking-wider block">Biodiversity &amp; Soil</span>
+              <p className="text-2xl font-extrabold text-carbon-900 font-manrope">
+                {passport?.biodiversity_index != null ? `${passport.biodiversity_index}` : '—'}
+                <span className="text-xs text-agriText-muted font-medium"> / 100</span>
+              </p>
+              <p className="text-[11px] text-agriText-muted">
+                Crop: <span className="font-semibold text-carbon-900">{passport?.crop || 'Not recorded'}</span>
+                {passport?.irrigation ? ` · ${passport.irrigation}` : ''}
+              </p>
+            </div>
+
+            <div className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-1">
+              <span className="text-[10px] text-agriText-subtle font-bold uppercase tracking-wider block">MRV Passport Anchor</span>
+              <p className="text-xs font-mono font-bold text-carbon-900 truncate" title={passport?.passport_id}>
+                {passport?.passport_id || 'CX-FARM-DEMO'}
+              </p>
+              {passport?.verification_hash && (
+                <p className="text-[10px] font-mono text-agriText-muted break-all" title={`hash:${passport.verification_hash}`}>
+                  hash:{passport.verification_hash.slice(0, 16)}…
+                </p>
+              )}
+              <p className="text-[10px] text-agriText-subtle">
+                Methodology: <span className="font-semibold">{passport?.formula_version || 'VM0042-r2'}</span>
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Evidence Checklist — the real engine components behind the deduction */}
@@ -249,6 +546,283 @@ export default function DetailedFarmAnalytics() {
             credits the plot-level NDVI improvement plus a crop-calibrated IPCC-style soil factor. To try different
             assumptions, use the Earnings Calculator on your dashboard; it calls the same engine.
           </p>
+        </div>
+
+        {/* Practice Evidence & Ground Verification Panel */}
+        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-forest-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <Camera className="w-5 h-5 text-primary" />
+                <h2 className="text-base font-bold text-carbon-900">Ground Evidence &amp; Practice Verification</h2>
+              </div>
+              <p className="text-xs text-agriText-muted mt-0.5">
+                Upload real photos of regenerative practices or record boundary-verified geotags. Each verified component increases evidence quality and lowers uncertainty deductions.
+              </p>
+            </div>
+            {evidenceData && (
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                  {evidenceData.photo_count || 0} Photos · {evidenceData.geotag_count || 0} Geotags
+                </span>
+                <button
+                  type="button"
+                  onClick={reloadEvidenceAndPassport}
+                  title="Refresh evidence"
+                  className="p-1 text-agriText-muted hover:text-carbon-900 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 1. Upload Practice Photo */}
+            <form onSubmit={handlePhotoUpload} className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-carbon-900 flex items-center gap-1.5">
+                  <Upload className="w-4 h-4 text-primary" /> Upload Practice Photo
+                </span>
+                <span className="text-[10px] text-agriText-muted font-mono">+0.25 weight</span>
+              </div>
+              <p className="text-[11px] text-agriText-muted">
+                Accepts JPEG, PNG or WebP up to 8 MB. EXIF GPS coordinates are automatically extracted and verified against your farm boundary.
+              </p>
+
+              <div>
+                <input
+                  type="file"
+                  id="evidence-photo-input"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      if (photoPreview) URL.revokeObjectURL(photoPreview);
+                      setPhotoFile(file);
+                      setPhotoPreview(URL.createObjectURL(file));
+                      setPhotoStatus(null);
+                    }
+                    e.target.value = '';
+                  }}
+                />
+                <label
+                  htmlFor="evidence-photo-input"
+                  className="border-2 border-dashed border-forest-200 hover:border-primary bg-white rounded-xl p-4 flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors"
+                >
+                  {photoPreview ? (
+                    <div className="space-y-2 text-center">
+                      <img src={photoPreview} alt="Preview" className="w-32 h-24 object-cover rounded-lg mx-auto border border-forest-100" />
+                      <span className="text-[11px] text-emerald-800 font-bold block">{photoFile?.name}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Camera className="w-6 h-6 text-primary" />
+                      <span className="text-xs font-bold text-carbon-800">Tap to select or take photo</span>
+                      <span className="text-[10px] text-agriText-muted">JPEG / PNG / WebP</span>
+                    </>
+                  )}
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <label className="flex items-center gap-2 text-agriText-muted cursor-pointer text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={useDeviceLocation}
+                    onChange={(e) => setUseDeviceLocation(e.target.checked)}
+                    className="rounded text-primary focus:ring-primary h-3.5 w-3.5"
+                  />
+                  <span>Attach device GPS if EXIF is missing</span>
+                </label>
+              </div>
+
+              <button
+                type="submit"
+                disabled={!photoFile || uploadingPhoto}
+                className="w-full py-2.5 px-4 bg-primary text-white rounded-xl text-xs font-bold hover:bg-forest-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                {uploadingPhoto ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Uploading &amp; Verifying…
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" /> Submit Practice Photo
+                  </>
+                )}
+              </button>
+
+              {photoStatus && (
+                <div
+                  className={`p-2.5 rounded-lg text-xs font-medium border flex items-start gap-2 ${
+                    photoStatus.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                      : 'bg-rose-50 text-rose-900 border-rose-200'
+                  }`}
+                >
+                  {photoStatus.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <span>{photoStatus.message}</span>
+                </div>
+              )}
+            </form>
+
+            {/* 2. Record Farm Geotag */}
+            <form onSubmit={handleGeotagSubmit} className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-carbon-900 flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-primary" /> Record Parcel Geotag
+                </span>
+                <span className="text-[10px] text-agriText-muted font-mono">+0.25 weight</span>
+              </div>
+              <p className="text-[11px] text-agriText-muted">
+                Record GPS coordinates from your field. Ray-casting verification validates containment inside your registered boundary.
+              </p>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleFetchGps}
+                  disabled={fetchingGps}
+                  className="px-2.5 py-1 bg-white border border-forest-200 text-carbon-800 hover:bg-forest-100 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                >
+                  {fetchingGps ? <Loader2 className="w-3 h-3 animate-spin" /> : <MapPin className="w-3 h-3 text-primary" />}
+                  <span>Use Device GPS</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-agriText-subtle uppercase mb-1">Latitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 17.385044"
+                    value={geotagLat}
+                    onChange={(e) => setGeotagLat(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-forest-200 rounded-lg text-xs font-mono focus:outline-none focus:border-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-agriText-subtle uppercase mb-1">Longitude</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 78.486671"
+                    value={geotagLon}
+                    onChange={(e) => setGeotagLon(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-forest-200 rounded-lg text-xs font-mono focus:outline-none focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={!geotagLat || !geotagLon || submittingGeotag}
+                className="w-full py-2.5 px-4 bg-primary text-white rounded-xl text-xs font-bold hover:bg-forest-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                {submittingGeotag ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Verifying Geotag…
+                  </>
+                ) : (
+                  <>
+                    <MapPin className="w-4 h-4" /> Verify &amp; Record Geotag
+                  </>
+                )}
+              </button>
+
+              {geotagStatus && (
+                <div
+                  className={`p-2.5 rounded-lg text-xs font-medium border flex items-start gap-2 ${
+                    geotagStatus.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                      : 'bg-rose-50 text-rose-900 border-rose-200'
+                  }`}
+                >
+                  {geotagStatus.type === 'success' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  )}
+                  <span>{geotagStatus.message}</span>
+                </div>
+              )}
+            </form>
+          </div>
+
+          {/* 3. Submitted Evidence Records Gallery */}
+          {((evidenceData?.photos && evidenceData.photos.length > 0) || (evidenceData?.geotags && evidenceData.geotags.length > 0)) ? (
+            <div className="border-t border-forest-100 pt-4 space-y-3">
+              <h3 className="text-xs font-bold text-carbon-900 uppercase tracking-wider">Submitted Ground Records</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {(evidenceData.photos || []).map((p, idx) => (
+                  <div key={p.id || p.sha256 || idx} className="bg-white border border-forest-100 rounded-xl p-3 flex gap-3 items-center">
+                    <img
+                      src={getEvidencePhotoUrl(farmId, p.sha256)}
+                      alt="Practice photo"
+                      className="w-14 h-14 object-cover rounded-lg border border-forest-100 shrink-0 bg-surface-sage"
+                      onError={(e) => {
+                        e.target.onerror = null;
+                        e.target.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 24 24' fill='none' stroke='%23059669' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z'/><circle cx='12' cy='13' r='3'/></svg>";
+                      }}
+                    />
+                    <div className="min-w-0 space-y-0.5">
+                      <span className="text-[10px] font-mono font-bold text-agriText-muted block truncate">
+                        {p.sha256 ? `${p.sha256.slice(0, 8)}…` : 'Photo'}
+                      </span>
+                      <span className="text-[10px] text-agriText-muted block">
+                        {p.captured_at ? new Date(p.captured_at).toLocaleDateString() : p.created_at ? new Date(p.created_at).toLocaleDateString() : 'Recorded'}
+                      </span>
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded inline-block ${
+                          p.inside_boundary
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {p.inside_boundary ? '✓ Inside boundary' : 'Geotag pending'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                {(evidenceData.geotags || []).map((g, idx) => (
+                  <div key={g.id || idx} className="bg-white border border-forest-100 rounded-xl p-3 flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-mono font-bold text-carbon-900 block">
+                        {Number(g.latitude).toFixed(4)}, {Number(g.longitude).toFixed(4)}
+                      </span>
+                      <span className="text-[10px] text-agriText-muted block">
+                        {g.captured_at ? new Date(g.captured_at).toLocaleDateString() : 'Geotag'}
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                        g.inside_boundary
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {g.inside_boundary ? '✓ In boundary' : 'Outside'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="border-t border-forest-100 pt-4 text-center py-6 bg-surface-sage/20 rounded-xl border border-dashed border-forest-200">
+              <Camera className="w-8 h-8 text-forest-300 mx-auto mb-1.5" />
+              <p className="text-xs font-bold text-carbon-800">No Ground Records Submitted Yet</p>
+              <p className="text-[11px] text-agriText-muted max-w-sm mx-auto mt-0.5">
+                Upload practice photos or record parcel geotags above to satisfy MRV criteria and minimize uncertainty deductions.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Trust Engine & Tamper-Evident Ledger */}
@@ -369,7 +943,7 @@ export default function DetailedFarmAnalytics() {
                 <LineChart data={trendData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#EEF5EE" />
                   <XAxis dataKey="month" stroke="#526056" style={{ fontSize: '11px', fontWeight: '600' }} />
-                  <YAxis domain={[0.2, 1.0]} stroke="#526056" style={{ fontSize: '11px', fontWeight: '600' }} />
+                  <YAxis domain={[0, 1.0]} stroke="#526056" style={{ fontSize: '11px', fontWeight: '600' }} />
                   <Tooltip
                     contentStyle={{ backgroundColor: '#1F2923', borderColor: '#323C34', borderRadius: '12px', color: '#FFF', fontSize: '12px' }}
                   />

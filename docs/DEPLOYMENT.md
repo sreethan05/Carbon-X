@@ -1,9 +1,9 @@
 # Deploying CarbonX
 
 Three pieces: the React frontend (Vercel), the FastAPI backend (Railway or
-Render), and Supabase (already cloud-hosted, project `ihyqhisxgdwxudnxksts`).
+Render), and Supabase (cloud-hosted, project `<your-project-ref>`).
 
-## 1 · Supabase — nothing to deploy
+## 1 · Supabase — source of truth
 Project is live. Schema + demo data are seeded. Security posture: RLS enabled
 on every table (anon/authenticated denied); the backend talks through the
 `service_role` key only. Never expose that key client-side.
@@ -13,13 +13,28 @@ on every table (anon/authenticated denied); the backend talks through the
 1. Create a service from this repo, root directory `backend/`.
 2. Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 3. Environment variables (copy from `backend/.env`, **never commit them**):
-   - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-   - `JWT_SECRET_KEY` (the long random value already in your `.env`)
-   - `CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5000`
-   - Optional: `GEE_PROJECT`, `CARBONX_ALLOW_DEV_OTP=0` (keep OTP exposure off in prod)
-   - Optional: `CARBONX_AUTO_MONITOR=1` (default) arms the 5-day NDVI cycle
+   - **Database & Auth**:
+     - `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+     - `JWT_SECRET_KEY` (a secure random string >= 32 characters)
+     - `CORS_ORIGINS=https://your-frontend.vercel.app,http://localhost:5000`
+   - **Cache & Rate-Limiting**:
+     - `REDIS_URL` (e.g. `redis://...` for Redis Cloud or container)
+   - **Payments & Escrow**:
+     - `CARBONX_PAYMENTS_PROVIDER=simulated` (default instant settlement, or `razorpay`)
+     - `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
+   - **Vernacular Voice Agent (Sarvam AI)**:
+     - `SARVAM_API_KEY`
+     - `SARVAM_DEFAULT_LANGUAGE=te-IN` (supports `te-IN`, `hi-IN`, `en-IN`)
+   - **Monitoring & Hardening**:
+     - `CARBONX_MONITOR_SECRET` (bearer secret for `POST /monitor/run` external cron triggers)
+     - `CARBONX_AUTO_MONITOR=1` (arms in-process 5-day cycle if external cron is not used)
+     - `CARBONX_FORCE_HTTPS=1` (enables HSTS header in production)
+     - `CARBONX_JSON_LOGS=1` (structured JSON logging for observability)
+     - `CARBONX_ALLOW_DEV_OTP=0` (strictly 0 or unset in production)
+   - **Earth Engine**:
+     - `GEE_PROJECT`
 4. Health check path: `/health` — should report `database.ready=true`.
-5. Note: Earth Engine needs `earthengine authenticate` credentials on the host
+5. Note: Earth Engine needs `earthengine authenticate` credentials or a service account on the host
    for live satellite scans; without them the app degrades to the offline
    estimator automatically.
 
@@ -43,16 +58,11 @@ on every table (anon/authenticated denied); the backend talks through the
   certificate.
 - `POST /monitor/run` once — the in-process scheduler then repeats every 5 days.
 - GitHub Actions CI (`.github/workflows/ci.yml`) runs lint + build + the
-  39-test backend suite on every push.
+  300+ test backend suite on every push.
 
-## 5 · Blockchain (optional, roadmap)
+## 5 · Blockchain service (backend/src, port 3001) — enabling the Amoy demo (optional)
 
-`backend/src` (port 3001) mints credits on an EVM chain. Set `RPC_URL`
-(Polygon Amoy testnet), deployed contract addresses, and minter keys to
-enable it. Nothing else depends on it — the hash ledger is the system of
-record until on-chain settlement goes live.
-
-## 5 · Blockchain service (backend/src, port 3001) — enabling the Amoy demo
+`backend/src` (port 3001) mints credits on an EVM chain.
 
 1. `cd blockchain && npm install`
 2. Copy `blockchain/.env.example` to `blockchain/.env` → set a burner testnet key.
@@ -62,5 +72,5 @@ record until on-chain settlement goes live.
    Node service (port 3001, `/bc-api` proxy).
 5. `GET /bc-api/health` should now report `blockchain: true`.
 
-This is optional — the hash ledger remains the system of record until
+This is optional — the SHA-256 hash ledger remains the system of record until
 on-chain settlement goes live (docs/ROADMAP.md Phase 2).

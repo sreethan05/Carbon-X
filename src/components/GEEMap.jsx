@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import * as turf from '@turf/turf';
 
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -13,6 +14,8 @@ L.Icon.Default.mergeOptions({
   shadowUrl: markerShadow,
 });
 
+const TILE_ERROR_FALLBACK = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' fill='%23132017'><rect width='256' height='256' fill='%23132017'/><text x='50%' y='48%' dominant-baseline='middle' text-anchor='middle' fill='%2322c55e' font-size='11' font-family='sans-serif'>🛰️ Satellite imagery</text><text x='50%' y='58%' dominant-baseline='middle' text-anchor='middle' fill='%2386efac' font-size='10' font-family='sans-serif'>unavailable at zoom</text></svg>";
+
 /**
  * Google Earth Engine–backed farm mapper (satellite + labels, draw + search).
  * Same map stack as the legacy frontend/ MapPage — not the basic Leaflet-only map.
@@ -23,48 +26,90 @@ export default function GEEMap({
   height = '65vh',
   minHeight = 340,
 }) {
+  const containerRef = useRef(null);
   const mapRef = useRef(null);
   const drawLayerRef = useRef(null);
   const drawingRef = useRef(false);
   const polygonModeRef = useRef(false);
   const currentPolylineRef = useRef(null);
+  const tempLineRef = useRef(null);
+  const searchMarkerRef = useRef(null);
   const freeDrawPointsRef = useRef([]);
   const polygonPointsRef = useRef([]);
+  const areaDebounceTimerRef = useRef(null);
 
   const [searchText, setSearchText] = useState('');
   const [status, setStatus] = useState('');
   const [placeName, setPlaceName] = useState('');
 
   const emitGeojson = useCallback((geojson) => {
+    if (areaDebounceTimerRef.current) {
+      clearTimeout(areaDebounceTimerRef.current);
+      areaDebounceTimerRef.current = null;
+    }
+
     if (!geojson) {
       if (onGeojsonDrawn) onGeojsonDrawn(null);
       if (onAreaCalculated) onAreaCalculated({ area: 0, score: 0, ndvi: 0 });
       return;
     }
     if (onGeojsonDrawn) onGeojsonDrawn(geojson);
-    if (onAreaCalculated && geojson.geometry?.coordinates?.[0]) {
-      const ring = geojson.geometry.coordinates[0];
-      const closedRing = ring[0]?.[0] === ring[ring.length - 1]?.[0] && ring[0]?.[1] === ring[ring.length - 1]?.[1]
-        ? ring
-        : [...ring, ring[0]];
-      const latMid = closedRing
-        .slice(0, -1)
-        .reduce((sum, [, lat]) => sum + lat, 0) / Math.max(closedRing.length - 1, 1);
-      const metersPerLngDegree = 111320 * Math.cos((latMid * Math.PI) / 180);
-      const metersPerLatDegree = 110540;
-      const projected = closedRing.map(([lng, lat]) => [lng * metersPerLngDegree, lat * metersPerLatDegree]);
-      let areaM2 = 0;
-      for (let i = 0; i < projected.length - 1; i++) {
-        areaM2 += projected[i][0] * projected[i + 1][1] - projected[i + 1][0] * projected[i][1];
+
+    // Debounce area calculation to avoid jank during high-frequency drawing / point additions
+    areaDebounceTimerRef.current = setTimeout(() => {
+      let areaHa = 0;
+      try {
+        if (turf && turf.area) {
+          const areaM2 = turf.area(geojson);
+          areaHa = Math.round((areaM2 / 10000) * 100) / 100;
+        }
+      } catch {
+        areaHa = 0;
       }
-      onAreaCalculated({ area: Math.round((Math.abs(areaM2) / 20000) * 100) / 100, score: 0, ndvi: 0 });
-    }
+
+      if (areaHa <= 0 && geojson.geometry?.coordinates?.[0]) {
+        const ring = geojson.geometry.coordinates[0];
+        const closedRing = ring[0]?.[0] === ring[ring.length - 1]?.[0] && ring[0]?.[1] === ring[ring.length - 1]?.[1]
+          ? ring
+          : [...ring, ring[0]];
+        const latMid = closedRing
+          .slice(0, -1)
+          .reduce((sum, [, lat]) => sum + lat, 0) / Math.max(closedRing.length - 1, 1);
+        const metersPerLngDegree = 111320 * Math.cos((latMid * Math.PI) / 180);
+        const metersPerLatDegree = 110540;
+        const projected = closedRing.map(([lng, lat]) => [lng * metersPerLngDegree, lat * metersPerLatDegree]);
+        let areaM2 = 0;
+        for (let i = 0; i < projected.length - 1; i++) {
+          areaM2 += projected[i][0] * projected[i + 1][1] - projected[i + 1][0] * projected[i][1];
+        }
+        areaHa = Math.round((Math.abs(areaM2) / 20000) * 100) / 100;
+      }
+
+      if (onAreaCalculated) {
+        onAreaCalculated({ area: areaHa, score: 0, ndvi: 0 });
+      }
+    }, 150);
   }, [onGeojsonDrawn, onAreaCalculated]);
 
   useEffect(() => {
-    if (mapRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const map = L.map('gee-map', {
+    // Clean up any stale map instance or container leaflet ID before initializing
+    if (mapRef.current) {
+      try {
+        mapRef.current.remove();
+      } catch (err) {
+        console.warn('Map cleanup error:', err);
+      }
+      mapRef.current = null;
+    }
+
+    if (container._leaflet_id) {
+      delete container._leaflet_id;
+    }
+
+    const map = L.map(container, {
       center: [20.5937, 78.9629],
       zoom: 5,
       zoomControl: true,
@@ -72,16 +117,55 @@ export default function GEEMap({
     });
     mapRef.current = map;
 
-    L.tileLayer('https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+    const tileLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}', {
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
       maxZoom: 22,
-      attribution: '© Google · GEE analysis layer',
-    }).addTo(map);
+      attribution: '© <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a> · GEE analysis layer',
+      errorTileUrl: TILE_ERROR_FALLBACK,
+    });
+    tileLayer.on('tileerror', () => {
+      // Gracefully handle tile loading error without breaking map controls
+    });
+    tileLayer.addTo(map);
 
     drawLayerRef.current = L.layerGroup().addTo(map);
 
+    // Initial resize to avoid grey tile bug
+    const resizeTimer = setTimeout(() => {
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    }, 150);
+
+    const handleResize = () => {
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('resize', handleResize);
+
     return () => {
-      map.remove();
-      mapRef.current = null;
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', handleResize);
+      if (areaDebounceTimerRef.current) {
+        clearTimeout(areaDebounceTimerRef.current);
+      }
+      if (mapRef.current) {
+        try {
+          mapRef.current.stop();
+          mapRef.current.remove();
+        } catch (err) {
+          console.warn('Error removing map instance:', err);
+        }
+        mapRef.current = null;
+      }
+      if (container) {
+        delete container._leaflet_id;
+      }
     };
   }, []);
 
@@ -96,8 +180,12 @@ export default function GEEMap({
         addressdetails: '1',
       });
       const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`);
+      if (!res.ok) {
+        setStatus('Search service unavailable');
+        return;
+      }
       const data = await res.json();
-      if (!data.length) {
+      if (!Array.isArray(data) || !data.length) {
         setStatus('Location not found');
         return;
       }
@@ -107,7 +195,11 @@ export default function GEEMap({
       const label = place.display_name?.split(',').slice(0, 3).join(', ') || searchText;
       setPlaceName(label);
       mapRef.current.flyTo([lat, lon], 16, { duration: 1.5 });
-      L.marker([lat, lon]).addTo(drawLayerRef.current).bindPopup(label);
+
+      if (searchMarkerRef.current && drawLayerRef.current) {
+        drawLayerRef.current.removeLayer(searchMarkerRef.current);
+      }
+      searchMarkerRef.current = L.marker([lat, lon]).addTo(drawLayerRef.current).bindPopup(label);
       setStatus(label);
     } catch {
       setStatus('Search failed');
@@ -115,7 +207,16 @@ export default function GEEMap({
   };
 
   const clearAll = () => {
+    const map = mapRef.current;
+    if (map) {
+      map.off('mousedown mousemove mouseup click');
+      map.dragging.enable();
+    }
+    if (containerRef.current) containerRef.current.style.cursor = 'grab';
     drawLayerRef.current?.clearLayers();
+    tempLineRef.current = null;
+    currentPolylineRef.current = null;
+    searchMarkerRef.current = null;
     polygonPointsRef.current = [];
     freeDrawPointsRef.current = [];
     drawingRef.current = false;
@@ -132,10 +233,9 @@ export default function GEEMap({
     polygonModeRef.current = false;
     freeDrawPointsRef.current = [];
     map.dragging.disable();
-    const el = document.getElementById('gee-map');
-    if (el) el.style.cursor = 'crosshair';
+    if (containerRef.current) containerRef.current.style.cursor = 'crosshair';
 
-    map.off('mousedown mousemove mouseup');
+    map.off('mousedown mousemove mouseup click');
     map.on('mousedown', (e) => {
       if (!drawingRef.current) return;
       freeDrawPointsRef.current = [e.latlng];
@@ -146,17 +246,27 @@ export default function GEEMap({
     });
     map.on('mousemove', (e) => {
       if (!drawingRef.current || !currentPolylineRef.current) return;
-      freeDrawPointsRef.current.push(e.latlng);
-      currentPolylineRef.current.setLatLngs(freeDrawPointsRef.current);
+      const pts = freeDrawPointsRef.current;
+      const lastPt = pts[pts.length - 1];
+      if (lastPt) {
+        const d = map.distance(lastPt, e.latlng);
+        // Throttle points closer than 2 meters to avoid creating overly dense polygons
+        if (d < 2) return;
+      }
+      pts.push(e.latlng);
+      currentPolylineRef.current.setLatLngs(pts);
     });
     map.on('mouseup', () => {
       if (!drawingRef.current) return;
       drawingRef.current = false;
       map.dragging.enable();
-      if (el) el.style.cursor = 'grab';
+      if (containerRef.current) containerRef.current.style.cursor = 'grab';
+      map.off('mousedown mousemove mouseup');
       if (freeDrawPointsRef.current.length < 3) return;
-      freeDrawPointsRef.current.push(freeDrawPointsRef.current[0]);
-      drawLayerRef.current.removeLayer(currentPolylineRef.current);
+      if (currentPolylineRef.current && drawLayerRef.current) {
+        drawLayerRef.current.removeLayer(currentPolylineRef.current);
+        currentPolylineRef.current = null;
+      }
       const polygon = L.polygon(freeDrawPointsRef.current, {
         color: '#16a34a',
         weight: 3,
@@ -174,10 +284,12 @@ export default function GEEMap({
     polygonModeRef.current = true;
     drawingRef.current = false;
     polygonPointsRef.current = [];
-    let tempLine = null;
-    const el = document.getElementById('gee-map');
-    if (el) el.style.cursor = 'crosshair';
-    map.off('click');
+    if (tempLineRef.current && drawLayerRef.current) {
+      drawLayerRef.current.removeLayer(tempLineRef.current);
+      tempLineRef.current = null;
+    }
+    if (containerRef.current) containerRef.current.style.cursor = 'crosshair';
+    map.off('mousedown mousemove mouseup click');
 
     map.on('click', (e) => {
       if (!polygonModeRef.current) return;
@@ -196,8 +308,10 @@ export default function GEEMap({
       const first = polygonPointsRef.current[0];
       const distance = map.distance(first, latlng);
       if (distance < 25 && polygonPointsRef.current.length > 2) {
-        polygonPointsRef.current.push(first);
-        if (tempLine) drawLayerRef.current.removeLayer(tempLine);
+        if (tempLineRef.current && drawLayerRef.current) {
+          drawLayerRef.current.removeLayer(tempLineRef.current);
+          tempLineRef.current = null;
+        }
         const polygon = L.polygon(polygonPointsRef.current, {
           color: '#eab308',
           weight: 3,
@@ -206,7 +320,7 @@ export default function GEEMap({
         const gj = polygon.toGeoJSON();
         polygonModeRef.current = false;
         map.off('click');
-        if (el) el.style.cursor = 'grab';
+        if (containerRef.current) containerRef.current.style.cursor = 'grab';
         setStatus('Polygon complete');
         emitGeojson(gj);
         return;
@@ -214,8 +328,10 @@ export default function GEEMap({
       polygonPointsRef.current.push(latlng);
       L.circleMarker(latlng, { radius: 5, color: '#eab308', fillColor: 'white', fillOpacity: 1, weight: 2 })
         .addTo(drawLayerRef.current);
-      if (tempLine) drawLayerRef.current.removeLayer(tempLine);
-      tempLine = L.polyline(polygonPointsRef.current, { color: '#eab308', weight: 4 }).addTo(drawLayerRef.current);
+      if (tempLineRef.current && drawLayerRef.current) {
+        drawLayerRef.current.removeLayer(tempLineRef.current);
+      }
+      tempLineRef.current = L.polyline(polygonPointsRef.current, { color: '#eab308', weight: 4 }).addTo(drawLayerRef.current);
     });
     setStatus('Tap corners — click near the first point to close');
   };
@@ -225,7 +341,7 @@ export default function GEEMap({
       className="relative w-full rounded-2xl overflow-hidden border border-forest-100 shadow-lg"
       style={{ height, minHeight }}
     >
-      <div id="gee-map" className="w-full h-full" />
+      <div ref={containerRef} className="w-full h-full" />
 
       <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[5000] flex gap-2 w-[92%] max-w-md">
         <input

@@ -47,13 +47,16 @@ Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 
 **Real & running (verifiable in this repo):** the full loop above, on live
 Supabase — registration, boundary+satellite scan, Stage-1/2 verification,
-hash ledger with public recompute, marketplace, conditional splits,
+ground evidence photo upload with EXIF GPS verification against polygon boundaries,
+multilingual farmer voice assistant (Telugu/Hindi/English via Sarvam AI),
+checkout with instant simulated escrow or Razorpay webhooks, real-time WebSocket
+ledger streaming, hash ledger with public recompute, marketplace, conditional splits,
 instant-retirement certificates as downloadable PDFs, FPO verification desk,
-5-day monitoring, offline demo mode, 39 backend tests, CI.
+5-day monitoring, offline demo mode, 301 backend tests, CI.
 
-**Simulated & labelled:** escrow (production = payment-gateway route/hold),
-UPI payout (rails simulated), land registry (30 seeded parcels; production
-path = Dharani/Bhu-Naksha integration).
+**Simulated & labelled:** payments (simulated provider default with instant CAS settlement;
+Razorpay webhook mode ready for live keys), UPI payout (rails simulated), land registry
+(30 seeded parcels; production path = Dharani/Bhu-Naksha integration).
 
 **Roadmap:** ground-truth SOC calibration (table + eval endpoint already
 built — needs field data), registry listing (Verra/GS), Polygon settlement
@@ -66,9 +69,9 @@ fake 99% — [docs/MODEL_CARD.md](docs/MODEL_CARD.md) explains.
 
 | vs incumbents | CarbonX |
 |---|---|
-| Verification by satellites-only or field agents | **Farmer's own device** + satellite corroboration + FPO human review |
+| Verification by satellites-only or field agents | **Farmer's own device** + ground photo geotag verification + satellite corroboration + FPO human review |
 | Opaque payouts, up to 70% diverted by intermediaries | Code-enforced 70% floor, per-credit auditable payout lines |
-| Requires documents + digital literacy | Document-less FPO-assisted path with auto-escalation |
+| Requires documents + digital literacy | Document-less FPO-assisted path + multilingual voice assistant (Telugu/Hindi/English) |
 | Carbon-only | **Dual carbon + biodiversity score** on the same rails |
 
 ## Quickstart
@@ -101,7 +104,7 @@ model, and every surface shows what it is running on.
 ## Tests & CI
 
 ```powershell
-cd backend; python -m unittest discover tests   # 44 tests: split/ledger/credit/ML-serving
+cd backend; python -m unittest discover tests   # 301 tests: split/ledger/credit/ML/evidence/payments/voice
 npm run lint && npm run build
 ```
 
@@ -112,14 +115,16 @@ CI runs lint + build + the backend suite on every push
 
 ```
 src/                    React 18 + Vite + Tailwind frontend (port 5000)
-backend/app/            FastAPI (port 8000) — auth, farms, marketplace,
-                        trust engine, splits, ledger, certificates, ops
-backend/app/services/   split_engine · ledger · credit_engine ·
-                        ml_service · trust_engine · fraud_engine · …
+backend/app/            FastAPI composition root (port 8000)
+backend/app/routes/     12 modular domain routers (analyze, auth, corporate, evidence,
+                        farms, fpo, marketplace, monitor, ops, payments, trust, ws)
+backend/app/services/   split_engine · ledger · credit_engine · evidence_service ·
+                        payments · ml_service · certificate_pdf · gee_service · …
+backend/app/voice_agent/ vernacular voice assistant (Sarvam STT, TTS, Chat with role enforcement)
 backend/src/            optional Polygon-minting service (port 3001, roadmap)
-scripts/                seeding · scale simulation · tamper demo
+scripts/                seeding · scale simulation · tamper demo · SoilGrids ingestion
 docs/                   architecture · methodology · model card · economics ·
-                        compliance · impact · demo script · roadmap · deployment
+                        compliance · impact · demo script · roadmap · deployment · DR runbook
 ```
 
 ## License

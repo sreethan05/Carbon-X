@@ -21,7 +21,7 @@ def _inr(paise: int) -> float:
 
 def compute_split(gross_inr: float, fpo_involved: bool, fpo_name: str = "") -> dict:
     """Split a gross sale amount into the conditional payout lines."""
-    gross_p = int(round(float(gross_inr or 0) * 100))
+    gross_p = max(0, int(round(float(gross_inr or 0) * 100)))
     farmer_p = int(gross_p * FARMER_SHARE)
     fpo_p = int(gross_p * FPO_SHARE) if fpo_involved else 0
     platform_p = gross_p - farmer_p - fpo_p

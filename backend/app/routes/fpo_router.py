@@ -1,13 +1,11 @@
 """FPO routes: pending/flagged farms, farmer roster, credit pooling, onboarding."""
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from typing import Literal, Optional
+from typing import Optional
 import re
 
-from app.security import get_current_user, get_current_user_optional, require_role
+from app.security import require_role
 from app import supabase_db as db
-from app import config as app_config
-from app.services import credit_engine, ledger, split_engine
 from app.services.polygon_service import polygon_area_hectares as _polygon_area_hectares
 
 router = APIRouter(prefix="/fpo", tags=["fpo"])
@@ -61,16 +59,6 @@ def _patch_farm(farm_id: Optional[str], fields: dict):
             return None
 
 
-def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
-    if farm and farm.get("fpo_id"):
-        fpos = db.list_fpos() if db.is_ready() else []
-        match = next((f for f in fpos if f.get("id") == farm.get("fpo_id")), None)
-        return (match or {}).get("name") or "Linked FPO"
-    if farm and farm.get("fpo"):
-        return farm["fpo"]
-    return ""
-
-
 def _fpo_scope_ok(role: str, reviewer: dict, farm: dict) -> bool:
     """May this officer act on the farm? Platform verifiers/admins: yes.
     FPO officers: only farms whose owner (or farm row) is in their FPO."""
@@ -99,6 +87,8 @@ def fpo_farms(
     phones = None
     if fpo_id:
         phones = [p.get("phone") for p in db.list_profiles_by_fpo(fpo_id) if p.get("phone")]
+        if not phones:
+            return {"success": True, "status": status, "farms": []}
     elif role not in ("verifier", "admin"):
         # Officer not linked to an FPO yet — show nothing rather than all farms.
         return {"success": True, "status": status, "farms": [], "message": "Your account is not linked to an FPO yet"}
@@ -157,9 +147,7 @@ def fpo_review_farm(
             "failed_checks": ["fpo_rejected"], "marketplace_eligible": False, "credits_blocked": True,
         }
         status, badge = "FLAGGED", None
-    fields = {"status": status}
-    if badge:
-        fields["badge"] = badge
+    fields = {"status": status, "badge": badge}
     updated = _patch_farm(farm_id, fields)
     db.insert_kyc_verification({
         "owner_phone": farm.get("owner_phone"), "status": status,
@@ -193,7 +181,16 @@ def get_fpo_farmers(current_user: dict = Depends(require_role("fpo", "verifier",
         if fpo_id:
             query = query.eq("fpo_id", fpo_id)
         profiles = (query.execute().data) or []
-        farms = (sb.table("farms").select("owner_phone,area_hectares,total_credits,status,badge,crop_type").execute().data) or []
+        member_phones = [p.get("phone") for p in profiles if p.get("phone")]
+
+        if fpo_id and not member_phones:
+            farms = []
+        else:
+            farms_q = sb.table("farms").select("owner_phone,area_hectares,total_credits,status,badge,crop_type")
+            if fpo_id:
+                farms_q = farms_q.in_("owner_phone", member_phones)
+            farms = (farms_q.execute().data) or []
+
         farms_by_phone: dict = {}
         for f in farms:
             farms_by_phone.setdefault(f.get("owner_phone"), []).append(f)
@@ -244,35 +241,56 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: dict = Depends(requi
             return {"success": False, "message": "Your account is not linked to an FPO yet — ask the platform admin to link it."}
 
         existing = db.get_profile(phone)
+        if existing and existing.get("fpo_id") and str(existing.get("fpo_id")) != str(fpo_id) and role not in ("verifier", "admin"):
+            raise HTTPException(status_code=403, detail="Farmer is already registered with another FPO")
         profile_fields = {
-            "phone": phone, "name": data.name, "role": "farmer",
-            "village": data.village, "fpo_id": fpo_id,
+            "phone": phone, "name": data.name.strip(),
+            "village": data.village.strip(), "fpo_id": fpo_id,
         }
         if existing:
-            db.update_profile(phone, {k: v for k, v in profile_fields.items() if v})
+            # Preserve existing privileged role if any; only set farmer if no role exists
+            if not existing.get("role"):
+                profile_fields["role"] = "farmer"
+            db.update_profile(phone, {k: v for k, v in profile_fields.items() if v is not None})
             profile = db.get_profile(phone)
         else:
+            profile_fields["role"] = "farmer"
             db.upsert_profile(profile_fields)
             profile = db.get_profile(phone)
 
         farm_record = {
-            "owner_phone": phone, "name": f"{data.name}'s Parcel ({data.survey_number})",
-            "crop_type": "Mixed Crop", "area_hectares": data.acreage,
-            "status": "Verified", "badge": "FPO", "fpo_id": fpo_id,
+            "owner_phone": phone,
+            "name": f"{data.name.strip()}'s Parcel ({data.survey_number.strip()})",
+            "crop_type": "Mixed Crop",
+            "area_hectares": data.acreage,
+            "status": "VERIFIED",
+            "badge": "FPO",
+            "fpo_id": fpo_id,
             "satellite_source": "FPO attestation",
         }
-        if data.geojson and data.geojson.get("geometry"):
+        if data.geojson and isinstance(data.geojson, dict) and data.geojson.get("geometry"):
             farm_record["geojson"] = data.geojson
             measured = _polygon_area_hectares(data.geojson)
             farm_record["area_hectares"] = measured if measured > 0 else data.acreage
+        else:
+            farm_record["geojson"] = {
+                "type": "Feature",
+                "properties": {
+                    "mandal": data.mandal.strip(),
+                    "village": data.village.strip(),
+                    "survey_number": data.survey_number.strip(),
+                },
+            }
         saved_farm = db.insert_farm_safe(farm_record)
+        if not saved_farm:
+            return {"success": False, "message": "Failed to save farm record in database"}
 
         return {
             "success": True, "message": f"Farmer {data.name} onboarded under FPO attestation",
             "badge": "FPO",
             "farmer": {
-                "id": (profile or {}).get("id"), "name": data.name, "phone": phone,
-                "survey": data.survey_number, "area_hectares": data.acreage, "badge": "FPO", "status": "VERIFIED",
+                "id": (profile or {}).get("id"), "name": data.name.strip(), "phone": phone,
+                "survey": data.survey_number.strip(), "area_hectares": data.acreage, "badge": "FPO", "status": "VERIFIED",
             },
             "farm_id": (saved_farm or {}).get("id"),
         }
@@ -305,13 +323,21 @@ def get_fpo_pending(current_user: dict = Depends(require_role("fpo", "verifier",
         owners = {}
         if phones:
             owners = {p.get("phone"): p for p in (sb.table("profiles").select("phone,name,village").in_("phone", phones).execute().data or [])}
-        pending = [{
-            "id": f.get("id"), "name": (owners.get(f.get("owner_phone")) or {}).get("name") or "Unknown Farmer",
-            "phone": f.get("owner_phone"),
-            "village": f.get("geojson", {}).get("properties", {}).get("village") or (owners.get(f.get("owner_phone")) or {}).get("village"),
-            "farm_name": f.get("name"), "crop": f.get("crop_type"),
-            "area_hectares": f.get("area_hectares"), "date": (f.get("created_at") or "")[:10],
-        } for f in farms]
+        pending = []
+        for f in farms:
+            owner_info = owners.get(f.get("owner_phone")) or {}
+            gj = f.get("geojson")
+            gj_props = gj.get("properties", {}) if isinstance(gj, dict) else {}
+            pending.append({
+                "id": f.get("id"),
+                "name": owner_info.get("name") or "Unknown Farmer",
+                "phone": f.get("owner_phone"),
+                "village": gj_props.get("village") or owner_info.get("village"),
+                "farm_name": f.get("name"),
+                "crop": f.get("crop_type"),
+                "area_hectares": f.get("area_hectares"),
+                "date": (f.get("created_at") or "")[:10],
+            })
         return {"success": True, "pending": pending}
     except Exception as e:
         return {"success": False, "message": str(e), "pending": []}
@@ -342,13 +368,34 @@ def get_fpo_flagged(current_user: dict = Depends(require_role("fpo", "verifier",
         owners = {}
         if phones:
             owners = {p.get("phone"): p for p in (sb.table("profiles").select("phone,name,village").in_("phone", phones).execute().data or [])}
-        flagged = [{
-            "id": f.get("id"), "farmer_name": (owners.get(f.get("owner_phone")) or {}).get("name") or "Unknown Farmer",
-            "farm_name": f.get("name"), "village": (owners.get(f.get("owner_phone")) or {}).get("village"),
-            "area_hectares": f.get("area_hectares"),
-            "issue": "Flagged for review — check the farm's monitoring history and KYC records",
-            "status": "FLAGGED", "date": (f.get("updated_at") or f.get("created_at") or "")[:10],
-        } for f in farms]
+        flagged = []
+        for f in farms:
+            owner_info = owners.get(f.get("owner_phone")) or {}
+            curr_ndvi = float(f["ndvi"]) if f.get("ndvi") is not None else None
+            last_ndvi = float(f["last_monitor_ndvi"]) if f.get("last_monitor_ndvi") is not None else None
+            drop = round(last_ndvi - curr_ndvi, 3) if (last_ndvi is not None and curr_ndvi is not None) else None
+            is_ndvi_alert = drop is not None and drop >= 0.15
+            issue = (
+                f"Sentinel-2 drop of {drop:.2f} (threshold ≥ 0.15 breached) — canopy loss alert"
+                if is_ndvi_alert
+                else "Flagged for review — check the farm's monitoring history and KYC records"
+            )
+            flagged.append({
+                "id": f.get("id"),
+                "farmer_name": owner_info.get("name") or "Unknown Farmer",
+                "phone": f.get("owner_phone"),
+                "farm_name": f.get("name"),
+                "village": owner_info.get("village"),
+                "area_hectares": f.get("area_hectares"),
+                "crop": f.get("crop_type"),
+                "ndvi": curr_ndvi,
+                "last_monitor_ndvi": last_ndvi,
+                "drop": drop,
+                "threshold": 0.15,
+                "issue": issue,
+                "status": "FLAGGED",
+                "date": (f.get("updated_at") or f.get("created_at") or "")[:10],
+            })
         return {"success": True, "flagged": flagged}
     except Exception as e:
         return {"success": False, "message": str(e), "flagged": []}

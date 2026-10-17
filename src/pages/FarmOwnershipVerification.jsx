@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, ShieldCheck, FileText, CheckCircle2, ArrowRight, Loader2,
-  Upload, ScanLine
+  Upload, ScanLine, AlertTriangle
 } from 'lucide-react';
 import VerificationBadge from '../components/VerificationBadge';
 import { useAuth } from '../context/AuthContext';
@@ -13,9 +13,11 @@ export default function FarmOwnershipVerification() {
   const { user } = useAuth();
 
   const [surveyInput, setSurveyInput] = useState('124/A');
+  const [lookupError, setLookupError] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [registryResult, setRegistryResult] = useState(null);
   const [searchDone, setSearchDone] = useState(false);
+  const [isProceeding, setIsProceeding] = useState(false);
 
   // File upload state & Trust Engine Stepper
   const [pahaniFile, setPahaniFile] = useState(null);
@@ -24,6 +26,15 @@ export default function FarmOwnershipVerification() {
   const [pipelineDone, setPipelineDone] = useState(false);
   const [parseResult, setParseResult] = useState(null);
   const [parseError, setParseError] = useState('');
+  const pipelineTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (pipelineTimerRef.current) {
+        clearInterval(pipelineTimerRef.current);
+      }
+    };
+  }, []);
 
   const trustChecklist = [
     { title: '1. OCR Text Extraction', desc: 'Survey Number, Owner Name, Registered Area' },
@@ -36,8 +47,18 @@ export default function FarmOwnershipVerification() {
 
   const handleRegistryLookup = async (e) => {
     if (e) e.preventDefault();
+    if (isSearching) return;
     const survey = surveyInput.trim();
-    if (!survey) return;
+    setLookupError('');
+    if (!survey) {
+      setLookupError('Please enter a survey number.');
+      return;
+    }
+    const SURVEY_REGEX = /^[a-zA-Z0-9\s/_\-.]+$/;
+    if (!SURVEY_REGEX.test(survey)) {
+      setLookupError('Enter a valid alphanumeric survey number (e.g. 124/A, 101/1).');
+      return;
+    }
 
     setIsSearching(true);
     setSearchDone(false);
@@ -70,7 +91,7 @@ export default function FarmOwnershipVerification() {
           ownerName: data.owner_name || user?.name || '—',
           village: data.village || '—',
           mandal: data.mandal || '—',
-          areaHa: typeof data.area_ha === 'number' ? data.area_ha : null,
+          areaHa: typeof data.area_ha === 'number' && !isNaN(data.area_ha) && data.area_ha > 0 ? data.area_ha : null,
           tier: hasGeom ? 'REGISTRY' : 'REGISTRY_DOC',
           tierCode: hasGeom ? '1A' : '1B',
           hasGeometry: hasGeom,
@@ -96,6 +117,7 @@ export default function FarmOwnershipVerification() {
   };
 
   const handlePahaniUpload = (e) => {
+    if (isProcessingPipeline) return;
     const file = e.target.files?.[0];
     if (!file) return;
     setPahaniFile(file);
@@ -103,6 +125,7 @@ export default function FarmOwnershipVerification() {
   };
 
   const runPipeline = async (file) => {
+    if (isProcessingPipeline) return;
     setIsProcessingPipeline(true);
     setActiveStep(0);
     setPipelineDone(false);
@@ -110,25 +133,61 @@ export default function FarmOwnershipVerification() {
     setParseError('');
 
     // Animate the checklist while the real OCR pipeline runs
-    let current = 0;
-    const interval = setInterval(() => {
-      current += 1;
-      setActiveStep(Math.min(current, trustChecklist.length - 1));
+    if (pipelineTimerRef.current) clearInterval(pipelineTimerRef.current);
+    pipelineTimerRef.current = setInterval(() => {
+      setActiveStep((prev) => Math.min(prev + 1, trustChecklist.length - 1));
     }, 500);
 
     try {
       const data = await parsePahaniDocument(file);
-      clearInterval(interval);
+      if (pipelineTimerRef.current) {
+        clearInterval(pipelineTimerRef.current);
+        pipelineTimerRef.current = null;
+      }
       setActiveStep(trustChecklist.length - 1);
       setIsProcessingPipeline(false);
-      if (data && (data.success || data.extracted_fields)) {
+      if (data && (data.success || data.extracted_fields || data.fields)) {
         setParseResult(data);
         setPipelineDone(true);
+
+        const fields = data.extracted_fields || data.fields || {};
+        if (fields.survey_number && (!surveyInput || surveyInput === '124/A')) {
+          setSurveyInput(fields.survey_number);
+        }
+
+        // If no registry lookup has been performed yet, initialize metadata display from document fields
+        if (!registryResult && (fields.survey_number || fields.pattadar_name || fields.village)) {
+          const areaHa = typeof fields.total_extent_hectares === 'number' && !isNaN(fields.total_extent_hectares) && fields.total_extent_hectares > 0
+            ? fields.total_extent_hectares
+            : typeof fields.total_extent_acres === 'number' && !isNaN(fields.total_extent_acres) && fields.total_extent_acres > 0
+              ? Math.round(fields.total_extent_acres * 0.404686 * 100) / 100
+              : null;
+          setRegistryResult({
+            found: false,
+            surveyNumber: fields.survey_number || surveyInput || 'Document-Verified',
+            ownerName: fields.pattadar_name || user?.name || '—',
+            village: fields.village || user?.village || '—',
+            mandal: fields.mandal || user?.district || '—',
+            areaHa,
+            tier: 'DOCUMENT',
+            tierCode: '2',
+            hasGeometry: false,
+            geojson: null,
+            registryMessage: 'Extracted from uploaded Telangana Pahani / RoR 1B document (Tier 2 Document-Verified).',
+            unavailable: false,
+            crop: fields.crop_name || null,
+            irrigation: fields.irrigation_source || null,
+          });
+          setSearchDone(true);
+        }
       } else {
         setParseError((data && (data.message || data.detail)) || 'Document parsing failed — verify the file and retry.');
       }
     } catch (err) {
-      clearInterval(interval);
+      if (pipelineTimerRef.current) {
+        clearInterval(pipelineTimerRef.current);
+        pipelineTimerRef.current = null;
+      }
       setIsProcessingPipeline(false);
       const msg = err?.status === 401 || err?.message === 'Not authenticated'
         ? 'Please sign in first so your document can be verified against your account.'
@@ -138,21 +197,31 @@ export default function FarmOwnershipVerification() {
   };
 
   const proceedToMapping = () => {
-    if (!registryResult) return;
+    if (!registryResult || isProceeding) return;
+    setIsProceeding(true);
 
-    navigate('/farm-map', {
-      state: {
-        surveyNumber: registryResult.surveyNumber || surveyInput,
-        ownerName: registryResult.ownerName || user?.name || null,
-        village: registryResult.village || user?.village || '',
-        areaHa: registryResult.areaHa ?? null,
-        tierCode: registryResult.tierCode,
-        tier: registryResult.tier,
-        hasGeometry: registryResult.hasGeometry,
-        geojson: registryResult.geojson,
-        pahaniUploaded: Boolean(pahaniFile)
-      }
-    });
+    const fields = parseResult?.extracted_fields || parseResult?.fields || {};
+    const statePayload = {
+      surveyNumber: registryResult.surveyNumber || surveyInput,
+      ownerName: registryResult.ownerName || user?.name || null,
+      village: registryResult.village || user?.village || '',
+      areaHa: registryResult.areaHa ?? null,
+      tierCode: registryResult.tierCode,
+      tier: registryResult.tier,
+      hasGeometry: registryResult.hasGeometry,
+      geojson: registryResult.geojson,
+      pahaniUploaded: Boolean(pahaniFile),
+      crop: fields.crop_name || registryResult.crop || null,
+      irrigation: fields.irrigation_source || registryResult.irrigation || null,
+    };
+
+    try {
+      localStorage.setItem('carbonx_land_verification', JSON.stringify(statePayload));
+    } catch {
+      // ignore
+    }
+
+    navigate('/farm-map', { state: statePayload });
   };
 
   return (
@@ -277,7 +346,7 @@ export default function FarmOwnershipVerification() {
                   {parseResult && (
                     <div className="bg-white border border-emerald-100 rounded-lg p-3 space-y-1">
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Extracted Document Fields</p>
-                      {Object.entries(parseResult.extracted_fields || {}).filter(([, v]) => v).slice(0, 8).map(([k, v]) => (
+                      {Object.entries(parseResult.extracted_fields || parseResult.fields || {}).filter(([, v]) => v).slice(0, 8).map(([k, v]) => (
                         <div key={k} className="flex justify-between text-[11px]">
                           <span className="text-slate-500 font-semibold capitalize">{k.replace(/_/g, ' ')}:</span>
                           <span className="font-mono font-bold text-slate-900">{String(v)}</span>

@@ -72,40 +72,47 @@ def fetch_soilgrids_rest(lon, lat, timeout=20):
     REST returns soc in dg/kg (x10 of g/kg) per ISRIC docs.
     """
     import requests
-    url = "https://rest.isric.org/soilgrids/v2.0/soilproperty/query"
-    r = requests.get(url, params={
+    url = "https://rest.isric.org/soilgrids/v2.0/properties/query"
+    depths = ((0, 5), (5, 15), (15, 30))
+    params = {
         "lon": lon, "lat": lat, "property": "soc",
-        "depth": "0-30cm", "value": "mean,Q0.05,Q0.5,Q0.95",
-    }, timeout=timeout)
-    r.raise_for_status()
-    layers = r.json()["properties"]["layers"]
-    soc = next(l for l in layers if l["name"] == "soc")
-    vals = {}
-    for d in soc["depths"]:
-        if d["range"]["upper_depth"] == 30 and d["range"]["lower_depth"] == 0:
-            for v in d["values"]:
-                vals[v.split("_")[-1] if "_" in v else v] = d["values"][v]
-            break
-    mean_dgkg = vals.get("mean")
-    q05 = vals.get("Q0.05")
-    q50 = vals.get("Q0.5")
-    q95 = vals.get("Q0.95")
-    if mean_dgkg is None:
-        return None
-    # dg/kg -> g/kg (REST convention: values x10)
-    mean_gkg = float(mean_dgkg) / 10.0
-    q05_gkg = float(q05) / 10.0 if q05 is not None else None
-    q50_gkg = float(q50) / 10.0 if q50 is not None else None
-    q95_gkg = float(q95) / 10.0 if q95 is not None else None
-    # 0-30 cm stock: soc(g/kg) x bulk density(~1.3 g/cm3) x depth(30cm) / 10 -> t C/ha
-    stock_tha = round(mean_gkg * 1.3 * 30.0 / 10.0, 3)
-    return {
-        "soc_mean_gkg": round(mean_gkg, 3),
-        "soc_stock_tha": stock_tha,
-        "soc_q05_gkg": round(q05_gkg, 3) if q05_gkg is not None else None,
-        "soc_q50_gkg": round(q50_gkg, 3) if q50_gkg is not None else None,
-        "soc_q95_gkg": round(q95_gkg, 3) if q95_gkg is not None else None,
+        "depth": [f"{top}-{bottom}cm" for top, bottom in depths],
+        "value": ["mean", "Q0.05", "Q0.5", "Q0.95"],
     }
+    try:
+        r = requests.get(url, params=params, timeout=timeout)
+        r.raise_for_status()
+        layers = r.json()["properties"]["layers"]
+        soc = next((l for l in layers if l["name"] == "soc"), None)
+        if not soc:
+            return None
+        by_depth = {(d["range"]["top_depth"], d["range"]["bottom_depth"]): d.get("values", {})
+                    for d in soc.get("depths", [])}
+
+        def _weighted(key):
+            num, wsum = 0.0, 0.0
+            for depth in depths:
+                value = by_depth.get(depth, {}).get(key)
+                if value is None:
+                    return None
+                thickness = depth[1] - depth[0]
+                num += float(value) / 10.0 * thickness  # dg/kg -> g/kg
+                wsum += thickness
+            return num / wsum
+
+        mean_gkg = _weighted("mean")
+        if mean_gkg is None:
+            return None
+        stock_tha = round(mean_gkg * 1.3 * 30.0 / 10.0, 3)
+        return {
+            "soc_mean_gkg": round(mean_gkg, 3),
+            "soc_stock_tha": stock_tha,
+            "soc_q05_gkg": _weighted("Q0.05"),
+            "soc_q50_gkg": _weighted("Q0.5"),
+            "soc_q95_gkg": _weighted("Q0.95"),
+        }
+    except Exception as e:
+        return None
 
 
 def get_soilgrids_image(ee):
@@ -297,7 +304,7 @@ def upsert_to_ground_truth(samples, batch_size=500):
                 # Fallback: estimate from content (g/kg) assuming bulk density ~1.3
                 mean_gkg = s.get("soc_mean_gkg")
                 if mean_gkg is not None:
-                    measured_soc_tco2e_ha = round(float(mean_gkg) * 1.3 * 0.3 * 3.67, 3)
+                    measured_soc_tco2e_ha = round(float(mean_gkg) * 1.3 * 3.0 * 3.67, 3)
                 else:
                     measured_soc_tco2e_ha = None
             

@@ -21,12 +21,18 @@ export default function CorporateDashboard() {
     const saved = parseFloat(localStorage.getItem(targetKey));
     return Number.isFinite(saved) && saved > 0 ? saved : 1000.0;
   });
+  const [targetInput, setTargetInput] = useState(() => {
+    const saved = parseFloat(localStorage.getItem(targetKey));
+    return Number.isFinite(saved) && saved > 0 ? String(saved) : '1000';
+  });
 
-  const updateTarget = (value) => {
-    const num = parseFloat(value);
-    if (!Number.isFinite(num) || num <= 0) return;
-    setTargetOffsets(num);
-    localStorage.setItem(targetKey, String(num));
+  const handleTargetChange = (val) => {
+    setTargetInput(val);
+    const num = parseFloat(val);
+    if (Number.isFinite(num) && num > 0) {
+      setTargetOffsets(num);
+      localStorage.setItem(targetKey, String(num));
+    }
   };
 
   useEffect(() => {
@@ -44,7 +50,20 @@ export default function CorporateDashboard() {
     })();
   }, []);
 
-  const progressPercent = Math.min(((purchasedOffsets / targetOffsets) * 100), 100).toFixed(1);
+  const safeTarget = Number.isFinite(targetOffsets) && targetOffsets > 0 ? targetOffsets : 1.0;
+  const progressPercent = Math.min(((purchasedOffsets / safeTarget) * 100), 100).toFixed(1);
+
+  // Portfolio Scope Target Distributions
+  const retiredOffsets = certs.filter(c => c.status === 'RETIRED').reduce((sum, c) => sum + (parseFloat(c.volume_mt) || 0), 0);
+  const escrowOffsets = certs.filter(c => c.status !== 'RETIRED').reduce((sum, c) => sum + (parseFloat(c.volume_mt) || 0), 0);
+
+  const scope1Target = Math.round(targetOffsets * 0.20);
+  const scope2Target = Math.round(targetOffsets * 0.30);
+  const scope3Target = Math.round(targetOffsets * 0.50);
+
+  const scope1Purchased = Math.min(purchasedOffsets, scope1Target);
+  const scope2Purchased = Math.min(Math.max(purchasedOffsets - scope1Target, 0), scope2Target);
+  const scope3Purchased = Math.max(purchasedOffsets - scope1Target - scope2Target, 0);
 
   const handleExportBRSR = () => {
     setIsExporting(true);
@@ -55,7 +74,15 @@ export default function CorporateDashboard() {
       `Reporting period: ${new Date().getFullYear()}`,
       `Target offset volume: ${targetOffsets} MT CO2e`,
       `Purchased (escrow + retired): ${purchasedOffsets.toFixed(2)} MT CO2e`,
+      `  - Permanently Retired: ${retiredOffsets.toFixed(2)} MT CO2e`,
+      `  - Held in Escrow: ${escrowOffsets.toFixed(2)} MT CO2e`,
       `Progress: ${progressPercent}%`,
+      '',
+      'OFFSET PORTFOLIO BREAKDOWN',
+      '--------------------------',
+      `Scope 1 (Direct Operations): ${scope1Purchased.toFixed(2)} / ${scope1Target} MT`,
+      `Scope 2 (Electricity & Power): ${scope2Purchased.toFixed(2)} / ${scope2Target} MT`,
+      `Scope 3 (Agri Supply Chain): ${scope3Purchased.toFixed(2)} / ${scope3Target} MT`,
       '',
       'CERTIFICATE LEDGER',
       '------------------',
@@ -73,7 +100,9 @@ export default function CorporateDashboard() {
     const a = document.createElement('a');
     a.href = url;
     a.download = `brsr_report_${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
     setIsExporting(false);
   };
@@ -118,8 +147,8 @@ export default function CorporateDashboard() {
                 <input
                   type="number"
                   min="1"
-                  value={targetOffsets}
-                  onChange={(e) => updateTarget(e.target.value)}
+                  value={targetInput}
+                  onChange={(e) => handleTargetChange(e.target.value)}
                   className="w-24 px-2 py-1 bg-emerald-950 border border-emerald-800 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-emerald-400"
                 />
               </label>
@@ -132,6 +161,74 @@ export default function CorporateDashboard() {
               className="bg-emerald-400 h-full rounded-full transition-all duration-1000"
               style={{ width: `${progressPercent}%` }}
             />
+          </div>
+        </div>
+
+        {/* Offset Portfolio Targets Breakdown */}
+        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 font-manrope">Corporate Offset Portfolio Targets</h2>
+              <p className="text-xs text-slate-500">Decarbonization target breakdown across GHG Protocol Scope 1, 2, and 3 tiers.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                {retiredOffsets.toFixed(1)} MT Retired · {escrowOffsets.toFixed(1)} MT in Escrow
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-[#F8FAF8] border border-slate-200 rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-slate-700">Scope 1 (Direct)</span>
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded">20% Weight</span>
+              </div>
+              <p className="text-xl font-bold font-manrope text-slate-900">
+                {scope1Purchased.toFixed(1)} / {scope1Target} MT
+              </p>
+              <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-600 h-full rounded-full transition-all duration-700"
+                  style={{ width: `${Math.min((scope1Purchased / Math.max(scope1Target, 1)) * 100, 100)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-500">Fuel combustion, on-site fleet emissions.</p>
+            </div>
+
+            <div className="bg-[#F8FAF8] border border-slate-200 rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-slate-700">Scope 2 (Electricity)</span>
+                <span className="text-[10px] font-bold text-slate-500 bg-slate-200/60 px-2 py-0.5 rounded">30% Weight</span>
+              </div>
+              <p className="text-xl font-bold font-manrope text-slate-900">
+                {scope2Purchased.toFixed(1)} / {scope2Target} MT
+              </p>
+              <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-600 h-full rounded-full transition-all duration-700"
+                  style={{ width: `${Math.min((scope2Purchased / Math.max(scope2Target, 1)) * 100, 100)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-500">Purchased electricity & facility cooling.</p>
+            </div>
+
+            <div className="bg-[#F8FAF8] border border-slate-200 rounded-xl p-4 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-bold text-slate-700">Scope 3 (Agri Supply Chain)</span>
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">50% Weight</span>
+              </div>
+              <p className="text-xl font-bold font-manrope text-slate-900">
+                {scope3Purchased.toFixed(1)} / {scope3Target} MT
+              </p>
+              <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                <div
+                  className="bg-emerald-600 h-full rounded-full transition-all duration-700"
+                  style={{ width: `${Math.min((scope3Purchased / Math.max(scope3Target, 1)) * 100, 100)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-500">Agricultural procurement & smallholder farm sourcing.</p>
+            </div>
           </div>
         </div>
 

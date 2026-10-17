@@ -19,6 +19,11 @@ RUN npm run build
 # ==========================================
 FROM nginx:1.27-alpine AS runner
 
+# Install libcap, grant nginx binary capability to bind to privileged port 80 as non-root, and remove libcap
+RUN apk add --no-cache libcap && \
+    setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx && \
+    apk del libcap
+
 # Remove default nginx configs
 RUN rm -rf /etc/nginx/conf.d/* /usr/share/nginx/html/*
 
@@ -27,6 +32,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Copy compiled static assets from builder
 COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Configure permissions for non-root nginx user (pid file, caches, webroot)
+RUN touch /var/run/nginx.pid && \
+    chown -R nginx:nginx /var/run/nginx.pid /var/cache/nginx /usr/share/nginx/html /etc/nginx/conf.d
+
+# Switch to unprivileged user
+USER nginx
 
 # Expose HTTP port
 EXPOSE 80

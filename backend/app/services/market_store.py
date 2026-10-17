@@ -7,6 +7,8 @@ flow. State lives for the process lifetime (listings the API serves in
 fallback mode come from here too, so purchases are visible everywhere).
 """
 import threading
+import uuid
+from typing import Optional, Tuple
 
 from app import sample_data
 
@@ -40,6 +42,16 @@ def get(listing_id: str):
         return dict(row) if row else None
 
 
+def insert(listing: dict) -> dict:
+    with _LOCK:
+        _seed()
+        row = dict(listing)
+        if not row.get("id"):
+            row["id"] = str(uuid.uuid4())
+        _ROWS[row["id"]] = row
+        return dict(row)
+
+
 def update(listing_id: str, fields: dict):
     with _LOCK:
         _seed()
@@ -70,6 +82,27 @@ def update_cas(listing_id: str, fields: dict, expected_credits: float) -> bool:
         return True
 
 
+def place_bid_cas(listing_id: str, bid_amount: float, expected_bid: float) -> Tuple[bool, str, Optional[dict]]:
+    """Compare-and-swap update for bids in offline/demo mode."""
+    with _LOCK:
+        _seed()
+        row = _ROWS.get(listing_id)
+        if not row:
+            return False, "Listing not found", None
+        if str(row.get("status") or "Active").lower() not in ("active", ""):
+            return False, f"Bidding closed (listing status: {row.get('status')})", None
+        curr = float(row.get("current_bid") or 0)
+        if abs(curr - expected_bid) > 1e-9:
+            return False, "A higher or concurrent bid was placed — refresh and try again", None
+        if bid_amount <= 0:
+            return False, "Bid amount must be greater than zero", None
+        if curr > 0 and bid_amount <= curr:
+            return False, f"Bid must exceed current standing bid of ₹{curr:,.0f}", None
+        row["current_bid"] = round(bid_amount, 2)
+        row["bids_count"] = int(row.get("bids_count") or 0) + 1
+        return True, "Bid placed successfully", dict(row)
+
+
 def fpo_for_phone(phone: str) -> str:
     """FPO linked to a sample farmer (drives the conditional 4-way split)."""
     farmer = sample_data.FARMERS.get(phone) or {}
@@ -83,3 +116,4 @@ def farmer_farm_id(phone: str):
             if row.get("farmer_phone") == phone:
                 return row.get("farm_id")
     return None
+

@@ -1,36 +1,134 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Polygon, useMapEvents, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-
 import * as turf from '@turf/turf';
+
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
+
+const TILE_ERROR_FALLBACK = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' fill='%23132017'><rect width='256' height='256' fill='%23132017'/><text x='50%' y='48%' dominant-baseline='middle' text-anchor='middle' fill='%2322c55e' font-size='11' font-family='sans-serif'>🛰️ Satellite imagery</text><text x='50%' y='58%' dominant-baseline='middle' text-anchor='middle' fill='%2386efac' font-size='10' font-family='sans-serif'>unavailable at zoom</text></svg>";
+
+function MapLifecycleHandler({ onMapReady }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (onMapReady) onMapReady(map);
+
+    // Initial resize to avoid grey tile bug
+    const resizeTimer = setTimeout(() => {
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    }, 150);
+
+    const handleWindowResize = () => {
+      try {
+        map.invalidateSize();
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener('resize', handleWindowResize);
+
+    return () => {
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', handleWindowResize);
+      try {
+        map.stop();
+        const container = map.getContainer();
+        if (container && container._leaflet_id) {
+          delete container._leaflet_id;
+        }
+      } catch {
+        // ignore
+      }
+    };
+  }, [map, onMapReady]);
+
+  return null;
+}
 
 function FlyToLocation({ position }) {
   const map = useMap();
   useEffect(() => {
-    if (position) map.flyTo(position, 16, { duration: 1.5 });
+    if (position) {
+      try {
+        map.flyTo(position, 16, { duration: 1.5 });
+      } catch {
+        // ignore
+      }
+    }
+    return () => {
+      try {
+        map.stop();
+      } catch {
+        // ignore
+      }
+    };
   }, [position, map]);
   return null;
 }
 
-function MapClickHandler({ readOnly, polygonMode, polygonPoints, setPolygonPoints, polygonClosed, setPolygonClosed, setPolygonMode }) {
+function AutoFitBounds({ points }) {
+  const map = useMap();
+  const lastPointsKeyRef = useRef('');
+
+  useEffect(() => {
+    if (points && points.length >= 3) {
+      const key = points.map(p => `${p[0].toFixed(5)},${p[1].toFixed(5)}`).join(';');
+      if (key !== lastPointsKeyRef.current) {
+        lastPointsKeyRef.current = key;
+        try {
+          const bounds = L.latLngBounds(points);
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [40, 40], maxZoom: 18 });
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, [points, map]);
+
+  return null;
+}
+
+function MapClickHandler({ readOnly, polygonMode, polygonPoints, setPolygonPoints, polygonClosed, setPolygonClosed, setPolygonMode, onComplete }) {
+  const pointsRef = useRef(polygonPoints);
+  pointsRef.current = polygonPoints;
+
+  const modeRef = useRef(polygonMode);
+  modeRef.current = polygonMode;
+
+  const closedRef = useRef(polygonClosed);
+  closedRef.current = polygonClosed;
+
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+
   useMapEvents({
     click(e) {
-      if (readOnly || !polygonMode || polygonClosed) return;
+      if (readOnlyRef.current || !modeRef.current || closedRef.current) return;
       const latlng = [e.latlng.lat, e.latlng.lng];
-      if (polygonPoints.length >= 3) {
-        const first = polygonPoints[0];
+      const currentPts = pointsRef.current;
+      if (currentPts.length >= 3) {
+        const first = currentPts[0];
         const dist = Math.sqrt(Math.pow(latlng[0] - first[0], 2) + Math.pow(latlng[1] - first[1], 2));
         if (dist < 0.0005) {
           setPolygonClosed(true);
           setPolygonMode(false);
+          if (onComplete) onComplete(currentPts);
           return;
         }
       }
@@ -78,6 +176,7 @@ export default function LeafletMap({
   showHeatmapToggle = true,
   height = '60vh',
 }) {
+  const containerRef = useRef(null);
   const [search, setSearch] = useState('');
   const [flyTo, setFlyTo] = useState(null);
   const [polygonMode, setPolygonMode] = useState(false);
@@ -92,6 +191,19 @@ export default function LeafletMap({
   const [status, setStatus] = useState(readOnly ? '🔒 Cadastral Boundary Locked (Tier 1A)' : '');
   const [heatmapActive, setHeatmapActive] = useState(false);
 
+  // Outer container cleanup safeguard on unmount to prevent 'Map container is already initialized' error
+  useEffect(() => {
+    const container = containerRef.current;
+    return () => {
+      if (container) {
+        const leafletContainer = container.querySelector('.leaflet-container');
+        if (leafletContainer && leafletContainer._leaflet_id) {
+          delete leafletContainer._leaflet_id;
+        }
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (initialPoints && initialPoints.length >= 3) {
       setPolygonPoints(initialPoints);
@@ -100,7 +212,7 @@ export default function LeafletMap({
     }
   }, [initialPoints]);
 
-  const emitGeojson = (pts) => {
+  const emitGeojson = useCallback((pts) => {
     if (!pts || pts.length < 3) return;
     const coords = [...pts.map(p => [p[1], p[0]]), [pts[0][1], pts[0][0]]];
     const geojson = {
@@ -111,13 +223,17 @@ export default function LeafletMap({
 
     if (onGeojsonDrawn) onGeojsonDrawn(geojson);
     if (onAreaCalculated) onAreaCalculated({ area: ha, acres: Math.round(ha * 2.471 * 100) / 100, score: 84 });
-  };
+  }, [onGeojsonDrawn, onAreaCalculated]);
 
+  // Debounced area calculation and GeoJSON emission to prevent UI lockup during vertex manipulation
   useEffect(() => {
     if (polygonTouched && polygonClosed && polygonPoints.length >= 3) {
-      emitGeojson(polygonPoints);
+      const timer = setTimeout(() => {
+        emitGeojson(polygonPoints);
+      }, 150);
+      return () => clearTimeout(timer);
     }
-  }, [polygonTouched, polygonClosed, polygonPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [polygonTouched, polygonClosed, polygonPoints, emitGeojson]);
 
   const startPolygon = () => {
     if (readOnly) return;
@@ -129,16 +245,16 @@ export default function LeafletMap({
     if (onGeojsonDrawn) onGeojsonDrawn(null);
   };
 
-  const closePolygon = () => {
-    if (polygonPoints.length >= 3) {
+  const closePolygon = useCallback((pts = polygonPoints) => {
+    if (pts.length >= 3) {
       setPolygonClosed(true);
       setPolygonMode(false);
       setStatus('Farm boundary closed!');
-      emitGeojson(polygonPoints);
+      emitGeojson(pts);
     } else {
       setStatus('Add at least 3 points first.');
     }
-  };
+  }, [polygonPoints, emitGeojson]);
 
   const clearAll = () => {
     if (readOnly) return;
@@ -154,8 +270,12 @@ export default function LeafletMap({
     if (!search.trim()) return;
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(search)}`);
+      if (!res.ok) {
+        setStatus('Search service unavailable');
+        return;
+      }
       const data = await res.json();
-      if (data.length > 0) {
+      if (Array.isArray(data) && data.length > 0) {
         setFlyTo([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
         setStatus(`Location found: ${data[0].display_name.split(',')[0]}`);
       } else {
@@ -166,10 +286,25 @@ export default function LeafletMap({
     }
   };
 
-  const currentAreaHa = polygonClosed ? calculatePolygonAreaHa(polygonPoints) : 0;
+  const handleMarkerDrag = useCallback((index) => (e) => {
+    if (readOnly) return;
+    const { lat, lng } = e.target.getLatLng();
+    setPolygonPoints(prev => {
+      const next = [...prev];
+      next[index] = [lat, lng];
+      return next;
+    });
+    setPolygonTouched(true);
+    setStatus(`Vertex ${index + 1} adjusted (${lat.toFixed(5)}, ${lng.toFixed(5)})`);
+  }, [readOnly]);
+
+  // Memoize area calculation so typing in search does not trigger expensive turf calculations
+  const currentAreaHa = useMemo(() => {
+    return polygonClosed && polygonPoints.length >= 3 ? calculatePolygonAreaHa(polygonPoints) : 0;
+  }, [polygonClosed, polygonPoints]);
 
   return (
-    <div className="relative w-full rounded-2xl overflow-hidden border border-forest-100 shadow-card" style={{ height, minHeight: 360 }}>
+    <div ref={containerRef} className="relative w-full rounded-2xl overflow-hidden border border-forest-100 shadow-card" style={{ height, minHeight: 360 }}>
       <MapContainer
         center={polygonPoints.length > 0 ? polygonPoints[0] : [17.385, 78.4867]}
         zoom={15}
@@ -177,13 +312,21 @@ export default function LeafletMap({
         style={{ width: '100%', height: '100%' }}
         zoomControl={false}
       >
+        <MapLifecycleHandler />
         <TileLayer
           url="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
           subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
           maxZoom={22}
-          attribution="&copy; Google Satellite"
+          attribution='&copy; <a href="https://www.google.com/maps" target="_blank" rel="noopener noreferrer">Google Maps</a> Satellite'
+          errorTileUrl={TILE_ERROR_FALLBACK}
+          eventHandlers={{
+            tileerror: () => {
+              // Gracefully handle tile loading error
+            },
+          }}
         />
         {flyTo && <FlyToLocation position={flyTo} />}
+        {polygonPoints.length >= 3 && <AutoFitBounds points={polygonPoints} />}
         <MapClickHandler
           readOnly={readOnly}
           polygonMode={polygonMode}
@@ -192,12 +335,35 @@ export default function LeafletMap({
           polygonClosed={polygonClosed}
           setPolygonClosed={setPolygonClosed}
           setPolygonMode={setPolygonMode}
+          onComplete={closePolygon}
         />
 
         {polygonPoints.map((pt, i) => (
-          <Marker key={i} position={pt}>
+          <Marker
+            key={`vertex-${i}`}
+            position={pt}
+            draggable={!readOnly}
+            eventHandlers={{
+              click: () => {
+                if (!readOnly && polygonMode && !polygonClosed && polygonPoints.length >= 3 && i === 0) {
+                  closePolygon();
+                }
+              },
+              dragend: handleMarkerDrag(i),
+            }}
+          >
             <Popup>
-              Vertex {i + 1} ({pt[0].toFixed(5)}, {pt[1].toFixed(5)})
+              <div className="text-xs space-y-1">
+                <span className="font-bold text-slate-900">Vertex {i + 1}</span>
+                <p className="font-mono text-[11px] text-slate-600">
+                  {pt[0].toFixed(5)}, {pt[1].toFixed(5)}
+                </p>
+                {!readOnly && (
+                  <p className="text-[10px] text-emerald-700 font-semibold">
+                    Drag pin to fine-tune boundary
+                  </p>
+                )}
+              </div>
             </Popup>
           </Marker>
         ))}

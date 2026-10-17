@@ -12,6 +12,8 @@ import re
 
 from app import config as app_config
 
+from app.logging_setup import mask_pii
+
 TEXTPLATE_URL = "https://api.textplate.in/v1/send-sms"
 OTP_TTL_MINUTES = max(1, app_config.OTP_TTL_SECONDS // 60)
 
@@ -85,7 +87,7 @@ def _send_twilio_otp(phone: str, otp: str) -> tuple[bool, str]:
             from_=from_num,
             to=mobile,
         )
-        print(f"[TWILIO] SMS sent to {mobile}, SID: {msg.sid}")
+        print(f"[TWILIO] SMS sent to {mask_pii(mobile)}, SID: {msg.sid}")
         return True, "OTP sent to your phone via SMS"
     except Exception as e:
         err_msg = str(e)
@@ -116,7 +118,7 @@ def send_phone_otp(phone: str, otp: str) -> tuple[bool, str]:
     if sms_configured():
         cfg = _config()
         mobile = f"+91{clean_digits}"
-        print(f"[TEXTPLATE] sending mobileNumber={mobile!r}")
+        print(f"[TEXTPLATE] sending mobileNumber={mask_pii(mobile)!r}")
         try:
             import requests
 
@@ -135,7 +137,7 @@ def send_phone_otp(phone: str, otp: str) -> tuple[bool, str]:
             )
             content_type = resp.headers.get("content-type", "").lower()
             if "text/html" in content_type or "<html" in resp.text.lower() or "imunify360" in resp.text.lower():
-                print(f"[SMS ERROR] Textplate gateway blocked by bot-protection (Imunify360). SMS not sent to {mobile}.")
+                print(f"[SMS ERROR] Textplate gateway blocked by bot-protection (Imunify360). SMS not sent to {mask_pii(mobile)}.")
                 return False, "Textplate gateway blocked by server firewall (Imunify360)."
 
             if not (200 <= resp.status_code < 300):
@@ -150,10 +152,10 @@ def send_phone_otp(phone: str, otp: str) -> tuple[bool, str]:
             except Exception:
                 pass
 
-            print(f"[TEXTPLATE] send to {mobile}: HTTP {resp.status_code} ok=True")
+            print(f"[TEXTPLATE] send to {mask_pii(mobile)}: HTTP {resp.status_code} ok=True")
             return True, "OTP sent to your phone via SMS"
         except Exception as e:
-            print(f"[SMS ERROR] Textplate send failed for {mobile}: {e}")
+            print(f"[SMS ERROR] Textplate send failed for {mask_pii(mobile)}: {e}")
             return False, f"Textplate send error: {str(e)[:100]}"
 
     # 3. No SMS provider configured

@@ -1,24 +1,47 @@
-"""Enhanced satellite feature extraction for CarbonX biodiversity/SOC models.
+"""Full-contract satellite feature extraction for CarbonX models.
 
-Features (matching /analyze endpoint exactly):
-- Sentinel-2: NDVI, NDWI, SAVI, B4, B8, B11 means
-- Red-edge: NDRE, IRECI, CIre (don't saturate at high biomass)
-- Time-series: NDVI_STD, B8_VAR, phenology metrics (SOS, EOS, amplitude, integral)
-- Sentinel-1 SAR: VV, VH, VV/VH ratio, temporal coherence
-- GEDI: canopy height (rh98), AGBD (above-ground biomass density)
-- Terrain: elevation, slope, aspect
-- Habitat heterogeneity: NDVI range, texture
-- Seasonal contrast: Kharif vs Rabi NDVI
-- SoilGrids SOC prior (from ingested ground_truth_samples)
+Extracts all 33 features of the serving contract
+(``backend/app/services/ml_service.py::FEATURE_ORDER``) where a real source
+genuinely provides them. Missing values stay ``None`` — never fabricated,
+never backfilled.
 
-All computed at 10m scale for S2, 250m for SoilGrids, 25m for SAR/GEDI.
+Feature sources
+---------------
+- Sentinel-2 SR Harmonized (2023, cloud-filtered <20%): NDVI, NDWI, SAVI,
+  B4, B8, B11, red-edge indices (NDRE, IRECI, CIre), seasonal means
+  (KHARIF_NDVI Jun-Oct 2023, RABI_NDVI Nov 2023-Mar 2024),
+  SEASONAL_CONTRAST, time-series dispersion (NDVI_STD, B8_VAR),
+  heterogeneity (NDVI_RANGE) and percentile phenology
+  (NDVI_AMPLITUDE, NDVI_INTEGRAL, SOS_DOY, EOS_DOY).
+- SRTM (``USGS/SRTMGL1_003``): ELEVATION, SLOPE, ASPECT.
+- Sentinel-1 GRD (2023, IW, VV+VH): S1_VV, S1_VH, S1_VV_VH_RATIO,
+  S1_VV_STD (temporal stdDev — a texture/coherence proxy).
+- GEDI: canopy height rh98 (``LARSE/GEDI/GEDI02_A_002_MONTHLY``) and
+  above-ground biomass density agbd (``LARSE/GEDI/GEDI04_A_002_MONTHLY``).
+  GEDI is sparse footprint sampling — cells without shots stay ``None``.
+- SoilGrids 2.0 (0-30 cm SOC): EE community/ISRIC assets first; ISRIC REST
+  point query as fallback (the assets referenced in
+  ``scripts/ingest_soilgrids.py`` 404 as of 2026-10-17 and the REST service
+  serves some regions but returns null for others — Indian points returned
+  null on that date). When the REST query works its real 0-30 cm stock is
+  also recorded as ``soc_stock_rest_tha`` (t C/ha) — the honest SOC training
+  target basis. If neither source returns data, every SoilGrids column stays
+  ``None``: a SoilGrids dataset may not be substituted by a different
+  product (e.g. OpenLandMap) under a SoilGrids band name.
+
+Units: S2 bands are surface reflectance ×10000 (EE native), indices
+dimensionless, S1 backscatter dB, GEDI rh98 metres and agbd Mg/ha, terrain
+metres/degrees, SoilGrids content g/kg (REST dg/kg ÷ 10) and stock t C/ha
+(content × bulk density 1.3 g/cm³ × 30 cm — the same documented
+approximation as ``scripts/ingest_soilgrids.py``).
 """
+import json
+import os
+import time
+from pathlib import Path
+
 import ee
 import pandas as pd
-import time
-import os
-import json
-from pathlib import Path
 
 # ─── Config ───
 try:  # single source of truth with the serving config
@@ -26,325 +49,453 @@ try:  # single source of truth with the serving config
 except ImportError:  # pragma: no cover - fallback when imported as a module
     _DEFAULT_GEE_PROJECT = "carbonx-507617"
 GEE_PROJECT = os.getenv("GEE_PROJECT", _DEFAULT_GEE_PROJECT)
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DATA_DIR = Path(__file__).resolve().parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
-# SoilGrids asset (from ingest_soilgrids.py)
-SOILGRIDS_IMG = None  # Will be initialized lazily
+EXTRACTION_VERSION = "v3-full-contract-2026-10-17"
+
+# Serving contract — must stay EXACTLY aligned with
+# backend/app/services/ml_service.py::FEATURE_ORDER (train.py asserts this).
+FEATURE_ORDER = [
+    # Core S2 (8)
+    "NDVI", "NDWI", "SAVI", "B4", "B8", "B11", "NDVI_STD", "B8_VAR",
+    # Red-edge (3)
+    "NDRE", "IRECI", "CIre",
+    # Seasonal (3)
+    "KHARIF_NDVI", "RABI_NDVI", "SEASONAL_CONTRAST",
+    # Heterogeneity (1)
+    "NDVI_RANGE",
+    # Phenology (4)
+    "NDVI_AMPLITUDE", "NDVI_INTEGRAL", "SOS_DOY", "EOS_DOY",
+    # Terrain (3)
+    "ELEVATION", "SLOPE", "ASPECT",
+    # SAR (4)
+    "S1_VV", "S1_VH", "S1_VV_VH_RATIO", "S1_VV_STD",
+    # GEDI (2)
+    "GEDI_RH98", "GEDI_AGBD",
+    # SoilGrids prior (5)
+    "SOILGRIDS_SOC_MEAN", "SOILGRIDS_SOC_STOCK",
+    "SOILGRIDS_SOC_Q05", "SOILGRIDS_SOC_Q50", "SOILGRIDS_SOC_Q95",
+]
+
+# Extra (non-contract) column: real ISRIC REST SoilGrids 0-30 cm stock,
+# t C/ha — the target basis for the SOC model. Kept separate from the
+# SOILGRIDS_SOC_* feature columns so the target source is explicit.
+SOILGRIDS_TARGET_COL = "soc_stock_rest_tha"
+
+S2_START, S2_END = "2023-01-01", "2023-12-31"
+KHARIF_START, KHARIF_END = "2023-06-01", "2023-10-31"
+RABI_START, RABI_END = "2023-11-01", "2024-03-31"
+S1_START, S1_END = "2023-01-01", "2023-12-31"
+GEDI_START, GEDI_END = "2023-01-01", "2023-12-31"
+CLOUD_MAX = 20
+
+# SoilGrids (ISRIC) — REST API v2.0 point query, no key required.
+SOILGRIDS_REST_URL = "https://rest.isric.org/soilgrids/v2.0/properties/query"
+SOILGRIDS_DEPTHS = ((0, 5), (5, 15), (15, 30))  # cm, standard v2 intervals
+SOILGRIDS_BULK_DENSITY = 1.3  # g/cm³ — documented approximation (ingest script)
+# dg/kg -> g/kg
+SOILGRIDS_DGKG_TO_GKG = 10.0
+# stock t C/ha = content g/kg × BD × depth(30cm) / 10
+SOILGRIDS_STOCK_FACTOR = SOILGRIDS_BULK_DENSITY * 30.0 / 10.0  # = 3.9
+# Probe points used once per run to decide whether the ISRIC REST service is
+# actually serving data (it returned HTTP 200 with null values for every
+# Indian point on 2026-10-17 while serving e.g. the Netherlands).
+SOILGRIDS_PROBE_POINTS = ((78.5, 17.4), (77.3, 8.14), (88.4, 22.6))
+
+_SOILGRIDS_EE_BANDS = {
+    "soc_mean_gkg": "SOILGRIDS_SOC_MEAN",
+    "soc_stock_tha": "SOILGRIDS_SOC_STOCK",
+    "soc_q05_gkg": "SOILGRIDS_SOC_Q05",
+    "soc_q50_gkg": "SOILGRIDS_SOC_Q50",
+    "soc_q95_gkg": "SOILGRIDS_SOC_Q95",
+}
+
+_soilgrids_image = None
+_soilgrids_image_checked = False
+_soilgrids_rest_ok = None  # None = not probed yet
 
 
 def init_ee():
     """Initialize Earth Engine."""
     ee.Initialize(project=GEE_PROJECT)
     print(f"Earth Engine initialized (project: {GEE_PROJECT})")
+    get_soilgrids_image()
 
+
+def _mean_reduce(image, geometry, scale, attempts=2, retry_sleep=5):
+    """reduceRegion(mean) with one retry — raises after persistent failure."""
+    last = None
+    for attempt in range(attempts):
+        try:
+            return image.reduceRegion(
+                reducer=ee.Reducer.mean(), geometry=geometry,
+                scale=scale, maxPixels=1e9,
+            ).getInfo()
+        except Exception as e:  # noqa: BLE001 — retried, re-raised below
+            last = e
+            if attempt + 1 < attempts:
+                time.sleep(retry_sleep)
+    raise last
+
+
+# ─── SoilGrids ───
 
 def get_soilgrids_image():
-    """Get or create the SoilGrids multi-band image."""
-    global SOILGRIDS_IMG
-    if SOILGRIDS_IMG is not None:
-        return SOILGRIDS_IMG
-    
-    # Try community dataset first
-    try:
+    """EE SoilGrids multi-band image, or None when the assets are unreachable.
+
+    Both the community assets referenced by scripts/ingest_soilgrids.py and
+    the standard ISRIC assets returned 404 on 2026-10-17; keep the attempt so
+    a future retrain picks them up if ISRIC restores them.
+    """
+    global _soilgrids_image, _soilgrids_image_checked
+    if _soilgrids_image_checked:
+        return _soilgrids_image
+    _soilgrids_image_checked = True
+
+    try:  # community dataset first (same paths as ingest_soilgrids.py)
         img = ee.Image("projects/soilgrids/isric/soilgrids_v2/soc_0-30cm_mean").select([0], ["soc_mean_gkg"])
         img = img.addBands(ee.Image("projects/soilgrids/isric/soilgrids_v2/soc_0-30cm_stock").select([0], ["soc_stock_tha"]))
         img = img.addBands(ee.Image("projects/soilgrids/isric/soilgrids_v2/soc_0-30cm_Q0.05").select([0], ["soc_q05_gkg"]))
         img = img.addBands(ee.Image("projects/soilgrids/isric/soilgrids_v2/soc_0-30cm_Q0.5").select([0], ["soc_q50_gkg"]))
         img = img.addBands(ee.Image("projects/soilgrids/isric/soilgrids_v2/soc_0-30cm_Q0.95").select([0], ["soc_q95_gkg"]))
-        img.getInfo()
-        print("Using SoilGrids community dataset")
+        img.getInfo()  # reachability check
+        print("SoilGrids: using EE community dataset assets")
+        _soilgrids_image = img
+        return img
     except Exception:
-        # Fallback to standard ISRIC assets
+        pass
+
+    try:  # standard ISRIC assets fallback
         img = ee.Image("ISRIC/SoilGrids2_0/SOC/mean_0-30cm").select("b1").rename("soc_mean_gkg")
         img = img.addBands(ee.Image("ISRIC/SoilGrids2_0/SOC_STOCK/mean_0-30cm").select("b1").rename("soc_stock_tha"))
         img = img.addBands(ee.Image("ISRIC/SoilGrids2_0/SOC/quantile_0.05_0-30cm").select("b1").rename("soc_q05_gkg"))
         img = img.addBands(ee.Image("ISRIC/SoilGrids2_0/SOC/quantile_0.5_0-30cm").select("b1").rename("soc_q50_gkg"))
         img = img.addBands(ee.Image("ISRIC/SoilGrids2_0/SOC/quantile_0.95_0-30cm").select("b1").rename("soc_q95_gkg"))
-        print("Using standard ISRIC SoilGrids 2.0 assets")
-    
-    SOILGRIDS_IMG = img
-    return img
+        img.getInfo()
+        print("SoilGrids: using standard ISRIC EE assets")
+        _soilgrids_image = img
+        return img
+    except Exception:
+        print("SoilGrids: EE assets unavailable (404) — REST fallback only")
+        _soilgrids_image = None
+        return None
 
 
-def compute_phenology_metrics(ndvi_collection, geometry):
-    """Compute phenology metrics from NDVI time series.
-    
-    Returns: SOS (start of season), EOS (end of season), amplitude, integral
-    Using harmonic fitting on the time series.
+def fetch_soilgrids_rest(lon, lat, timeout=30, retries=2):
+    """ISRIC SoilGrids 2.0 REST point query for 0-30 cm SOC (no API key).
+
+    The endpoint used by scripts/ingest_soilgrids.py
+    (``/soilproperty/query`` with ``depth=0-30cm``) now 404s / returns empty
+    layers; the current v2 service serves the standard intervals
+    (0-5, 5-15, 15-30 cm) which are depth-weighted here to 0-30 cm.
+    REST values are dg/kg (d_factor=10) and are divided by 10 to g/kg.
+    Stock is derived with the same documented approximation as the ingest
+    script: content × bulk density 1.3 g/cm³ × 30 cm / 10 -> t C/ha.
+
+    Returns a dict with real values, or None when the service has no data
+    for the point (it currently returns nulls for whole regions, e.g. India
+    on 2026-10-17) — never a substitute value.
     """
-    # Get time series as array
-    ndvi_ts = ndvi_collection.map(lambda img: img.set('timestamp', img.date().millis()))
-    
-    # Harmonic fitting (2 harmonics = annual + semi-annual)
-    # This gives us fitted curve from which we derive phenology
-    harmonic = ndvi_ts.select('NDVI').reduce(ee.Reducer.robustLinearRegression(3, 2))
-    
-    # For simplicity, use percentile-based phenology
-    # SOS = date when NDVI crosses 20% of annual amplitude
-    # EOS = date when NDVI drops below 20% of amplitude
-    
-    # Get day-of-year for each image
-    def add_doy(img):
-        doy = img.date().getRelative('day', 'year')
-        return img.addBands(ee.Image.constant(doy).rename('doy'))
-    
-    ndvi_with_doy = ndvi_ts.map(add_doy)
-    
-    # Reduce to get statistics
-    stats = ndvi_with_doy.select(['NDVI', 'doy']).reduce(
-        ee.Reducer.percentile([20, 50, 80]).combine(
-            ee.Reducer.minMax(), '', True
-        ).combine(
-            ee.Reducer.mean(), '', True
-        )
+    import requests
+
+    params = {
+        "lon": lon, "lat": lat, "property": "soc",
+        "depth": [f"{top}-{bottom}cm" for top, bottom in SOILGRIDS_DEPTHS],
+        "value": ["mean", "Q0.05", "Q0.5", "Q0.95"],
+    }
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            r = requests.get(SOILGRIDS_REST_URL, params=params, timeout=timeout)
+            r.raise_for_status()
+            layers = r.json()["properties"]["layers"]
+            soc = next((l for l in layers if l["name"] == "soc"), None)
+            if soc is None:
+                return None
+            by_depth = {(d["range"]["top_depth"], d["range"]["bottom_depth"]): d.get("values", {})
+                        for d in soc.get("depths", [])}
+
+            def _weighted(key):
+                num, wsum = 0.0, 0.0
+                for depth in SOILGRIDS_DEPTHS:
+                    value = by_depth.get(depth, {}).get(key)
+                    if value is None:
+                        return None
+                    thickness = depth[1] - depth[0]
+                    num += float(value) / SOILGRIDS_DGKG_TO_GKG * thickness
+                    wsum += thickness
+                return num / wsum
+
+            mean_gkg = _weighted("mean")
+            if mean_gkg is None:
+                return None
+            return {
+                "soc_mean_gkg": round(mean_gkg, 3),
+                "soc_stock_tha": round(mean_gkg * SOILGRIDS_STOCK_FACTOR, 3),
+                "soc_q05_gkg": _weighted("Q0.05"),
+                "soc_q50_gkg": _weighted("Q0.5"),
+                "soc_q95_gkg": _weighted("Q0.95"),
+            }
+        except Exception as e:  # noqa: BLE001 — retried, then reported as None
+            last_error = e
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    print(f"  [soilgrids] REST failed for ({lon:.3f},{lat:.3f}): {type(last_error).__name__}")
+    return None
+
+
+def soilgrids_rest_available():
+    """Probe the ISRIC REST service once per process.
+
+    Returns True only if at least one probe point returns real values.
+    ``CARBONX_SOILGRIDS_REST=0`` skips the probe (and REST usage) entirely.
+    """
+    global _soilgrids_rest_ok
+    if _soilgrids_rest_ok is None:
+        if os.getenv("CARBONX_SOILGRIDS_REST", "1") == "0":
+            _soilgrids_rest_ok = False
+            return False
+        for i, (lon, lat) in enumerate(SOILGRIDS_PROBE_POINTS):
+            if fetch_soilgrids_rest(lon, lat, retries=0) is not None:
+                _soilgrids_rest_ok = True
+                break
+            if i + 1 < len(SOILGRIDS_PROBE_POINTS):
+                time.sleep(0.5)
+        else:
+            _soilgrids_rest_ok = False
+        print(f"SoilGrids REST available for India: {_soilgrids_rest_ok}")
+    return _soilgrids_rest_ok
+
+
+# ─── Per-group feature extraction ───
+
+def compute_phenology_metrics(s2_collection):
+    """Percentile-based phenology from a raw Sentinel-2 collection.
+
+    NDVI_AMPLITUDE = max − min; NDVI_INTEGRAL = mean × 365;
+    SOS_DOY / EOS_DOY = 20th / 80th percentile acquisition day-of-year —
+    real percentiles of the observed series (crude seasonal markers,
+    documented as such, not a fitted double-logistic model).
+
+    NDVI and day-of-year are computed together on the raw images because
+    images produced by a mapped index operation lose `system:time_start`
+    (calling `.date()` on them raises in Earth Engine).
+    """
+    def add_ndvi_doy(img):
+        ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
+        doy = img.date().getRelative("day", "year")
+        # toInt() keeps the band type homogeneous across the collection
+        # (constant() derives Byte/Short from magnitude and EE requires one type).
+        return ndvi.addBands(ee.Image.constant(doy).toInt().rename("doy"))
+
+    stats = s2_collection.map(add_ndvi_doy).select(["NDVI", "doy"]).reduce(
+        ee.Reducer.percentile([20, 50, 80])
+        .combine(ee.Reducer.minMax(), "", True)
+        .combine(ee.Reducer.mean(), "", True)
     )
-    
-    # Compute approximate phenology
-    ndvi_min = stats.select('NDVI_min')
-    ndvi_max = stats.select('NDVI_max')
-    ndvi_amp = ndvi_max.subtract(ndvi_min).rename('NDVI_AMPLITUDE')
-    ndvi_integral = stats.select('NDVI_mean').multiply(365).rename('NDVI_INTEGRAL')
-    
-    # SOS/EOS approximated from 20th/80th percentile DOY
-    sos = stats.select('doy_p20').rename('SOS_DOY')
-    eos = stats.select('doy_p80').rename('EOS_DOY')
-    
-    return ee.Image.cat([ndvi_amp, ndvi_integral, sos, eos])
+    ndvi_min = stats.select("NDVI_min")
+    ndvi_max = stats.select("NDVI_max")
+    return ee.Image.cat([
+        ndvi_max.subtract(ndvi_min).rename("NDVI_AMPLITUDE"),
+        stats.select("NDVI_mean").multiply(365).rename("NDVI_INTEGRAL"),
+        stats.select("doy_p20").rename("SOS_DOY"),
+        stats.select("doy_p80").rename("EOS_DOY"),
+    ])
 
 
-def get_features(lat, lon, buffer=1500):
-    """Extract all features for a single point.
-    
-    Matches /analyze endpoint feature extraction exactly.
-    """
-    pt = ee.Geometry.Point([lon, lat]).buffer(buffer)
-    
-    # ─── Sentinel-2 SR Harmonized ───
+def _extract_s2(pt, feats):
+    """Sentinel-2 features (core indices, red-edge, seasonal, phenology)."""
     s2_col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
               .filterBounds(pt)
-              .filterDate("2023-01-01", "2023-12-31")
-              .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)))
-    
-    # Median composite (cloud-robust)
+              .filterDate(S2_START, S2_END)
+              .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", CLOUD_MAX)))
+    # No early size check: an empty/short collection raises inside the reduce
+    # and the group handler leaves S2 features None (logged by get_features).
+
     s2_median = s2_col.median()
-    
-    # Band selections
-    B2 = s2_median.select("B2")   # Blue
-    B3 = s2_median.select("B3")   # Green
-    B4 = s2_median.select("B4")   # Red
-    B5 = s2_median.select("B5")   # Red Edge 1 (705 nm)
-    B6 = s2_median.select("B6")   # Red Edge 2 (740 nm)
-    B7 = s2_median.select("B7")   # Red Edge 3 (783 nm)
-    B8 = s2_median.select("B8")   # NIR (842 nm)
-    B8A = s2_median.select("B8A") # Narrow NIR (865 nm)
-    B11 = s2_median.select("B11") # SWIR 1 (1610 nm)
-    B12 = s2_median.select("B12") # SWIR 2 (2190 nm)
-    
-    # ─── Core Spectral Indices ───
+    B4 = s2_median.select("B4")
+    B8 = s2_median.select("B8")
+
     ndvi = s2_median.normalizedDifference(["B8", "B4"]).rename("NDVI")
     ndwi = s2_median.normalizedDifference(["B3", "B11"]).rename("NDWI")
-    savi = s2_median.expression("((NIR-RED)/(NIR+RED+0.5))*1.5", 
-                                 {"NIR": B8, "RED": B4}).rename("SAVI")
-    
-    # ─── Red-Edge Indices (don't saturate at high biomass) ───
-    # NDRE = (NIR - RedEdge) / (NIR + RedEdge) — uses B5 (705nm)
+    savi = s2_median.expression("((NIR-RED)/(NIR+RED+0.5))*1.5",
+                                {"NIR": B8, "RED": B4}).rename("SAVI")
     ndre = s2_median.normalizedDifference(["B8", "B5"]).rename("NDRE")
-    
-    # IRECI = (NIR - RedEdge1) / (NIR + RedEdge1) * (RedEdge3 / RedEdge2)
-    # More sensitive to chlorophyll at high LAI
     ireci = s2_median.expression(
         "(NIR - RE1) / (NIR + RE1) * (RE3 / RE2)",
-        {"NIR": B8, "RE1": B5, "RE2": B6, "RE3": B7}
+        {"NIR": B8, "RE1": s2_median.select("B5"),
+         "RE2": s2_median.select("B6"), "RE3": s2_median.select("B7")}
     ).rename("IRECI")
-    
-    # CIre = NIR / RedEdge1 - 1 (Chlorophyll Index red-edge)
-    cire = s2_median.expression("NIR / RE1 - 1", 
-                                 {"NIR": B8, "RE1": B5}).rename("CIre")
-    
-    # ─── Time-Series Dispersion ───
+    cire = s2_median.expression("NIR / RE1 - 1",
+                                {"NIR": B8, "RE1": s2_median.select("B5")}).rename("CIre")
+
     ndvi_col = s2_col.map(lambda i: i.normalizedDifference(["B8", "B4"]).rename("NDVI"))
-    b8_col = s2_col.map(lambda i: i.select("B8"))
-    
     ndvi_std = ndvi_col.reduce(ee.Reducer.stdDev()).rename("NDVI_STD")
-    b8_var = b8_col.reduce(ee.Reducer.variance()).rename("B8_VAR")
-    
-    # ─── Seasonal Contrast ───
-    kharif = s2_col.filterDate("2023-06-01", "2023-10-31")
-    rabi = s2_col.filterDate("2023-11-01", "2024-03-31")
-    
-    kharif_ndvi = kharif.map(lambda i: i.normalizedDifference(["B8", "B4"])).mean().rename("KHARIF_NDVI")
-    rabi_ndvi = rabi.map(lambda i: i.normalizedDifference(["B8", "B4"])).mean().rename("RABI_NDVI")
-    seasonal_contrast = kharif_ndvi.subtract(rabi_ndvi).rename("SEASONAL_CONTRAST")
-    
-    # ─── Habitat Heterogeneity ───
+    b8_var = s2_col.map(lambda i: i.select("B8")).reduce(ee.Reducer.variance()).rename("B8_VAR")
     ndvi_range = ndvi_col.max().subtract(ndvi_col.min()).rename("NDVI_RANGE")
-    
-    # ─── Phenology Metrics ───
-    # On failure the whole cell fails (caller counts it as failed) — never
-    # substitute constant zeros, which are plausible real values and would
-    # silently poison training with fabricated data.
-    phenology = compute_phenology_metrics(ndvi_col, pt)
-    
-    # ─── Terrain ───
+
+    bands = [ndvi, ndwi, savi, B4.rename("B4"), B8.rename("B8"),
+             s2_median.select("B11").rename("B11"), ndvi_std, b8_var,
+             ndre, ireci, cire]
+
+    # Seasonal: kharif (Jun-Oct 2023) and rabi (Nov 2023 - Mar 2024).
+    kharif_col = s2_col.filterDate(KHARIF_START, KHARIF_END)
+    if kharif_col.size().getInfo() > 0:
+        kharif_ndvi = (kharif_col.map(lambda i: i.normalizedDifference(["B8", "B4"]))
+                       .mean().rename("KHARIF_NDVI"))
+        bands.append(kharif_ndvi)
+    else:
+        kharif_ndvi = None
+
+    rabi_col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                .filterBounds(pt)
+                .filterDate(RABI_START, RABI_END)
+                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", CLOUD_MAX)))
+    if rabi_col.size().getInfo() > 0:
+        rabi_ndvi = (rabi_col.map(lambda i: i.normalizedDifference(["B8", "B4"]))
+                     .mean().rename("RABI_NDVI"))
+        bands.append(rabi_ndvi)
+    else:
+        rabi_ndvi = None
+
+    if kharif_ndvi is not None and rabi_ndvi is not None:
+        bands.append(kharif_ndvi.subtract(rabi_ndvi).rename("SEASONAL_CONTRAST"))
+
+    bands.append(ndvi_range)
+    pheno_img = compute_phenology_metrics(s2_col)
+    bands.extend([pheno_img.select(name) for name in
+                  ("NDVI_AMPLITUDE", "NDVI_INTEGRAL", "SOS_DOY", "EOS_DOY")])
+
+    values = _mean_reduce(ee.Image.cat(bands), pt, 10)
+    for key, value in (values or {}).items():
+        if key in feats and value is not None:
+            feats[key] = float(value)
+
+
+def _extract_terrain(pt, feats):
+    """SRTM terrain features."""
     dem = ee.Image("USGS/SRTMGL1_003")
-    elevation = dem.select("elevation").rename("ELEVATION")
-    slope = ee.Terrain.slope(dem).rename("SLOPE")
-    aspect = ee.Terrain.aspect(dem).rename("ASPECT")
-    
-    # ─── Sentinel-1 SAR ───
-    # A failed/missing collection must fail the cell, not inject 0 dB
-    # constants that look like real measurements.
+    stack = ee.Image.cat([
+        dem.select("elevation").rename("ELEVATION"),
+        ee.Terrain.slope(dem).rename("SLOPE"),
+        ee.Terrain.aspect(dem).rename("ASPECT"),
+    ])
+    for key, value in (_mean_reduce(stack, pt, 30) or {}).items():
+        if key in feats and value is not None:
+            feats[key] = float(value)
+
+
+def _extract_sar(pt, feats):
+    """Sentinel-1 GRD features (2023 IW, VV+VH)."""
     s1_col = (ee.ImageCollection("COPERNICUS/S1_GRD")
               .filterBounds(pt)
-              .filterDate("2023-01-01", "2023-12-31")
+              .filterDate(S1_START, S1_END)
               .filter(ee.Filter.eq("instrumentMode", "IW"))
               .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
               .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH")))
-    
+    if s1_col.size().getInfo() == 0:
+        print("  [extract] no Sentinel-1 images — SAR features left None")
+        return
     s1_median = s1_col.median()
     vv = s1_median.select("VV").rename("S1_VV")
     vh = s1_median.select("VH").rename("S1_VH")
-    vv_vh_ratio = vv.divide(vh).rename("S1_VV_VH_RATIO")
-    
-    # Temporal coherence (pairwise coherence across 12-day intervals)
-    # Simplified: stdDev of VV as texture proxy
-    s1_std = s1_col.select("VV").reduce(ee.Reducer.stdDev()).rename("S1_VV_STD")
-    
-    sar_bands = ee.Image.cat([vv, vh, vv_vh_ratio, s1_std])
-    
-    # ─── GEDI Lidar ───
-    gedi = ee.ImageCollection("LARSE/GEDI/GEDI02_A_002_MONTHLY")\
-            .filterBounds(pt).filterDate("2023-01-01", "2023-12-31").median()
-    
-    rh98 = gedi.select("rh98").rename("GEDI_RH98")  # Canopy height (98th percentile)
-    agbd = gedi.select("agbd").rename("GEDI_AGBD")  # Above-ground biomass density
-    gedi_bands = ee.Image.cat([rh98, agbd])
-    
-    # ─── SoilGrids SOC Prior ───
-    soilgrids = get_soilgrids_image()
-    soilgrids_sampled = soilgrids.reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=pt, scale=250, maxPixels=1e9
-    )
-    
-    # Build feature stack (order matters for model compatibility)
     stack = ee.Image.cat([
-        # Core S2 indices (8 bands) - MUST MATCH /analyze
-        ndvi.rename("NDVI"),
-        ndwi.rename("NDWI"),
-        savi.rename("SAVI"),
-        B4.rename("B4"),
-        B8.rename("B8"),
-        B11.rename("B11"),
-        ndvi_std.rename("NDVI_STD"),
-        b8_var.rename("B8_VAR"),
-        
-        # Red-edge (3 bands)
-        ndre.rename("NDRE"),
-        ireci.rename("IRECI"),
-        cire.rename("CIre"),
-        
-        # Seasonal (3 bands)
-        kharif_ndvi.rename("KHARIF_NDVI"),
-        rabi_ndvi.rename("RABI_NDVI"),
-        seasonal_contrast.rename("SEASONAL_CONTRAST"),
-        
-        # Heterogeneity (1 band)
-        ndvi_range.rename("NDVI_RANGE"),
-        
-        # Phenology (4 bands)
-        phenology.select("NDVI_AMPLITUDE"),
-        phenology.select("NDVI_INTEGRAL"),
-        phenology.select("SOS_DOY"),
-        phenology.select("EOS_DOY"),
-        
-        # Terrain (3 bands)
-        elevation,
-        slope,
-        aspect,
-        
-        # SAR (4 bands)
-        sar_bands.select("S1_VV"),
-        sar_bands.select("S1_VH"),
-        sar_bands.select("S1_VV_VH_RATIO"),
-        sar_bands.select("S1_VV_STD"),
-        
-        # GEDI (2 bands)
-        gedi_bands.select("GEDI_RH98"),
-        gedi_bands.select("GEDI_AGBD"),
-        
-        # SoilGrids prior (5 bands) - sampled at 250m
-        # Note: these will be constant within 250m pixel
-        soilgrids.select("soc_mean_gkg").rename("SOILGRIDS_SOC_MEAN"),
-        soilgrids.select("soc_stock_tha").rename("SOILGRIDS_SOC_STOCK"),
-        soilgrids.select("soc_q05_gkg").rename("SOILGRIDS_SOC_Q05"),
-        soilgrids.select("soc_q50_gkg").rename("SOILGRIDS_SOC_Q50"),
-        soilgrids.select("soc_q95_gkg").rename("SOILGRIDS_SOC_Q95"),
+        vv, vh,
+        vv.divide(vh).rename("S1_VV_VH_RATIO"),
+        s1_col.select("VV").reduce(ee.Reducer.stdDev()).rename("S1_VV_STD"),
     ])
-    
-    # Extract
-    feat_values = stack.reduceRegion(
-        reducer=ee.Reducer.mean(), geometry=pt, scale=10, maxPixels=1e9
-    ).getInfo()
-    
-    return feat_values
+    for key, value in (_mean_reduce(stack, pt, 10) or {}).items():
+        if key in feats and value is not None:
+            feats[key] = float(value)
 
 
-def extract_all():
-    """Extract features for all richness grid cells (checkpointed)."""
-    # Load richness data (from aggregate_richness.py)
-    richness_path = DATA_DIR / "species_richness_weighted.csv"
-    if not richness_path.exists():
-        print(f"Richness file not found: {richness_path}")
-        print("Run: python src/aggregate_richness.py first")
-        return
-    
-    richness = pd.read_csv(richness_path)
-    print(f"Loaded {len(richness)} richness grid cells")
-    
-    ckpt_path = DATA_DIR / "features_v3_checkpoint.csv"
-    out_path = DATA_DIR / "satellite_features_v3.csv"
-    
-    done_df = pd.read_csv(ckpt_path) if ckpt_path.exists() else pd.DataFrame()
-    done_coords = set(zip(done_df.get("latitude", []), done_df.get("longitude", [])))
-    
-    new_rows, failed = [], 0
-    
-    for idx, row in richness.iterrows():
-        coord = (row["latitude"], row["longitude"])
-        if coord in done_coords:
-            continue
-        
+def _extract_gedi(pt, feats):
+    """GEDI canopy height (L2A) and AGBD (L4A) — sparse; None where no shots."""
+    l2a_col = (ee.ImageCollection("LARSE/GEDI/GEDI02_A_002_MONTHLY")
+               .filterBounds(pt).filterDate(GEDI_START, GEDI_END))
+    l4a_col = (ee.ImageCollection("LARSE/GEDI/GEDI04_A_002_MONTHLY")
+               .filterBounds(pt).filterDate(GEDI_START, GEDI_END))
+
+    bands = []
+    if l2a_col.size().getInfo() > 0:
+        bands.append(l2a_col.select("rh98").median().rename("GEDI_RH98"))
+    if l4a_col.size().getInfo() > 0:
+        bands.append(l4a_col.select("agbd").median().rename("GEDI_AGBD"))
+    if not bands:
+        return  # no GEDI shots over this cell — both stay None
+    try:
+        values = _mean_reduce(ee.Image.cat(bands), pt, 25)
+        for key, value in (values or {}).items():
+            if key in feats and value is not None:
+                feats[key] = float(value)
+    except Exception as e:  # noqa: BLE001 — GEDI gaps are expected
+        print(f"  [extract] GEDI reduce failed: {type(e).__name__}")
+
+
+def _extract_soilgrids(lon, lat, pt, feats):
+    """SoilGrids SOC features (EE assets first, REST fallback) + REST target."""
+    sg_values = None
+    image = get_soilgrids_image()
+    if image is not None:
         try:
-            f = get_features(row["latitude"], row["longitude"])
-            if not f or all(v is None for v in f.values()):
-                failed += 1
-                continue
-            
-            f.update({
-                "latitude": row["latitude"],
-                "longitude": row["longitude"],
-                "species_count": row["species_count"],
-                "observation_count": row.get("observation_count", 0),
-            })
-            new_rows.append(f)
-            
-            if len(new_rows) % 50 == 0:
-                pd.concat([done_df, pd.DataFrame(new_rows)], ignore_index=True).to_csv(ckpt_path, index=False)
-                print(f"Checkpoint: {len(done_df) + len(new_rows)} | failed: {failed}")
-                time.sleep(2)  # Rate limit
-        
-        except Exception as e:
-            print(f"Row {idx}: {e}")
-            failed += 1
-            time.sleep(3)
-    
-    final = pd.concat([done_df, pd.DataFrame(new_rows)], ignore_index=True)
-    final.to_csv(out_path, index=False)
-    print(f"Done. {len(final)} rows. {failed} failed.")
-    print(f"Features saved to: {out_path}")
+            sg_values = _mean_reduce(image, pt, 250)
+        except Exception as e:  # noqa: BLE001 — real data or None
+            print(f"  [extract] SoilGrids EE reduce failed: {type(e).__name__}")
+
+    if sg_values:
+        for band, feature in _SOILGRIDS_EE_BANDS.items():
+            value = sg_values.get(band)
+            if value is not None:
+                feats[feature] = float(value)
+
+    if soilgrids_rest_available():
+        rest = fetch_soilgrids_rest(lon, lat)
+        if rest:
+            if not sg_values:  # EE assets dead → REST is the feature source
+                feats["SOILGRIDS_SOC_MEAN"] = rest["soc_mean_gkg"]
+                feats["SOILGRIDS_SOC_STOCK"] = rest["soc_stock_tha"]
+                feats["SOILGRIDS_SOC_Q05"] = rest["soc_q05_gkg"]
+                feats["SOILGRIDS_SOC_Q50"] = rest["soc_q50_gkg"]
+                feats["SOILGRIDS_SOC_Q95"] = rest["soc_q95_gkg"]
+            # The REST 0-30 cm stock is the explicit SOC target basis —
+            # recorded even when the EE features worked (different product).
+            feats[SOILGRIDS_TARGET_COL] = rest["soc_stock_tha"]
+
+
+def get_features(lat, lon, buffer=1500):
+    """Extract the full FEATURE_ORDER set for one point.
+
+    Returns a dict with every FEATURE_ORDER key plus SOILGRIDS_TARGET_COL;
+    values that genuinely could not be extracted from a real source stay
+    None. Feature groups that fail are logged and left None — a group
+    failure never fabricates a value.
+    """
+    pt = ee.Geometry.Point([lon, lat]).buffer(buffer)
+    feats = {key: None for key in FEATURE_ORDER}
+    feats[SOILGRIDS_TARGET_COL] = None
+
+    for name, fn in (
+        ("S2", lambda: _extract_s2(pt, feats)),
+        ("terrain", lambda: _extract_terrain(pt, feats)),
+        ("SAR", lambda: _extract_sar(pt, feats)),
+        ("GEDI", lambda: _extract_gedi(pt, feats)),
+        ("SoilGrids", lambda: _extract_soilgrids(lon, lat, pt, feats)),
+    ):
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001 — group stays None
+            print(f"  [extract] {name} group failed at ({lat},{lon}): "
+                  f"{type(e).__name__}: {str(e)[:160]}")
+    return feats
 
 
 if __name__ == "__main__":
+    # Smoke test on the first richness cell (no CSV writes).
     init_ee()
-    extract_all()
+    richness = pd.read_csv(DATA_DIR / "species_richness_weighted.csv")
+    row = richness.iloc[0]
+    t0 = time.time()
+    values = get_features(row["latitude"], row["longitude"])
+    print(json.dumps(values, indent=1))
+    print(f"elapsed: {time.time() - t0:.1f}s")

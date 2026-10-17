@@ -61,9 +61,10 @@ export const BADGE_DEFINITIONS = {
 };
 
 export default function VerificationBadge({ badge, showPrice = true, showTier = false, size = 'md', className = '' }) {
-  const normalizedKey = (badge || 'PENDING').toUpperCase().replace(/[-\s]/g, '_');
+  const rawKey = typeof badge === 'string' ? badge : (badge?.badge || badge?.tier || String(badge || 'PENDING'));
+  const normalizedKey = rawKey.toUpperCase().replace(/[-\s]/g, '_');
   const config = BADGE_DEFINITIONS[normalizedKey] || BADGE_DEFINITIONS.PENDING;
-  const { label, tier, price, textClass, bgClass, borderClass, Icon } = config;
+  const { label, tier, price, textClass, bgClass, borderClass, Icon, description } = config;
 
   const sizeClasses = size === 'sm'
     ? 'px-2 py-0.5 text-xs gap-1'
@@ -74,7 +75,11 @@ export default function VerificationBadge({ badge, showPrice = true, showTier = 
   const iconSizes = size === 'sm' ? 'w-3 h-3' : size === 'lg' ? 'w-4 h-4' : 'w-3.5 h-3.5';
 
   return (
-    <span className={`inline-flex items-center rounded-full border ${bgClass} ${borderClass} ${textClass} ${sizeClasses} ${className} transition-all`}>
+    <span
+      title={description}
+      aria-label={`${label} (${tier}) - ${description}`}
+      className={`inline-flex items-center rounded-full border ${bgClass} ${borderClass} ${textClass} ${sizeClasses} ${className} transition-all`}
+    >
       <Icon className={iconSizes} />
       <span>{label}</span>
       {showTier && <span className="opacity-80 text-[10px]">({tier})</span>}

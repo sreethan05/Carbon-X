@@ -18,6 +18,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 # Model artifacts
 _bio_quantiles = {}      # {0.1: model, 0.5: model, 0.9: model}
 _soc_quantiles = {}
+_comparison_models = {}  # {"rf": model, "gb": model, "xgb": model, "lgb": model}
 _feature_scaler = None
 _bio_score_scaler = None
 _models_loaded = False
@@ -52,7 +53,7 @@ _MIN_SPATIAL_CV_R2 = 0.2  # Quality gate threshold
 
 def _load_models():
     """Load quantile models and scalers. Returns dict of what loaded successfully."""
-    global _bio_quantiles, _soc_quantiles, _feature_scaler, _bio_score_scaler
+    global _bio_quantiles, _soc_quantiles, _comparison_models, _feature_scaler, _bio_score_scaler
     global _models_loaded, _serving_enabled, _card_features_source
     
     if _models_loaded:
@@ -94,6 +95,20 @@ def _load_models():
         score_scaler_path = os.path.join(BASE_DIR, "ml/models/biodiversity_score_scaler.pkl")
         if os.path.exists(score_scaler_path):
             _bio_score_scaler = joblib.load(score_scaler_path)
+        
+        # Load comparison models if present (RandomForest, GradientBoosting, XGBoost, LightGBM)
+        for mname, mfile in [
+            ("rf", "biodiversity_rf.pkl"),
+            ("gb", "biodiversity_gb.pkl"),
+            ("xgb", "biodiversity_xgb.pkl"),
+            ("lgb", "biodiversity_lgb.pkl"),
+        ]:
+            mpath = os.path.join(BASE_DIR, f"ml/models/{mfile}")
+            if os.path.exists(mpath):
+                try:
+                    _comparison_models[mname] = joblib.load(mpath)
+                except Exception as me:
+                    logger.warning("Could not load comparison model %s: %s", mname, me)
         
         # Quality gate: check model card for spatial CV test R², training
         # feature provenance and feature-order compatibility.
@@ -169,7 +184,7 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
         Dict with biodiversity_score, status, confidence, source, ml_source,
         and quantile predictions (p10, p50, p90) if model served.
     """
-    nd = float(ndvi or 0.45)
+    nd = float(ndvi if ndvi is not None else 0.45)
     
     # Try to use real model with real features
     model_ready = _load_models() and _serving_enabled.get("biodiversity", False)
@@ -178,7 +193,7 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
     if model_ready and real_features:
         try:
             # Build feature vector in correct order
-            vector = [float(features.get(k, 0)) for k in FEATURE_ORDER]
+            vector = [float(features.get(k) if features.get(k) is not None else 0.0) for k in FEATURE_ORDER]
             scaled = _feature_scaler.transform(np.array([vector]))
             
             # Predict quantiles
@@ -186,12 +201,16 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
             for q in [0.1, 0.5, 0.9]:
                 preds[q] = float(_bio_quantiles[q].predict(scaled)[0])
             
+            p10 = min(preds[0.1], preds[0.5])
+            p50 = preds[0.5]
+            p90 = max(preds[0.9], preds[0.5])
+            
             # Convert median log-richness to 0-100 score
-            median_log = preds[0.5]
+            median_log = p50
             if _bio_score_scaler is not None:
                 bio_score = round(float(_bio_score_scaler.transform([[median_log]])[0][0]), 1)
             else:
-                bio_score = round(min(max(np.expm1(median_log) * 10, 0), 100), 1)
+                bio_score = round(min(max(np.expm1(np.clip(median_log, -1.0, 10.0)) * 10, 0), 100), 1)
             
             bio_score = min(max(bio_score, 5.0), 98.0)
             
@@ -199,7 +218,7 @@ def predict_biodiversity(ndvi: float, evi: float = None, area_ha: float = 1.0, f
                 bio_score, nd, 
                 source="QuantileRegressor (real Sentinel-2 + SAR + GEDI + SoilGrids features)",
                 ml_source="quantile_regressor_v1",
-                p10=preds[0.1], p50=preds[0.5], p90=preds[0.9]
+                p10=p10, p50=p50, p90=p90
             )
         except KeyError as e:
             logger.warning("ML predict: missing feature %s — falling back to heuristic", e)
@@ -231,18 +250,22 @@ def predict_soc(features: dict = None) -> dict:
     
     if model_ready and real_features:
         try:
-            vector = [float(features.get(k, 0)) for k in FEATURE_ORDER]
+            vector = [float(features.get(k) if features.get(k) is not None else 0.0) for k in FEATURE_ORDER]
             scaled = _feature_scaler.transform(np.array([vector]))
             
             preds = {}
             for q in [0.1, 0.5, 0.9]:
                 preds[q] = float(_soc_quantiles[q].predict(scaled)[0])
             
+            p10 = min(preds[0.1], preds[0.5])
+            p50 = preds[0.5]
+            p90 = max(preds[0.9], preds[0.5])
+            
             return {
-                "soc_tco2e_ha": round(preds[0.5], 2),
-                "p10": round(preds[0.1], 2),
-                "p50": round(preds[0.5], 2),
-                "p90": round(preds[0.9], 2),
+                "soc_tco2e_ha": round(p50, 2),
+                "p10": round(p10, 2),
+                "p50": round(p50, 2),
+                "p90": round(p90, 2),
                 "ml_source": "quantile_regressor_v1_soc",
             }
         except Exception as e:
@@ -321,6 +344,8 @@ def get_model_status() -> dict:
         "soc_serving": _serving_enabled.get("soc", False),
         "bio_quantiles_loaded": list(_bio_quantiles.keys()),
         "soc_quantiles_loaded": list(_soc_quantiles.keys()),
+        "comparison_models_loaded": list(_comparison_models.keys()),
+        "features_count": len(FEATURE_ORDER),
         "quality_gate_threshold": _MIN_SPATIAL_CV_R2,
         "card_features_source": _card_features_source,
     }

@@ -8,10 +8,13 @@ import os
 
 # ─── Environment helpers ───
 def _env_bool(name: str, default: bool = True) -> bool:
-    val = os.getenv(name, "").strip().lower()
-    if val in ("0", "false", "no", ""):
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    val = raw.strip().lower()
+    if val in ("0", "false", "no", "off"):
         return False
-    if val in ("1", "true", "yes"):
+    if val in ("1", "true", "yes", "on"):
         return True
     return default
 
@@ -55,6 +58,15 @@ MONITOR_SECRET = _env_str("CARBONX_MONITOR_SECRET", "")
 # Force HTTPS (HSTS header)
 FORCE_HTTPS = _env_bool("CARBONX_FORCE_HTTPS", False)
 
+# ─── Payments ───
+# Provider: "simulated" (default — no real money moves; settlement is immediate
+# and labelled simulated) or "razorpay" (real orders once the key id + secret
+# are configured). Unknown values degrade to "simulated" with a warning.
+PAYMENTS_PROVIDER = _env_str("CARBONX_PAYMENTS_PROVIDER", "simulated")
+RAZORPAY_KEY_ID = _env_str("RAZORPAY_KEY_ID", "")
+RAZORPAY_KEY_SECRET = _env_str("RAZORPAY_KEY_SECRET", "")
+RAZORPAY_WEBHOOK_SECRET = _env_str("RAZORPAY_WEBHOOK_SECRET", "")
+
 # ─── Earth Engine / Satellite ───
 # Cache TTL for /analyze results (same polygon + crop = identical median composite)
 ANALYZE_CACHE_TTL_SECONDS = _env_int("CARBONX_ANALYZE_CACHE_TTL", 600)  # 10 minutes
@@ -80,6 +92,9 @@ GEE_PROJECT = _env_str("GEE_PROJECT", "carbonx-507617")
 
 # ─── Monitoring scheduler interval ───
 MONITOR_INTERVAL_SECONDS = 5 * 24 * 60 * 60  # 5 days (Sentinel-2 revisit)
+
+# ─── Redis ───
+REDIS_URL = _env_str("REDIS_URL", "redis://localhost:4000")
 
 # ─── Blockchain / Amoy (optional) ───
 AMOY_RPC_URL = _env_str("AMOY_RPC_URL", "https://rpc-amoy.polygon.technology")

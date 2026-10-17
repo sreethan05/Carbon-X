@@ -25,3 +25,4 @@ jobs:
           echo "HTTP $code"
           cat response.json
           test "$code" = "200"
+          grep -q '"success":[[:space:]]*true' response.json || { echo "Monitoring cycle failed"; exit 1; }

@@ -23,8 +23,8 @@ from threading import RLock
 
 _LOCK = RLock()
 _MIGRATED = False
-# In-process pub/sub for live ledger push (#WS). Multi-worker deployments
-# should fan out via Supabase Realtime; this covers the single-worker case.
+# In-process pub/sub for live ledger push (#WS); ws_router bridges the same
+# events across workers via Redis pub/sub when REDIS_URL is configured.
 _ENTITY_LISTENERS: dict = {}
 _main_loop = None
 
@@ -38,11 +38,17 @@ def set_main_loop(loop) -> None:
 
 def subscribe(entity_id: str, callback) -> None:
     """Register callback(event_dict) fired after every append for entity."""
-    _ENTITY_LISTENERS.setdefault(entity_id, set()).add(callback)
+    with _LOCK:
+        _ENTITY_LISTENERS.setdefault(entity_id, set()).add(callback)
 
 
 def unsubscribe(entity_id: str, callback) -> None:
-    _ENTITY_LISTENERS.get(entity_id, set()).discard(callback)
+    with _LOCK:
+        listeners = _ENTITY_LISTENERS.get(entity_id)
+        if listeners is not None:
+            listeners.discard(callback)
+            if not listeners:
+                _ENTITY_LISTENERS.pop(entity_id, None)
 
 
 def _publish(entity_id: str, event: dict) -> None:
@@ -51,7 +57,7 @@ def _publish(entity_id: str, event: dict) -> None:
             cb(event)
         except Exception as e:  # a dead websocket must never break the ledger
             logger.warning("ledger listener failed: %s", e)
-    # Broadcast to WebSocket subscribers (main.py registers a loop at
+    # Broadcast to WebSocket subscribers (ws_router registers a loop at
     # startup). append_event runs in sync/worker-thread contexts, so the
     # coroutine must be bridged with run_coroutine_threadsafe — a bare
     # asyncio.create_task here would raise (no loop in this thread) and the
@@ -59,10 +65,18 @@ def _publish(entity_id: str, event: dict) -> None:
     try:
         import asyncio
         if _main_loop is not None and _main_loop.is_running():
-            from app.main import _ledger_broadcast
-            asyncio.run_coroutine_threadsafe(_ledger_broadcast(entity_id, event), _main_loop)
+            from app.routes.ws_router import broadcast
+            asyncio.run_coroutine_threadsafe(broadcast(entity_id, event), _main_loop)
     except Exception:
         pass  # main not loaded yet (e.g., during tests) or app shutting down
+    # Cross-worker fanout: other workers subscribe to this channel and
+    # forward the event to their own WebSocket clients (no-op without Redis
+    # — the in-process broadcast above already served this worker).
+    try:
+        from app import redis_store
+        redis_store.publish_ledger_event(entity_id, event)
+    except Exception:
+        pass
 
 _CHAINS: dict = {}
 _DEFAULT_PATH = os.path.join(
@@ -100,8 +114,10 @@ def _load_file():
 def _persist_file():
     try:
         os.makedirs(os.path.dirname(_PATH), exist_ok=True)
-        with open(_PATH, "w", encoding="utf-8") as fh:
+        tmp_path = f"{_PATH}.tmp.{os.getpid()}"
+        with open(tmp_path, "w", encoding="utf-8") as fh:
             json.dump(_CHAINS, fh, indent=1, default=str)
+        os.replace(tmp_path, _PATH)
     except OSError:
         pass  # in-memory only if the disk refuses
 
@@ -122,12 +138,14 @@ def _migrate_local_to_db(sb):
     latch the flag, or pre-grant chains never migrate).
     """
     global _MIGRATED
-    if _MIGRATED or not _CHAINS:
-        _MIGRATED = True
-        return
+    with _LOCK:
+        if _MIGRATED or not _CHAINS:
+            _MIGRATED = True
+            return
+        chains_snapshot = {k: list(v) for k, v in _CHAINS.items()}
     try:
         rows = []
-        for entity_id, chain in _CHAINS.items():
+        for entity_id, chain in chains_snapshot.items():
             existing = (
                 sb.table("ledger_events").select("seq").eq("entity_id", entity_id).execute().data
             ) or []
@@ -151,7 +169,8 @@ def _migrate_local_to_db(sb):
             sb.table("ledger_events").upsert(
                 rows, on_conflict="entity_id,seq", ignore_duplicates=True
             ).execute()
-        _MIGRATED = True
+        with _LOCK:
+            _MIGRATED = True
     except Exception as e:
         # NOTE: deliberately do NOT latch _MIGRATED on failure — retry next call.
         logger.warning("local→db migration deferred: %s", e)
@@ -199,6 +218,7 @@ def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -
                     "hash": event["hash"],
                 }).execute()
                 _CHAINS.setdefault(entity_id, []).append(event)  # keep file mirror in sync
+                _persist_file()
                 _publish(entity_id, event)
                 return event
             except Exception as e:
@@ -216,7 +236,7 @@ def append_event(entity_id: str, event_type: str, payload: dict, ts: str = "") -
             "prev_hash": prev,
         }
         event["hash"] = _event_hash(seq, entity_id, event_type, payload_json, prev)
-        _CHAINS[entity_id] = chain + [event]
+        chain.append(event)
         _persist_file()
         _publish(entity_id, event)
         return event
@@ -253,22 +273,69 @@ def get_chain(entity_id: str) -> list:
         return [dict(e, _payload_json=_canonical(e["payload"])) for e in _CHAINS.get(entity_id, [])]
 
 
-def verify_chain(entity_id: str) -> dict:
-    """Recompute every hash; return {valid, length, tail_hash, broken_at}."""
-    chain = get_chain(entity_id)
+def _verify_chain_events(chain: list) -> dict:
+    """Recompute every hash across an event list; return {valid, length, tail_hash, broken_at}."""
     prev = "0" * 64
-    for event in chain:
-        expected = _event_hash(
-            event["seq"], event["entity_id"], event["type"], event["_payload_json"], prev
-        )
-        if event["prev_hash"] != prev or event["hash"] != expected:
+    prev_dt = None
+    for idx, event in enumerate(chain):
+        seq = event.get("seq")
+        entity_id = event.get("entity_id", "")
+        event_type = event.get("type", "")
+        payload = event.get("payload", {})
+        payload_canon = _canonical(payload)
+
+        # Enforce that if _payload_json is present (e.g. from Supabase / get_chain),
+        # it strictly matches the canonical serialization of payload.
+        stored_payload_json = event.get("_payload_json")
+        if stored_payload_json is not None and stored_payload_json != payload_canon:
             return {
                 "valid": False,
                 "length": len(chain),
                 "tail_hash": chain[-1]["hash"] if chain else None,
-                "broken_at": event["seq"],
+                "broken_at": seq if seq is not None else idx,
             }
-        prev = event["hash"]
+
+        # Timestamp validation: must be present, valid ISO format, and monotonic
+        ts_str = event.get("ts")
+        if not ts_str or not isinstance(ts_str, str):
+            return {
+                "valid": False,
+                "length": len(chain),
+                "tail_hash": chain[-1]["hash"] if chain else None,
+                "broken_at": seq if seq is not None else idx,
+            }
+        try:
+            curr_dt = datetime.fromisoformat(ts_str)
+            if curr_dt.tzinfo is None:
+                curr_dt = curr_dt.replace(tzinfo=timezone.utc)
+            if prev_dt is not None and curr_dt < prev_dt:
+                return {
+                    "valid": False,
+                    "length": len(chain),
+                    "tail_hash": chain[-1]["hash"] if chain else None,
+                    "broken_at": seq if seq is not None else idx,
+                }
+            prev_dt = curr_dt
+        except Exception:
+            return {
+                "valid": False,
+                "length": len(chain),
+                "tail_hash": chain[-1]["hash"] if chain else None,
+                "broken_at": seq if seq is not None else idx,
+            }
+
+        prev_hash = event.get("prev_hash", "")
+        event_hash = event.get("hash", "")
+
+        expected = _event_hash(seq, entity_id, event_type, payload_canon, prev)
+        if seq != idx or prev_hash != prev or event_hash != expected:
+            return {
+                "valid": False,
+                "length": len(chain),
+                "tail_hash": chain[-1]["hash"] if chain else None,
+                "broken_at": seq if seq is not None else idx,
+            }
+        prev = event_hash
     return {
         "valid": True,
         "length": len(chain),
@@ -277,30 +344,37 @@ def verify_chain(entity_id: str) -> dict:
     }
 
 
+def verify_chain(entity_id: str) -> dict:
+    """Recompute every hash; return {valid, length, tail_hash, broken_at}."""
+    chain = get_chain(entity_id)
+    return _verify_chain_events(chain)
+
+
 def ensure_genesis(entity_id: str, snapshot: dict, ts: str = "") -> dict:
     """Create the deterministic ISSUE event if the entity has no chain yet.
 
     The payload snapshot (farm satellite + verification state) makes the
     genesis hash stable across restarts for unchanged farms.
     """
-    existing = get_chain(entity_id)
-    if existing:
-        return existing[0]
-    return append_event(
-        entity_id,
-        "ISSUE",
-        {
-            "note": "Credit issuance anchored to farm evidence snapshot",
-            "snapshot": snapshot,
-        },
-        ts=ts,
-    )
+    with _LOCK:
+        existing = get_chain(entity_id)
+        if existing:
+            return existing[0]
+        return append_event(
+            entity_id,
+            "ISSUE",
+            {
+                "note": "Credit issuance anchored to farm evidence snapshot",
+                "snapshot": snapshot,
+            },
+            ts=ts,
+        )
 
 
 def summary(entity_id: str) -> dict:
     """Compact chain view for embedding in passport/wallet responses."""
-    verification = verify_chain(entity_id)
     chain = get_chain(entity_id)
+    verification = _verify_chain_events(chain)
     return {
         "events": len(chain),
         "tail_hash": verification["tail_hash"],

@@ -13,7 +13,9 @@ export default function CertificateRetirementPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [isRetiring, setIsRetiring] = useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
   const [retireError, setRetireError] = useState('');
+  const [pdfError, setPdfError] = useState('');
   const [selectedScope, setSelectedScope] = useState('Scope 1 Neutrality');
   const [retireTimestamp, setRetireTimestamp] = useState(null);
 
@@ -22,12 +24,20 @@ export default function CertificateRetirementPage() {
       try {
         const data = await getCertificates();
         const list = (data && data.success && Array.isArray(data.certificates)) ? data.certificates : [];
-        const found = list.find((c) => c.id === certId);
+        const found = list.find((c) => c.id?.toLowerCase() === certId?.toLowerCase());
         if (found) {
           setCert(found);
-          // Note: do NOT reuse issued_date as the retirement date — the
-          // backend only supplies a retire timestamp when it really retired.
           if (found.status === 'RETIRED') setRetireTimestamp(found.retired_at || found.retired_timestamp || null);
+        } else if (certId && certId.toUpperCase().startsWith('PENDING-RZP-')) {
+          setCert({
+            id: certId,
+            issued_to: user?.name || 'Corporate Buyer',
+            volume_mt: 1,
+            status: 'PENDING_SETTLEMENT',
+            source_parcels: ['Verified Telangana Farmland'],
+            tx_hash: certId.replace('PENDING-RZP-', 'RZP-PAY-'),
+            issued_date: new Date().toISOString().slice(0, 10),
+          });
         } else {
           setLoadError(`Certificate ${certId} was not found in the escrow ledger.`);
         }
@@ -37,7 +47,7 @@ export default function CertificateRetirementPage() {
         setLoading(false);
       }
     })();
-  }, [certId]);
+  }, [certId, user?.name]);
 
   const handlePermanentRetire = async () => {
     setIsRetiring(true);
@@ -59,7 +69,47 @@ export default function CertificateRetirementPage() {
 
   const status = cert?.status || 'HELD_IN_ESCROW';
 
+  const handleDownloadPdf = async () => {
+    if (!certId) {
+      setPdfError('No certificate identifier found.');
+      return;
+    }
+    setIsDownloadingPdf(true);
+    setPdfError('');
+    try {
+      const token = localStorage.getItem('carbonx_token');
+      const res = await fetch(`${PY_API_BASE}/certificates/${encodeURIComponent(certId)}/pdf`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/pdf')) {
+        const blob = await res.blob();
+        if (!blob || blob.size === 0) {
+          throw new Error('Server returned an empty PDF document.');
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `CarbonX_Certificate_${certId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else if (res.status === 404) {
+        setPdfError('Certificate record is currently pending escrow confirmation. Please export the compliance text record below or retry in a moment.');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setPdfError(err.message || err.detail || `PDF could not be generated (HTTP ${res.status}). Please retry or export TXT.`);
+      }
+    } catch (err) {
+      setPdfError(err.message || 'Failed to download PDF. Server may be unreachable.');
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
+
   const downloadCertificate = () => {
+    const formattedRetireDate = retireTimestamp ? new Date(retireTimestamp).toLocaleDateString() : '—';
     const lines = [
       '==========================================',
       '  OFFICIAL CARBON OFFSET CERTIFICATE',
@@ -72,15 +122,17 @@ export default function CertificateRetirementPage() {
       `Issued date: ${cert?.issued_date || '—'}`,
       `Escrow reference: ${cert?.tx_hash || '—'}`,
       `Status: ${status}`,
-      ...(status === 'RETIRED' ? [`Retired for ${selectedScope} on ${retireTimestamp}`] : []),
+      ...(status === 'RETIRED' ? [`Retired for ${selectedScope} on ${formattedRetireDate}`] : []),
     ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${certId}.txt`;
+    a.download = `CarbonX_Certificate_${certId}.txt`;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
@@ -218,21 +270,36 @@ export default function CertificateRetirementPage() {
               </div>
 
               {retireError && (
-                <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg">{retireError}</p>
+                <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" /> {retireError}
+                </p>
+              )}
+
+              {pdfError && (
+                <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 text-left">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold">PDF Generation Notice</p>
+                    <p className="text-[11px] text-rose-700 mt-0.5 leading-relaxed">{pdfError}</p>
+                    <p className="text-[10px] text-slate-500 mt-1">You can always use the "Export Compliance Record (TXT)" option below as an instant verifiable text record.</p>
+                  </div>
+                </div>
               )}
 
               {/* Export Controls */}
               <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-slate-100">
-                <a
-                  href={`${PY_API_BASE}/certificates/${certId}/pdf`}
-                  download={`CarbonX_Certificate_${certId}.pdf`}
-                  className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
+                <button
+                  type="button"
+                  onClick={handleDownloadPdf}
+                  disabled={isDownloadingPdf}
+                  className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
-                  <FileDown className="w-4 h-4" />
-                  <span>Download PDF Certificate</span>
-                </a>
+                  {isDownloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
+                  <span>{isDownloadingPdf ? 'Generating PDF…' : 'Download PDF Certificate'}</span>
+                </button>
 
                 <button
+                  type="button"
                   onClick={downloadCertificate}
                   className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
                 >
