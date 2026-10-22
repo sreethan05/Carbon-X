@@ -161,6 +161,7 @@ def derive_certificates(
                 "farmer_name": row.get("farmer_name"),
                 "issued_to": payload.get("buyer"),
                 "buyer": payload.get("buyer"),
+                "buyer_c_id": payload.get("buyer_c_id"),
                 "crop": row.get("crop"),
                 "location": row.get("location"),
                 "volume_mt": round(float(payload.get("credits") or 0), 4),

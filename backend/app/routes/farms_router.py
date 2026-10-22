@@ -469,17 +469,33 @@ def verify_land_document(data: LandVerificationModel, current_user: dict = Depen
         if fpo_path:
             if profile.get("role", "farmer") == "farmer":
                 return {"success": False, "message": "Pahani upload is required for farmer verification. If you need help obtaining one, please contact your FPO."}
-            if data.fpo_id:
-                db.update_profile(phone, {"fpo_id": data.fpo_id})
+            # Never let an officer change their own FPO assignment from a
+            # request body. Bind the attestation to an existing parcel and
+            # the caller's server-side FPO membership.
+            farm = db.get_farm(data.farm_id or "")
+            if not farm:
+                raise HTTPException(status_code=404, detail="Farm not found")
+            role = str(profile.get("role") or "").lower()
+            caller_fpo_id = str(profile.get("fpo_id") or "")
+            owner = db.get_profile(str(farm.get("owner_phone") or "")) or {}
+            farm_fpo_id = str(farm.get("fpo_id") or owner.get("fpo_id") or "")
+            if role == "fpo":
+                if not caller_fpo_id or farm_fpo_id != caller_fpo_id:
+                    raise HTTPException(status_code=403, detail="Farm is outside your FPO scope")
+            elif role not in ("admin", "verifier"):
+                raise HTTPException(status_code=403, detail="Not authorized to attest for an FPO")
+            attested_fpo_id = caller_fpo_id if role == "fpo" else str(data.fpo_id or farm_fpo_id)
+            if not attested_fpo_id or farm_fpo_id != attested_fpo_id:
+                raise HTTPException(status_code=403, detail="FPO assignment does not match this farm")
             trust = apply_fraud(decide_tier(fpo_path=True), {"status": "PENDING", "risk": "LOW", "failed_checks": []})
             record = {
-                "owner_phone": phone,
+                "owner_phone": farm.get("owner_phone"),
                 "status": "PENDING",
                 "reasons": ["Awaiting FPO confirmation"],
-                "checks": {"path": "fpo", "fpo_id": data.fpo_id},
+                "checks": {"path": "fpo", "fpo_id": attested_fpo_id},
                 "extracted_fields": {
                     "path": "fpo",
-                    "fpo_id": data.fpo_id,
+                    "fpo_id": attested_fpo_id,
                     "farm_id": data.farm_id,
                     **trust,
                 },
@@ -488,7 +504,7 @@ def verify_land_document(data: LandVerificationModel, current_user: dict = Depen
                 "perceptual_hash": None,
             }
             saved = db.insert_kyc_verification(record)
-            _patch_farm(data.farm_id, {"status": "PENDING"})
+            _patch_farm(data.farm_id, {"status": "PENDING", "fpo_id": attested_fpo_id})
             return {"success": True, **trust, "verification": saved, "checks": record["checks"], "reasons": record["reasons"]}
 
         document_content = data.pahani_file or data.document_content_base64

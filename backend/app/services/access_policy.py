@@ -1,6 +1,6 @@
 """One public-access policy for passports, certificates, evidence and ledgers.
 
-Rules (mirrored in docs/PUBLIC_ACCESS_POLICY.md):
+Rules (mirrored in docs/PUBLIC_ACCESS.md):
 
 Public, unauthenticated
   - certificate id, crop, credit quantity, issue/retirement dates, status,
@@ -8,9 +8,17 @@ Public, unauthenticated
     validation status and uncertainty.
   - retired certificates are public; held-in-escrow certificates are not.
 
-Owner / buyer of record / FPO / staff
+Owner / buyer of record
   - their own full record: farmer name/phone, buyer name, value, split,
     village-level location, evidence metadata, lifecycle timeline.
+
+FPO (scoped, never global)
+  - full records only for farms/certificates that belong to their own FPO
+    (farm.fpo_id == the caller profile's fpo_id).  An FPO account is NOT
+    staff: a different FPO is treated as the public.
+
+Admin / verifier (global staff)
+  - full records for every farm and certificate.
 
 Never public
   - phone numbers, full farmer names, buyer identities, rupee values,
@@ -29,7 +37,6 @@ from typing import Iterable, Optional
 PUBLIC_LEDGER_KEYS = {
     "certificate_id",
     "listing_id",
-    "escrow_ref",
     "sale_seq",
     "credits",
     "credits_retired",
@@ -38,22 +45,94 @@ PUBLIC_LEDGER_KEYS = {
     "formula_version",
     "scope",
     "decision",
-    "refund_ref",
     "restored_credits",
     "balance_after",
-    "farm_id",
 }
 
 PUBLIC_EVENT_KEYS = ("seq", "type", "ts", "hash", "prev_hash")
 
+# Global staff: sees every farm/certificate regardless of scope.
+GLOBAL_STAFF_ROLES = ("admin", "verifier")
+FPO_ROLE = "fpo"
+
 
 def is_staff(caller: Optional[dict]) -> bool:
-    return str((caller or {}).get("role") or "").lower() in ("admin", "fpo", "verifier")
+    """Whether the caller has global staff access.
+
+    FPO officers are intentionally excluded: their access is scoped to farms
+    linked to their own FPO and must be checked with ``can_access_farm``.
+    """
+    return str((caller or {}).get("role") or "").lower() in ("admin", "verifier")
 
 
 def is_owner(caller: Optional[dict], farmer_phone: Optional[str]) -> bool:
     phone = (caller or {}).get("phone")
     return bool(phone and farmer_phone and str(phone) == str(farmer_phone))
+
+
+def is_fpo(caller: Optional[dict]) -> bool:
+    return str((caller or {}).get("role") or "").lower() == FPO_ROLE
+
+
+def fpo_scope_matches(caller_fpo_id: Optional[str], farm: Optional[dict]) -> bool:
+    """Pure FPO scope check: the caller's fpo_id must equal the farm's fpo_id."""
+    if not caller_fpo_id or not farm:
+        return False
+    farm_fpo_id = str(farm.get("fpo_id") or "").strip()
+    return bool(farm_fpo_id) and farm_fpo_id == str(caller_fpo_id).strip()
+
+
+def caller_fpo_id(caller: Optional[dict]) -> Optional[str]:
+    """Resolve an FPO officer's own fpo_id.
+
+    The embedded token value wins; otherwise the officer's profile row is
+    looked up.  Fail-closed: returns None for non-FPO callers, callers with
+    no fpo_id anywhere, or when the database is unavailable — an FPO role is
+    never a global-staff fallback.
+    """
+    caller = caller or {}
+    if str(caller.get("role") or "").lower() != FPO_ROLE:
+        return None
+    embedded = caller.get("fpo_id")
+    if embedded and str(embedded).strip() not in ("", "None"):
+        return str(embedded).strip()
+    try:
+        from app import supabase_db as db
+        if not db.is_ready():
+            return None
+        profile = db.get_profile(str(caller.get("phone") or "")) or {}
+        value = profile.get("fpo_id")
+        return str(value).strip() if value else None
+    except Exception:
+        return None
+
+
+def is_fpo_for_farm(caller: Optional[dict], farm: Optional[dict]) -> bool:
+    """Check FPO scope against the officer's resolved fpo_id; fail closed."""
+    fpo_id = caller_fpo_id(caller)
+    if not fpo_id or not farm:
+        return False
+    farm_fpo = str(farm.get("fpo_id") or "").strip()
+    if farm_fpo:
+        return fpo_id == farm_fpo
+    # Older farm rows may rely on the owner's profile link instead of having
+    # farms.fpo_id populated. Preserve that relationship without widening
+    # access to other FPOs.
+    try:
+        from app import supabase_db as db
+        owner = db.get_profile(str(farm.get("owner_phone") or "")) or {}
+        return str(owner.get("fpo_id") or "").strip() == fpo_id
+    except Exception:
+        return False
+
+
+def can_access_farm(caller: Optional[dict], farm: Optional[dict]) -> bool:
+    """Full farm-level access for global staff, owner, or scoped FPO officer."""
+    return bool(
+        is_staff(caller)
+        or (farm and is_owner(caller, farm.get("owner_phone")))
+        or is_fpo_for_farm(caller, farm)
+    )
 
 
 def ledger_event_public(event: dict) -> dict:
@@ -79,7 +158,7 @@ def ledger_events_for(events: Iterable[dict], full_access: bool) -> list[dict]:
 
 def passport_identity(farm: dict, owner: Optional[dict], caller: Optional[dict]) -> dict:
     """Owner/staff see the farmer; the public sees a coarse, non-identifying label."""
-    if is_staff(caller) or is_owner(caller, farm.get("owner_phone")):
+    if can_access_farm(caller, farm):
         return {
             "owner_name": (owner or {}).get("name") or "Registered Farmer",
             "phone": farm.get("owner_phone"),

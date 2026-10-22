@@ -1,7 +1,7 @@
 # Deploying CarbonX to Production
 
 This guide covers production deployment for the CarbonX platform across three core tiers:
-1. **Frontend**: React 18 SPA hosted on Vercel or Cloudflare Pages.
+1. **Frontend**: React 19 SPA hosted on Vercel or Cloudflare Pages.
 2. **Backend**: Python FastAPI service hosted on Railway, Render, Fly.io, or AWS ECS.
 3. **Database & Storage**: Remote Cloud Supabase PostgreSQL + Redis cache.
 
@@ -68,7 +68,7 @@ This guide covers production deployment for the CarbonX platform across three co
 | `REDIS_URL` | **Yes** | Managed Redis URI (`redis://...`) for distributed locks, OTP rate limiting and token revocation. The `localhost` default is rejected at startup in production — a single-worker in-memory fallback does not protect a multi-worker deployment |
 | `CARBONX_ALLOW_DEV_OTP` | **Must be 0** | **Strictly 0 or unset in production** (startup blocks if enabled) |
 | `CARBONX_PAYMENTS_PROVIDER` | **Yes** | `razorpay` for live payments (or `simulated` for a closed pilot) |
-| `CARBONX_ACCEPT_SIMULATED_PAYMENTS` | Conditional | **Must be `1` when the provider is `simulated` in production.** Simulated (no-money) settlement is never the silent default; with Razorpay it is rejected outright |
+| `CARBONX_ACCEPT_SIMULATED_PAYMENTS` | Conditional | **Must be `1` when the provider is `simulated` in production.** This same setting enables the checkout route. Simulated (no-money) settlement is never the silent default; with Razorpay it is rejected outright |
 | `RAZORPAY_KEY_ID` | Conditional | Required when `CARBONX_PAYMENTS_PROVIDER=razorpay` |
 | `RAZORPAY_KEY_SECRET` | Conditional | Required when `CARBONX_PAYMENTS_PROVIDER=razorpay` |
 | `RAZORPAY_WEBHOOK_SECRET` | Conditional | **Required** when `CARBONX_PAYMENTS_PROVIDER=razorpay` (webhook HMAC cannot verify without it) |
@@ -103,12 +103,42 @@ This guide covers production deployment for the CarbonX platform across three co
 
 ---
 
+## 4b. Docker Compose topology (self-hosted)
+
+`docker-compose.yml` is the **production** topology. Only the SPA is published:
+
+| Service | Host exposure | Notes |
+|---|---|---|
+| `frontend` (nginx SPA + `/py-api` proxy) | `5000:80` — the single entry point | Terminate TLS on a load balancer and publish 443 to this service instead of raw 80 |
+| `backend-py` (FastAPI) | **internal only** | Reachable over the docker network; the loopback overlay below is for local development |
+| `backend-bc` (Amoy minting service, optional) | **internal only** | Same proxy pattern via `/bc-api` |
+| `redis` | **internal only, password required** | `--requirepass ${CARBONX_REDIS_PASSWORD:-carbonx-dev-redis-only}`; the healthcheck authenticates with the same value |
+
+Redis password:
+
+- `REDIS_URL` handed to the backend embeds the password:
+  `redis://:password@redis:6379/0`.
+- Set `CARBONX_REDIS_PASSWORD` in your deployment environment. The
+  `carbonx-dev-redis-only` default exists so a laptop `docker compose up`
+  works; **it is not acceptable on a server** that shares a network with
+  anything you do not control.
+- Local development overlay: `docker compose -f docker-compose.yml -f
+  docker-compose.dev.yml up` republishes backend-py (`127.0.0.1:8000`) and
+  redis (`127.0.0.1:6379`) on loopback only. Never use the overlay on a server.
+
 ## 5. Post-Deployment Verification Checklist
 
 1. **Health Check**:
    `GET https://api.carbonx.ag/health`
    Verify:
    - `database.ready`: `true`
+   - `database.migrations_ok`: `true` — when `database.migrations.checked`
+     is `false` the schema could not be probed; treat the deployment as
+     UNVERIFIED until a manual `supabase/` migration audit is done. When
+     `migrations_ok` is `false`, `database.migrations.missing_tables` /
+     `missing_columns` name exactly what was never applied (the privacy,
+     lifecycle, validation and support flows will fail at runtime until
+     those migrations run).
    - `redis.ready`: `true`
    - `dev_otp`: `false` (dev OTP disabled)
 2. **Authentication & Role Scoping**:

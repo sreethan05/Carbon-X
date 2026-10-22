@@ -131,7 +131,7 @@ docs/SECURITY_UPDATES.md).
 ## Repository map
 
 ```
-src/                    React 18 + Vite + Tailwind frontend (port 5000)
+src/                    React 19 + Vite + Tailwind frontend (port 5000)
 backend/app/            FastAPI composition root (port 8000)
 backend/app/routes/     modular domain routers (analyze, auth, corporate, evidence,
                         farms, fpo, marketplace, monitor, ops, payments, privacy,

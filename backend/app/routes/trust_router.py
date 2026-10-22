@@ -106,7 +106,9 @@ def _sanitize_certificate_for_caller(cert: dict, caller: Optional[dict]) -> dict
     caller_phone = (caller or {}).get("phone")
     caller_role = str((caller or {}).get("role") or "").lower()
     is_farmer = bool(caller_phone and item.get("farmer_phone") and caller_phone == item.get("farmer_phone"))
-    is_staff = caller_role in ("admin", "fpo", "verifier")
+    is_staff = caller_role in ("admin", "verifier") or (
+        caller_role == "fpo" and _is_scoped_fpo_certificate(item, caller)
+    )
     is_buyer = _caller_is_buyer(item, caller)
 
     item["public_view"] = not (is_farmer or is_staff or is_buyer)
@@ -141,6 +143,14 @@ def _sanitize_certificate_for_caller(cert: dict, caller: Optional[dict]) -> dict
             for c in item.get("corrections_applied") or []
         ]
     return item
+
+
+def _is_scoped_fpo_certificate(cert: dict, caller: Optional[dict]) -> bool:
+    """FPO staff access is limited to farms linked to the officer's FPO."""
+    if str((caller or {}).get("role") or "").lower() != "fpo":
+        return False
+    farm = db.get_farm(str(cert.get("farm_id") or "")) if db.is_ready() else None
+    return access_policy.is_fpo_for_farm(caller, farm)
 
 
 # ─── Models ───
@@ -238,19 +248,22 @@ def _derived_certificates() -> tuple[list[dict], dict]:
 def _caller_is_buyer(cert: dict, caller: Optional[dict]) -> bool:
     """Buyer-of-record check.
 
-    The SALE payload stores the buyer's display name (not a phone).  Require a
-    corporate buyer role as well, so a farmer who happens to share a buyer's
-    name cannot inherit the buyer's certificate view.
+    New live SALE records bind buyer access to the corporate account id.
+    Historical demo records may use a display name, but live access never does.
     """
     if not caller or str(caller.get("role") or "").lower() != "buyer":
         return False
-    name = str(caller.get("name") or "").strip().lower()
-    if not name:
+    c_id = caller.get("c_id")
+    recorded_c_id = cert.get("buyer_c_id")
+    if c_id is not None and recorded_c_id is not None:
+        return str(c_id) == str(recorded_c_id)
+    # Historical/demo records predate stable buyer ids. Name matching is only
+    # acceptable in offline demo mode, never for live buyer records.
+    if db.is_ready():
         return False
-    for key in ("issued_to", "buyer"):
-        if cert.get(key) and name == str(cert.get(key)).strip().lower():
-            return True
-    return False
+    name = str(caller.get("name") or "").strip().lower()
+    legacy_name = str(cert.get("buyer") or cert.get("issued_to") or "").strip().lower()
+    return bool(legacy_name and name == legacy_name)
 
 
 def _can_see_held(cert: dict, caller: Optional[dict]) -> bool:
@@ -1038,10 +1051,7 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
             "carbon_tonnes": farm.get("carbon_tonnes"), "badge": badge, "status": farm.get("status"),
         }, ts=(farm.get("updated_at") or "") or None)
     chain = ledger.summary(farm_id)
-    caller_is_full = bool(
-        access_policy.is_staff(current_user)
-        or access_policy.is_owner(current_user, farm.get("owner_phone"))
-    )
+    caller_is_full = access_policy.can_access_farm(current_user, farm)
     chain["history"] = access_policy.ledger_events_for(
         ledger.get_chain(farm_id), full_access=caller_is_full
     )
@@ -1076,7 +1086,8 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
         "access": {
             "public_view": not caller_is_full,
             "owner": access_policy.is_owner(current_user, farm.get("owner_phone")),
-            "staff": access_policy.is_staff(current_user),
+            "staff": access_policy.is_staff(current_user)
+                or access_policy.is_fpo_for_farm(current_user, farm),
         },
         "crop": farm.get("crop_type"), "irrigation": farm.get("irrigation"),
         "acreage": farm.get("area_hectares"), "badge": badge, "benchmark_price": benchmark,
@@ -1340,6 +1351,7 @@ def get_farm_ledger(farm_id: str, current_user: Optional[dict] = Depends(get_cur
     full_access = bool(
         access_policy.is_staff(current_user)
         or access_policy.is_owner(current_user, farmer_phone)
+        or (farm and access_policy.is_fpo_for_farm(current_user, farm))
     )
     return {
         "success": True,

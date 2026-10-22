@@ -604,10 +604,13 @@ class SupportTicketsTests(unittest.TestCase):
         self.assertEqual(res_other.status_code, 403)
 
         # Staff cannot end a ticket without a written resolution
+        # (global staff: verifier/admin — an FPO officer would first have to
+        # prove the ticket belongs to their FPO scope, which is covered by
+        # the fail-closed scoping tests).
         no_reason = client.post(
             f"/support/tickets/{tid}/update",
             json={"status": "Resolved"},
-            headers=_token("9000000001", role="fpo"),
+            headers=_token("9000000009", role="verifier"),
         )
         self.assertEqual(no_reason.status_code, 422)
 
@@ -619,7 +622,7 @@ class SupportTicketsTests(unittest.TestCase):
                 "staff_notes": "FPO walkover matched earlier survey.",
                 "resolution": "Estimate unchanged; farmer accepted with the field note.",
             },
-            headers=_token("9000000001", role="fpo"),
+            headers=_token("9000000009", role="verifier"),
         )
         self.assertTrue(resolved.json().get("success"), resolved.json())
         row = resolved.json()["ticket"]

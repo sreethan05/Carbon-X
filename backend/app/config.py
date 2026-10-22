@@ -67,7 +67,20 @@ FORCE_HTTPS = _env_bool("CARBONX_FORCE_HTTPS", False)
 # and labelled simulated) or "razorpay" (real orders once the key id + secret
 # are configured). Unknown values degrade to "simulated" with a warning.
 PAYMENTS_PROVIDER = _env_str("CARBONX_PAYMENTS_PROVIDER", "simulated")
-ALLOW_SIMULATED_SETTLEMENT = _env_bool("CARBONX_ALLOW_SIMULATED_SETTLEMENT", False)
+# ONE setting gates simulated settlement everywhere: startup validation,
+# /payments/checkout and /marketplace/buy.  CARBONX_ALLOW_SIMULATED_SETTLEMENT
+# survives only as a deprecated alias so existing local setups keep working;
+# an explicit CARBONX_ACCEPT_SIMULATED_PAYMENTS (even =0) always wins.
+_raw_accept = os.getenv("CARBONX_ACCEPT_SIMULATED_PAYMENTS", "").strip()
+ACCEPT_SIMULATED_PAYMENTS = _env_bool("CARBONX_ACCEPT_SIMULATED_PAYMENTS", False)
+if not _raw_accept and _env_bool("CARBONX_ALLOW_SIMULATED_SETTLEMENT", False):
+    ACCEPT_SIMULATED_PAYMENTS = True
+    print(
+        "[config] CARBONX_ALLOW_SIMULATED_SETTLEMENT is deprecated — "
+        "set CARBONX_ACCEPT_SIMULATED_PAYMENTS instead"
+    )
+# Deprecated attribute alias so legacy readers keep resolving the old name.
+ALLOW_SIMULATED_SETTLEMENT = ACCEPT_SIMULATED_PAYMENTS
 RAZORPAY_KEY_ID = _env_str("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = _env_str("RAZORPAY_KEY_SECRET", "")
 RAZORPAY_WEBHOOK_SECRET = _env_str("RAZORPAY_WEBHOOK_SECRET", "")
@@ -126,8 +139,8 @@ def validate_production_configuration() -> None:
         raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CARBONX_ALLOW_DEV_OTP cannot be enabled in production")
 
     # 3. Simulated settlement with live Razorpay
-    if PAYMENTS_PROVIDER == "razorpay" and ALLOW_SIMULATED_SETTLEMENT:
-        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CARBONX_ALLOW_SIMULATED_SETTLEMENT cannot be enabled with live Razorpay")
+    if PAYMENTS_PROVIDER == "razorpay" and ACCEPT_SIMULATED_PAYMENTS:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CARBONX_ACCEPT_SIMULATED_PAYMENTS cannot be enabled with live Razorpay")
 
     # 4. Supabase DB configuration
     sb_url = os.getenv("SUPABASE_URL", "").strip()

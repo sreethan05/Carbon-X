@@ -194,6 +194,102 @@ def is_ready() -> bool:
     return _client() is not None
 
 
+# Tables (and the columns within them) every feature needs.  The probe is
+# deliberately stricter than the row-level health check above: a deployment
+# where a migration was never applied must NOT report healthy while its
+# privacy / lifecycle / validation features would fail at runtime.
+_REQUIRED_SCHEMA: dict[str, tuple[str, ...]] = {
+    "profiles": ("phone", "role", "fpo_id", "name"),
+    "fpos": ("name", "registration_no"),
+    "corporates": ("name", "password_hash"),
+    "farms": ("owner_phone", "fpo_id", "badge", "carbon_tonnes",
+              "credits_ci90_low", "credits_ci90_high", "last_monitor_ndvi"),
+    "marketplace_listings": ("farmer_phone", "farm_id", "total_credits",
+                             "credits_sold", "lifecycle_state", "dispute_status"),
+    "kyc_verifications": ("owner_phone", "document_sha256", "document_deleted_at"),
+    "otp_codes": (),
+    "ledger_events": ("entity_id", "seq", "event_type", "hash", "prev_hash"),
+    "land_registry": ("survey_number", "tier"),
+    "fpo_members": ("fpo_id", "farmer_phone"),
+    "ground_truth_samples": ("measurement_type", "estimate_snapshot",
+                             "verification_status", "verified_by"),
+    "farm_evidence": ("farm_id", "kind", "sha256", "deleted_at"),
+    "consent_records": ("phone", "purpose", "granted"),
+    "privacy_requests": ("phone", "kind", "status"),
+    "corporate_settings": ("c_id", "target_credits"),
+    "support_tickets": ("ticket_id", "reporter_phone", "category", "status",
+                        "resolution"),
+}
+
+_migration_status_cache: Optional[tuple[float, dict]] = None
+_MIGRATION_CACHE_TTL_SECONDS = 60.0
+
+
+def _required_schema_snapshot() -> dict[str, set[str]]:
+    """Fetch the live PostgREST OpenAPI schema (one request) as
+    {table: {column, ...}}.  Raises on failure — callers degrade honestly."""
+    import httpx
+
+    url = (os.getenv("SUPABASE_URL", "").strip()
+           or os.getenv("VITE_SUPABASE_URL", "").strip()).rstrip("/")
+    key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+           or os.getenv("SUPABASE_ANON_KEY", "").strip()
+           or os.getenv("VITE_SUPABASE_ANON_KEY", "").strip())
+    if not url or not key:
+        raise RuntimeError("Supabase not configured")
+    res = httpx.get(f"{url}/rest/v1/", headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                    timeout=10.0)
+    res.raise_for_status()
+    definitions = (res.json() or {}).get("definitions") or {}
+    out: dict[str, set[str]] = {}
+    for table, spec in definitions.items():
+        out[table] = set(((spec or {}).get("properties") or {}).keys())
+    return out
+
+
+def migration_status() -> dict:
+    """Which required tables/columns are missing from the live database?
+
+    Cached for a minute so /health stays cheap.  ``checked`` is False when
+    the database is unreachable or unconfigured — never a silent "looks fine".
+    """
+    global _migration_status_cache
+    now = datetime.now(timezone.utc).timestamp()
+    if _migration_status_cache and now - _migration_status_cache[0] < _MIGRATION_CACHE_TTL_SECONDS:
+        cached = dict(_migration_status_cache[1])
+        return cached
+    result: dict = {
+        "checked": False, "ok": None,
+        "missing_tables": [], "missing_columns": {},
+        "note": "Schema probe unavailable — database may be unconfigured or unreachable",
+    }
+    sb = _client()
+    if sb:
+        try:
+            live = _required_schema_snapshot()
+        except Exception as e:
+            result["error"] = str(e)
+        else:
+            missing_tables = sorted(t for t in _REQUIRED_SCHEMA if t not in live)
+            missing_columns: dict[str, list] = {}
+            for table, cols in _REQUIRED_SCHEMA.items():
+                if table not in live:
+                    continue
+                absent = [c for c in cols if c and c not in live[table]]
+                if absent:
+                    missing_columns[table] = absent
+            ok = not missing_tables and not missing_columns
+            result = {
+                "checked": True, "ok": ok,
+                "missing_tables": missing_tables,
+                "missing_columns": missing_columns,
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _migration_status_cache = (now, result)
+            return dict(result)
+    return result
+
+
 def health_check() -> dict:
     sb = _client()
     if not sb:
@@ -207,6 +303,15 @@ def health_check() -> dict:
         "marketplace_listings",
         "otp_codes",
         "kyc_verifications",
+        "fpo_members",
+        "ground_truth_samples",
+        "ledger_events",
+        "land_registry",
+        "farm_evidence",
+        "consent_records",
+        "privacy_requests",
+        "corporate_settings",
+        "support_tickets",
     ):
         try:
             sb.table(table).select("*").limit(1).execute()
@@ -214,7 +319,19 @@ def health_check() -> dict:
         except Exception as e:
             tables[table] = False
             print(f"Supabase health check failed for {table}: {e}")
-    return {"ready": all(tables.values()), "tables": tables}
+    migrations = migration_status()
+    if migrations.get("checked") and not migrations.get("ok"):
+        print(
+            "[health] MISSING REQUIRED DATABASE MIGRATIONS — "
+            f"tables={migrations.get('missing_tables')} "
+            f"columns={migrations.get('missing_columns')}"
+        )
+    return {
+        "ready": all(tables.values()),
+        "tables": tables,
+        "migrations": migrations,
+        "migrations_ok": migrations.get("ok"),
+    }
 
 
 def get_profile(phone: str) -> Optional[ProfileRow]:

@@ -11,15 +11,18 @@ from fastapi import APIRouter, Depends
 
 from app.security import get_current_user_optional
 from app.services import validation
-from app.routes.ops_router import _validation_report
+from app.routes.ops_router import _validation_report, _own_fpo_comparisons, _scoped_fpo_id
 
 router = APIRouter(prefix="/validation", tags=["validation"])
 
-_STAFF_ROLES = {"admin", "verifier", "fpo"}
+_GLOBAL_STAFF_ROLES = {"admin", "verifier"}
 
 
 def _is_staff(user: Optional[dict]) -> bool:
-    return str((user or {}).get("role") or "").lower() in _STAFF_ROLES
+    """Global staff only. FPO officers are NOT global staff: their view is
+    the public aggregate plus confirmation rows for their own FPO's farms
+    (see access_policy.is_staff for the exclusion rationale)."""
+    return str((user or {}).get("role") or "").lower() in _GLOBAL_STAFF_ROLES
 
 
 @router.get("/status")
@@ -32,7 +35,16 @@ def validation_status(current_user: Optional[dict] = Depends(get_current_user_op
     proxy estimate in the API, UI, PDFs and CSV exports.
     """
     report = _validation_report()
-    body = report if _is_staff(current_user) else validation.public_view(report)
+    if _is_staff(current_user):
+        body = report
+    else:
+        body = validation.public_view(report)
+        fpo_id = _scoped_fpo_id(current_user)
+        if fpo_id:
+            # FPO officers keep the public aggregate plus only their own
+            # FPO's farm-level rows — never other FPOs' validation data.
+            body["comparisons"] = _own_fpo_comparisons(report, fpo_id)
+            body["own_comparisons"] = len(body["comparisons"])
     return {
         "success": True,
         "status": report["status"],

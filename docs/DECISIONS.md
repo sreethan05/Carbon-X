@@ -6,6 +6,8 @@
 > supersede with a fresh ADR and mark status).
 
 ## ADR-001 — React 18 + Vite SPA instead of Next.js SSR
+> 2026-10-22 update: the SPA is now on **React 19** with react-leaflet v5
+> (BACKLOG #41); the SSR decision itself stands.
 
 **Decision:** plain React SPA (`src/`) with FastAPI backend.
 **Because:** the heavy lifting is satellite/marketplace API work, not
@@ -123,3 +125,42 @@ are public via `/validation/*` and `/trust`.
 **Bad because** early pilots must accept a lower-tier label until field
 samples accrue (`docs/VALIDATION_PROTOCOL.md` describes the thresholds —
 real field data is the unlock).
+
+## ADR-011 — FPO access is farm-scoped, buying is id-keyed
+
+**Decision:** global staff (admin, verifier) is the only globally-privileged
+set. FPO accounts resolve their own `fpo_id` (token or profile lookup) and see
+full records only for farms/certificates whose `fpo_id` matches — passports,
+ledger JSON/WS, certificates, earnings/KYC, ops summary, ground-truth ingest
+and the validation report all check the match; unresolvable or DB-off callers
+fail closed to the public view. Buyer-of-record access binds to
+`buyer_c_id` recorded on the SALE ledger event (display names are
+presentation-only; the name fallback survives only in offline demo sales).
+**Because** fearing every FPO as staff let one FPO read farmer PII and
+validation rows belonging to another FPO.
+**Good because** scope is a single rule in `access_policy` enforced at every
+boundary; a name collision can no longer grant certificate access.
+**Bad because** surgeons-before-2026 live rows without `buyer_c_id` lose
+buyer access on the live DB (acceptably conservative; refund ops remain
+admin/verifier).
+
+## ADR-012 — One simulated-payments gate; migrations-reported health
+
+**Decision:** `CARBONX_ACCEPT_SIMULATED_PAYMENTS` is the single gate for
+simulated settlement (startup validation, `/payments/checkout`,
+`/marketplace/buy`, compose, docs). The legacy
+`CARBONX_ALLOW_SIMULATED_SETTLEMENT` is honoured as a deprecated alias that
+loses to an explicit canonical value. `/health` reports `database.migrations`
+(probed via the PostgREST OpenAPI schema, 60 s cache): `migrations_ok=false`
+names missing required tables/columns instead of silently shipping features
+whose migrations never ran. Docker Compose publishes only the frontend;
+Redis is internal-only with `--requirepass` (and an authenticating
+healthcheck); the dev overlay (`docker-compose.dev.yml`) republishes
+backend/Redis on loopback for local debugging only.
+**Because** two differently-named variables for the same gate could let a
+deployment pass startup validation while checkout 503'd, and half-applied
+migrations would sail through a table-name-only health check.
+**Good because** operators get one documented knob and a health endpoint
+that states exactly which migration files are missing.
+**Bad because** an operator skipping the checklist can still boot with the
+demo Redis password — the doc explicitly forbids that default on servers.

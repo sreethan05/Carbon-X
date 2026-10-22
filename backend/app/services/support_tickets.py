@@ -193,6 +193,21 @@ def list_all(status: str = "", limit: int = 100) -> dict:
     return {"success": True, "storage": "memory", "tickets": [_shape(r) for r in rows[: max(1, min(int(limit), 200))]]}
 
 
+def get_ticket(ticket_id: str) -> Optional[dict]:
+    """Fetch one ticket for authorization before a staff update."""
+    ticket_id = _clean_text(ticket_id, 64)
+    table = _get_table()
+    if table is not None:
+        try:
+            rows = table.select("*").eq("id", ticket_id).limit(1).execute().data or []
+            return _shape(rows[0]) if rows else None
+        except Exception:
+            _table_state["unavailable"] = True
+    with _lock:
+        row = next((t for t in _memory if t.get("id") == ticket_id), None)
+        return _shape(row) if row else None
+
+
 def update_ticket(
     ticket_id: str,
     *,

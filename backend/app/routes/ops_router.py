@@ -9,9 +9,39 @@ import uuid
 from app.security import get_current_user, get_current_user_optional, require_role
 from app import supabase_db as db
 from app import config as app_config
-from app.services import credit_engine, ledger, validation
+from app.services import access_policy, credit_engine, ledger, validation
 
 router = APIRouter(prefix="/ops", tags=["ops"])
+
+
+def _scoped_fpo_id(current_user: Optional[dict]) -> Optional[str]:
+    """The FPO caller's own fpo_id, or None for other roles.
+
+    FPO access to ops endpoints is scoped to their own farms; admin and
+    verifier stay global.  Fail-closed: an FPO role without any resolvable
+    fpo_id is treated as having no scope at all.
+    """
+    role = str((current_user or {}).get("role") or "").lower()
+    if role != "fpo":
+        return None
+    return access_policy.caller_fpo_id(current_user)
+
+
+def _own_fpo_comparisons(report: dict, fpo_id: Optional[str]) -> list[dict]:
+    """Validation comparison rows restricted to the FPO's own farms.
+
+    Global metrics stay visible (they are already public aggregates); only
+    the per-farm rows are scoped like everything else in access_policy.
+    """
+    if not fpo_id:
+        return []
+    scoped: list[dict] = []
+    for c in report.get("comparisons") or []:
+        farm = db.get_farm(str(c.get("farm_id") or "")) if db.is_ready() else None
+        farm_fpo = str((farm or {}).get("fpo_id") or "")
+        if farm_fpo and farm_fpo == str(fpo_id).strip():
+            scoped.append(c)
+    return scoped
 
 
 # ─── Ground-truth store ───
@@ -86,20 +116,84 @@ def ops_summary(current_user: dict = Depends(require_role("admin", "verifier", "
     if not sb:
         return {"success": False, "message": "Database not configured", "mode": "demo"}
     try:
+        role = str((current_user or {}).get("role") or "").lower()
+        fpo_id = _scoped_fpo_id(current_user)
+        if role == "fpo" and not fpo_id:
+            return {
+                "success": False,
+                "code": "FORBIDDEN",
+                "message": "Your FPO profile has no fpo_id link — contact your administrator",
+            }
+
         def count(table, query=None):
             q = sb.table(table).select("*", count="exact")
             if query:
                 q = q.eq(*query)
             return q.execute().count or 0
+
         def icount(table, status: str):
             # Farm statuses are stored with mixed casing (PENDING/Flagged);
             # match case-insensitively so ops never shows a false zero.
             return (sb.table(table).select("*", count="exact")
                     .ilike("status", status).execute().count or 0)
+
+        if role == "fpo":
+            # FPO desk view: every count is restricted to this FPO's farms
+            # and listed members — never platform-wide operational data.
+            farm_ids = [
+                str(f.get("id")) for f in
+                ((sb.table("farms").select("id").eq("fpo_id", fpo_id).execute().data) or [])
+                if f.get("id") is not None
+            ]
+            member_phones = [
+                str(m.get("farmer_phone")) for m in
+                ((sb.table("fpo_members").select("farmer_phone")
+                  .eq("fpo_id", fpo_id).execute().data) or [])
+                if m.get("farmer_phone") is not None
+            ]
+
+            def fcount(table, column, query=None):
+                if not farm_ids:
+                    return 0
+                q = (sb.table(table).select("*", count="exact").in_(column, farm_ids))
+                if query:
+                    q = q.eq(*query)
+                return q.execute().count or 0
+
+            def pcount(table, query=None):
+                if not member_phones:
+                    return 0
+                q = (sb.table(table).select("*", count="exact")
+                     .in_("owner_phone", member_phones))
+                if query:
+                    q = q.eq(*query)
+                return q.execute().count or 0
+
+            def icount_fpo(status: str):
+                q = (sb.table("farms").select("*", count="exact")
+                     .eq("fpo_id", fpo_id).ilike("status", status))
+                return q.execute().count or 0
+
+            return {
+                "success": True,
+                "scope": "fpo",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "profiles": count("fpo_members", ("fpo_id", fpo_id)),
+                "farms_total": count("farms", ("fpo_id", fpo_id)),
+                "farms_pending_review": icount_fpo("pending"),
+                "farms_flagged_at_risk": icount_fpo("flagged"),
+                "listings_active": fcount("marketplace_listings", "farm_id", ("status", "Active")),
+                "listings_retired": fcount("marketplace_listings", "farm_id", ("status", "Retired")),
+                "kyc_verifications": pcount("kyc_verifications"),
+                "ground_truth_samples": fcount("ground_truth_samples", "farm_id"),
+                "ledger_events": fcount("ledger_events", "entity_id"),
+            }
+
         farms_flagged = icount("farms", "flagged")
         farms_pending = icount("farms", "pending")
         summary = {
             "success": True,
+            "scope": "global",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "profiles": count("profiles"),
             "farms_total": count("farms"),
@@ -112,6 +206,8 @@ def ops_summary(current_user: dict = Depends(require_role("admin", "verifier", "
             "ledger_events": count("ledger_events"),
         }
         return summary
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -167,6 +263,17 @@ def add_ground_truth(data: GroundTruthModel,
     snapshot of the model's estimate at sampling time is stored alongside it.
     """
     try:
+        role = str((current_user or {}).get("role") or "").lower()
+        if role == "fpo":
+            if not data.farm_id or not db.is_ready():
+                raise HTTPException(status_code=403, detail="FPO field samples must reference a live farm in your FPO")
+            reviewer = db.get_profile(str(current_user.get("phone") or "")) or {}
+            farm = db.get_farm(data.farm_id)
+            if not reviewer.get("fpo_id") or not farm:
+                raise HTTPException(status_code=403, detail="Farm is outside your FPO scope")
+            from app.services.access_policy import is_fpo_for_farm
+            if not is_fpo_for_farm(current_user, farm):
+                raise HTTPException(status_code=403, detail="Farm is outside your FPO scope")
         if data.measured_soc_tco2e_ha is None and data.measured_species_count is None:
             return {
                 "success": False,
@@ -177,6 +284,11 @@ def add_ground_truth(data: GroundTruthModel,
         row = {k: v for k, v in data.model_dump().items() if v is not None}
         row.setdefault("measurement_type", "rate")
         row["verification_status"] = row.get("verification_status") or "unverified"
+        if role == "fpo":
+            # FPOs may contribute observations, but only platform reviewers
+            # can label those observations verified or rejected.
+            row["verification_status"] = "unverified"
+            row.pop("verified_by", None)
         row["source"] = row.get("source") or "field_survey"
         row["created_at"] = datetime.now(timezone.utc).isoformat()
         snapshot = _estimate_snapshot(data.farm_id)
@@ -216,6 +328,8 @@ def add_ground_truth(data: GroundTruthModel,
             except Exception:
                 raise e
         return {"success": True, "sample": stored, "mode": "database"}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -234,12 +348,22 @@ def evaluate_ground_truth(current_user: Optional[dict] = Depends(get_current_use
     """Calibration report. Public callers get aggregate metrics only."""
     try:
         report = _validation_report()
-        is_staff = str((current_user or {}).get("role") or "").lower() in (
-            "admin", "verifier", "fpo"
-        )
+        role = str((current_user or {}).get("role") or "").lower()
+        fpo_id = _scoped_fpo_id(current_user)
+        is_staff = role in ("admin", "verifier")
         body = dict(report)
-        if not is_staff:
+        if is_staff:
+            # Global staff: the full report with every farm's comparisons.
+            comparisons = report.get("comparisons") or []
+        elif fpo_id:
+            # FPO officers: the public aggregate view plus only the per-farm
+            # comparison rows that belong to their own FPO's farms.
             body = validation.public_view(body)
+            comparisons = _own_fpo_comparisons(report, fpo_id)
+            body["comparisons"] = comparisons
+        else:
+            body = validation.public_view(body)
+            comparisons = []
         # Backwards-compatible summary keys.
         metrics = report.get("metrics") or {}
         summary = dict(body)

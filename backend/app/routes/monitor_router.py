@@ -34,15 +34,21 @@ _MONITOR_LOCK_NAME = "monitor_cycle"
 _MONITOR_LOCK_TTL_SECONDS = 3600
 
 
-def perform_monitoring_cycle() -> dict:
-    """Run one monitoring pass over every live farm; returns the report."""
+def perform_monitoring_cycle(owner_phones: Optional[set[str]] = None, fpo_id: Optional[str] = None) -> dict:
+    """Run a monitoring pass over all farms or a caller's explicit FPO scope."""
     if not db.is_ready():
         return {"success": False, "message": "Monitoring needs the database (demo mode has no live farms)"}
     try:
         sb = db._client()
         farms = (sb.table("farms").select(
-            "id,name,geojson,ndvi,status,last_monitor_ndvi,last_monitored_at"
+            "id,name,owner_phone,fpo_id,geojson,ndvi,status,last_monitor_ndvi,last_monitored_at"
         ).execute().data) or []
+        if owner_phones is not None or fpo_id is not None:
+            allowed_phones = owner_phones or set()
+            farms = [farm for farm in farms if (
+                (fpo_id and str(farm.get("fpo_id") or "") == str(fpo_id))
+                or (farm.get("owner_phone") and str(farm["owner_phone"]) in allowed_phones)
+            )]
         checked = 0
         at_risk = []
         healthy = 0
@@ -114,7 +120,8 @@ def run_monitoring_cycle(
     x_monitor_secret: Optional[str] = Header(None),
 ):
     required_secret = app_config.MONITOR_SECRET
-    privileged = bool(current_user and current_user.get("role") in ("fpo", "admin", "verifier"))
+    role = str((current_user or {}).get("role") or "").lower()
+    privileged = bool(current_user and role in ("fpo", "admin", "verifier"))
     if not required_secret and app_config.IS_PRODUCTION:
         raise HTTPException(status_code=503, detail="CARBONX_MONITOR_SECRET must be configured in production")
     valid_secret = bool(required_secret and x_monitor_secret and hmac.compare_digest(
@@ -123,9 +130,26 @@ def run_monitoring_cycle(
     if not valid_secret and not privileged:
         raise HTTPException(
             status_code=403,
-            detail="Monitoring requires the monitor secret or an FPO/admin session",
+            detail=(
+                "Monitoring requires the monitor secret or an admin/verifier "
+                "session; an FPO session triggers a scoped run for its own farms"
+            ),
         )
-    return perform_monitoring_cycle()
+    if valid_secret or role in ("admin", "verifier"):
+        return perform_monitoring_cycle()
+    profile = db.get_profile(str((current_user or {}).get("phone") or "")) or {}
+    fpo_id = profile.get("fpo_id")
+    if not fpo_id:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Your account is not linked to an FPO (or the FPO link could "
+                "not be verified offline)"
+            ),
+        )
+    members = db.list_profiles_by_fpo(str(fpo_id))
+    owner_phones = {str(row.get("phone")) for row in members if row.get("phone")}
+    return perform_monitoring_cycle(owner_phones=owner_phones, fpo_id=str(fpo_id))
 
 
 async def monitoring_loop():

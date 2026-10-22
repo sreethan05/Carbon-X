@@ -221,7 +221,15 @@ def create_checkout(
         )
     if db.is_ready() and str((current_user or {}).get("role", "")).lower() != "buyer":
         raise HTTPException(status_code=403, detail="Only corporate buyer accounts can initiate checkout")
-    buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
+    # In live mode the account name and id come from the authenticated token;
+    # never trust a client-supplied buyer identity for certificate ownership.
+    buyer = (
+        (current_user or {}).get("name") or "Corporate Buyer"
+        if db.is_ready() else data.buyer_name or "Corporate Buyer"
+    )
+    # Bind the sale to the corporate account id whenever the token has one —
+    # demo and live records alike: certificate ownership is id-keyed.
+    buyer_c_id = (current_user or {}).get("c_id")
 
     resolved = _resolve_purchase(data.listing_id, data.credits)
     if resolved.get("error"):
@@ -230,16 +238,19 @@ def create_checkout(
     credits = resolved["credits"]
 
     if not payments.is_live():
-        if db.is_ready() and not app_config.ALLOW_SIMULATED_SETTLEMENT:
+        if db.is_ready() and not app_config.ACCEPT_SIMULATED_PAYMENTS:
             raise HTTPException(
                 status_code=503,
-                detail="Live checkout is not configured. Set Razorpay credentials, or explicitly enable simulated settlement for a non-production demo.",
+                detail=(
+                    "Live checkout is not configured. Set Razorpay credentials, or set "
+                    "CARBONX_ACCEPT_SIMULATED_PAYMENTS=1 for an explicitly simulated demo."
+                ),
             )
         # Simulated provider — or razorpay selected without keys — so no real
         # money can move: settle immediately, labelled simulated everywhere.
         result = settle_listing_purchase(
             listing, credits, buyer, resolved["apply_update"],
-            farm=resolved["farm"], payment_ref="SIMULATED",
+            farm=resolved["farm"], payment_ref="SIMULATED", buyer_c_id=buyer_c_id,
             rollback_update=resolved.get("rollback_update"),
         )
         if not result.get("success"):
@@ -264,6 +275,7 @@ def create_checkout(
         "listing_id": data.listing_id,
         "credits": credits,
         "buyer_name": buyer,
+        "buyer_c_id": buyer_c_id,
         "amount_inr": amount_inr,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -375,6 +387,7 @@ async def razorpay_webhook(
                 resolved["apply_update"], farm=resolved["farm"],
                 payment_ref=f"RZP-{payment_id}",
                 rollback_update=resolved.get("rollback_update"),
+                buyer_c_id=pending.get("buyer_c_id"),
             )
             if not result.get("success"):
                 # Money was captured but the listing CAS lost a race — never retry into

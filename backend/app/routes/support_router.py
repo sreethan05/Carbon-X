@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.security import get_current_user, require_role
+from app import supabase_db as db
 from app.services import support_tickets as tickets
 
 router = APIRouter(prefix="/support", tags=["support", "farmers"])
@@ -42,13 +43,53 @@ def _phone(user: dict) -> str:
     return phone
 
 
+def _fpo_scope(user: dict) -> tuple[set[str], set[str]]:
+    """Resolve one request's member/farm scope for an FPO officer."""
+    phone = str((user or {}).get("phone") or "")
+    profile = db.get_profile(phone) if db.is_ready() and phone else None
+    fpo_id = (profile or {}).get("fpo_id")
+    if not fpo_id:
+        return set(), set()
+    try:
+        sb = db._client()
+        members = (sb.table("profiles").select("phone").eq("fpo_id", fpo_id).execute().data) or []
+        member_phones = {str(row.get("phone")) for row in members if row.get("phone")}
+        farms = (sb.table("farms").select("id,owner_phone").eq("fpo_id", fpo_id).execute().data) or []
+        # Include legacy farm rows linked through profiles.fpo_id.
+        if member_phones:
+            farms.extend(
+                (sb.table("farms").select("id,owner_phone").in_("owner_phone", list(member_phones)).execute().data) or []
+            )
+        return (
+            member_phones,
+            {str(row.get("id")) for row in farms if row.get("id")},
+        )
+    except Exception:
+        return set(), set()
+
+
+def _fpo_can_access_ticket(ticket: dict, scope: tuple[set[str], set[str]]) -> bool:
+    """FPO officers can only handle their linked farm/member grievances."""
+    member_phones, farm_ids = scope
+    farm_id = str(ticket.get("farm_id") or "")
+    reporter_phone = str(ticket.get("reporter_phone") or "")
+    return bool((farm_id and farm_id in farm_ids) or (reporter_phone and reporter_phone in member_phones))
+
+
 # ─── Endpoints ───
 
 @router.post("/tickets")
 def create_ticket(data: SupportTicketCreate, current_user: dict = Depends(get_current_user)):
     """File a support request. The reporter sees it instantly with status Open."""
+    reporter_phone = _phone(current_user)
+    if data.farm_id:
+        farm = db.get_farm(data.farm_id)
+        if not farm:
+            raise HTTPException(status_code=404, detail="Farm not found")
+        if str(farm.get("owner_phone") or "") != reporter_phone:
+            raise HTTPException(status_code=403, detail="You can only attach a request to your own farm")
     result = tickets.create(
-        reporter_phone=str(current_user.get("phone") or ""),
+        reporter_phone=reporter_phone,
         category=data.category,
         title=data.title,
         detail=data.detail,
@@ -87,6 +128,12 @@ def staff_queue(
 ):
     """All tickets with the requester phone visible to staff for contact-out."""
     result = tickets.list_all(status=status, limit=limit)
+    if str(current_user.get("role") or "").lower() == "fpo":
+        scope = _fpo_scope(current_user)
+        result["tickets"] = [
+            ticket for ticket in result.get("tickets", [])
+            if _fpo_can_access_ticket(ticket, scope)
+        ]
     return result
 
 
@@ -97,6 +144,12 @@ def staff_update(
     current_user: dict = Depends(require_role("fpo", "verifier", "admin")),
 ):
     """Move a ticket through the workflow; Resolved/Rejected need a resolution."""
+    if str(current_user.get("role") or "").lower() == "fpo":
+        ticket = tickets.get_ticket(ticket_id)
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if not _fpo_can_access_ticket(ticket, _fpo_scope(current_user)):
+            raise HTTPException(status_code=403, detail="Ticket is outside your FPO scope")
     result = tickets.update_ticket(
         ticket_id,
         status=data.status,

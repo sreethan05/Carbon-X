@@ -166,10 +166,9 @@ async def websocket_ledger(ws: WebSocket, farm_id: str):
             if profile is None or profile.get("is_active") is False:
                 await ws.close(code=4401, reason="Account is inactive")
                 return
-            if farm.get("owner_phone") != user.get("phone"):
-                if not (role == "fpo" and profile.get("fpo_id") == farm.get("fpo_id")):
-                    await ws.close(code=4403, reason="Access denied")
-                    return
+            if not access_policy.can_access_farm(user, farm):
+                await ws.close(code=4403, reason="Access denied")
+                return
         full_access = True
     await ws.accept()
     _subscribers.setdefault(farm_id, set()).add(ws)

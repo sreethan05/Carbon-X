@@ -158,7 +158,10 @@ class FarmerJourneyTests(unittest.TestCase):
                 "status": "Resolved",
                 "resolution": "Field inspection matched the frozen estimate; no change.",
             },
-            headers=_token({"phone": "9000000001", "role": "fpo", "name": "Officer"}),
+            # Global staff resolves; an FPO officer would need a verifiable
+            # FPO membership link for this farmer (demo mode cannot resolve
+            # one, and FPO access is scoped — never global staff).
+            headers=_token({"phone": "9000000009", "role": "verifier", "name": "Support Staff"}),
         ).json()
         self.assertTrue(staff.get("success"), staff)
         closed = client.get("/support/tickets", headers=_farmer_token()).json()

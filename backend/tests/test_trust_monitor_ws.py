@@ -162,10 +162,14 @@ class MonitorRouterTests(unittest.TestCase):
             self.assertIn("message", body)
             self.assertIn("database", body["message"])
 
-            # 4. FPO user session without secret -> allowed (returns 200)
+            # 4. FPO user session without secret -> a SCOPED run over their
+            #    own member farms; demo/offline mode cannot resolve the FPO
+            #    link, so this fails closed (403). Global FPO monitoring is
+            #    not a thing.
             fpo_token = security.create_access_token({"phone": "9000000001", "role": "fpo"})
             r_fpo = client.post("/monitor/run", headers={"Authorization": f"Bearer {fpo_token}"})
-            self.assertEqual(r_fpo.status_code, 200)
+            self.assertEqual(r_fpo.status_code, 403)
+            self.assertIn("FPO", r_fpo.json().get("message", ""))
 
             # 5. Admin user session without secret -> allowed (returns 200)
             admin_token = security.create_access_token({"phone": "9000000002", "role": "admin"})

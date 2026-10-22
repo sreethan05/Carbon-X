@@ -6,7 +6,7 @@ Quick-reference for agents working on this repo. Update when setup/schema change
 
 CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register via phone OTP, map farms with GEE satellite imagery, get AI-scanned credits, and list them on a marketplace where corporates/FPOs bid.
 
-- Main app: repo root (`src/`), React 18 + Vite + Tailwind. `npm run dev` → port 5000.
+- Main app: repo root (`src/`), React 19 + Vite + Tailwind. `npm run dev` → port 5000.
 - `backend/` — Python FastAPI (GEE satellite scan, ML, phone OTP auth, Supabase service-role access) → port 8000. Proxied via `/py-api`.
 - `backend/src` + `blockchain/` (Node/Express + Solidity) — **legacy / roadmap only.** Not part of the credit flow: the live ledger is the SHA-256 hash chain, and on-chain settlement (Polygon/Amoy) is a production-roadmap item. Built by Docker CI, but not used by the app's verification or payout path.
 - Local schema SQL lives in `supabase/` (`01_sreethan_initial_schema.sql`, `02_hasini_merged_schema.sql`, `schema.sql`).
@@ -353,6 +353,42 @@ columns present). Live deployments now persist consent evidence, privacy
 requests, sale/dispute lifecycle, evidence/KYC deletion markers, buyer targets
 and tickets on the DB; the backend's labelled in-memory fallbacks remain the
 degradation path only for no-DB demo mode.
+
+## Deployment-audit fix batch (2026-10-22, P0/P1 items 1–5 + 13/14)
+
+- **FPO is never global staff.** `access_policy.is_staff` = admin/verifier
+  only. FPO accounts resolve their own `fpo_id` (`caller_fpo_id`: token value
+  or profile lookup) and `can_access_farm` / `is_fpo_for_farm` gate EVERY
+  full-record surface: passport, ledger JSON + WS, certificates (JSON/CSV/
+  PDF/retire), marketplace sanitize, `/fpo/*`, `/ops/summary` (scoped
+  counts), `/ops/ground-truth` (own-farm ingest only; FPO samples are forced
+  `unverified`), `/ops/ground-truth/eval` + `/validation/status` (public
+  aggregates + OWN-farm comparison rows), monitor trigger (strictly scoped),
+  support desk (own members only). Unresolvable/DB-off FPO callers fail
+  closed everywhere (demo journeys use verifier/admin instead).
+- **Buyer = corporate id, not a name.** SALE ledger payload records
+  `buyer_c_id` from the corporate token (live AND demo). Certificate
+  access (`_caller_is_buyer`) matches on id first; display names only
+  mediate offline demo rows with no recorded id. `buyer_c_id` is NOT in
+  `PUBLIC_LEDGER_KEYS` (public strip).
+- **One simulated-payment gate:** `CARBONX_ACCEPT_SIMULATED_PAYMENTS` for
+  startup validation, `/payments/checkout`, `/marketplace/buy`, compose and
+  docs; legacy `CARBONX_ALLOW_SIMULATED_SETTLEMENT` = deprecated alias that
+  an explicit canonical value always beats.
+- **Health reports missing migrations:** `supabase_db.migration_status()`
+  probes the PostgREST OpenAPI schema (16 required tables + key columns,
+  60 s cache); `/health` → `database.migrations{checked,ok,missing_tables,
+  missing_columns}` + `migrations_ok`. Unconfigured/unreachable = `checked:
+  false`, never a silent pass.
+- **Compose hardening:** only the frontend is published; Redis internal-only
+  WITH `--requirepass` (healthcheck authenticates; `CARBONX_REDIS_PASSWORD`,
+  backend `REDIS_URL` embeds it); `docker-compose.dev.yml` overlay
+  republishes backend/Redis on loopback for local debugging only.
+- **Docs/tests:** ADR-011/012, DEPLOYMENT compose topology + health
+  checklist; `backend/tests/test_access_scope.py` (21 tests) covers scoped
+  access, buyer identity binding, the payments gate and migration
+  reporting; monitor/support tests updated to the new semantics. Suite:
+  **531 tests OK** (hermetic).
 
 Honesty docs (all external items explicitly NOT-done): `docs/VALIDATION_PROTOCOL.md`,
 `docs/INDEPENDENT_REVIEW.md` (register of reviews NOT obtained),

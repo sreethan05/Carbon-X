@@ -45,9 +45,12 @@ def _dispute_open(listing: dict) -> bool:
 def _sanitize_listing_for_caller(listing: dict, caller: Optional[dict]) -> dict:
     item = dict(listing)
     caller_phone = (caller or {}).get("phone")
-    caller_role = (caller or {}).get("role")
+    caller_role = str((caller or {}).get("role") or "").lower()
     is_owner = bool(caller_phone and caller_phone == item.get("farmer_phone"))
-    is_authorized = caller_role in ("admin", "fpo", "verifier")
+    is_authorized = caller_role in ("admin", "verifier")
+    if caller_role == "fpo" and item.get("farm_id") and db.is_ready():
+        farm = db.get_farm(str(item["farm_id"]))
+        is_authorized = access_policy.is_fpo_for_farm(caller, farm)
     if not (is_owner or is_authorized):
         # Public marketplace: no phone, no farmer identity, district only.
         item["farmer_phone"] = None
@@ -94,6 +97,7 @@ def settle_listing_purchase(
     farm: Optional[dict] = None,
     payment_ref: Optional[str] = None,
     rollback_update=None,
+    buyer_c_id: Optional[int] = None,
 ) -> dict:
     """Settle a (partial) credit purchase: CAS → SALE → SPLIT → RETIRE.
 
@@ -204,6 +208,8 @@ def settle_listing_purchase(
             "certificate_id": cert_id,
             "sale_seq": sale_seq,
         }
+        if buyer_c_id is not None:
+            sale_payload["buyer_c_id"] = buyer_c_id
         if payment_ref:
             sale_payload["payment_ref"] = payment_ref
         try:
@@ -305,11 +311,12 @@ def _purchase_flow(
     apply_update,
     farm: Optional[dict] = None,
     rollback_update=None,
+    buyer_c_id: Optional[int] = None,
 ) -> dict:
     """Legacy name for the marketplace buy path — no payment provider involved."""
     return settle_listing_purchase(
         listing, credits, buyer_name, apply_update,
-        farm=farm, rollback_update=rollback_update,
+        farm=farm, rollback_update=rollback_update, buyer_c_id=buyer_c_id,
     )
 
 
@@ -596,12 +603,22 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             status_code=403,
             detail="Farmer accounts cannot purchase credits. Corporate buyer account required.",
         )
-    if db.is_ready() and not app_config.ALLOW_SIMULATED_SETTLEMENT:
+    if db.is_ready() and not app_config.ACCEPT_SIMULATED_PAYMENTS:
         raise HTTPException(
             status_code=503,
-            detail="Direct settlement is disabled until a live payment provider is configured.",
+            detail=(
+                "Direct settlement is disabled until a live payment provider is "
+                "configured. Set CARBONX_PAYMENTS_PROVIDER=razorpay with credentials, "
+                "or set CARBONX_ACCEPT_SIMULATED_PAYMENTS=1 for a demo."
+            ),
         )
-    buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
+    buyer = (
+        (current_user or {}).get("name") or "Corporate Buyer"
+        if db.is_ready() else data.buyer_name or "Corporate Buyer"
+    )
+    # Bind the sale to the corporate account id whenever the token has one —
+    # demo and live records alike: certificate ownership is id-keyed.
+    buyer_c_id = (current_user or {}).get("c_id")
 
     # Input validation: credit quantity must be positive
     if data.credits is not None and float(data.credits) <= 0:
@@ -628,6 +645,7 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             listing, credits, buyer,
             lambda fields: market_store.update_cas(data.listing_id, fields, expected_credits=available),
             rollback_update=lambda fields: market_store.update(data.listing_id, fields) is not None,
+            buyer_c_id=buyer_c_id,
         )
 
     try:
@@ -673,7 +691,7 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
 
         return _purchase_flow(
             listing, credits, buyer, _cas_update, farm=farm,
-            rollback_update=_rollback_update,
+            rollback_update=_rollback_update, buyer_c_id=buyer_c_id,
         )
 
     except Exception as e:

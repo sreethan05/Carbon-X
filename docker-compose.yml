@@ -1,5 +1,9 @@
 services:
   # ── React Frontend (Nginx SPA + Reverse Proxy) ──
+  # The ONLY service published on all interfaces: it is the SPA entry point
+  # and its nginx also proxies /py-api into the docker network.  For a
+  # public deployment terminate TLS on a load balancer / reverse proxy and
+  # publish 443 to this container instead of raw 80.
   frontend:
     build:
       context: .
@@ -21,18 +25,16 @@ services:
       dockerfile: Dockerfile
     container_name: carbonx-backend-py
     restart: unless-stopped
-    ports:
-      - "8000:8000"
     environment:
-      - REDIS_URL=redis://redis:6379/0
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
       - CARBONX_ENVIRONMENT=${CARBONX_ENVIRONMENT:-development}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - GEE_PROJECT=${GEE_PROJECT:-carbonx-507617}
-      - CORS_ORIGINS=http://localhost:5000,http://localhost:80,http://frontend:80
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:5000,http://localhost:80,http://frontend:80}
       - CARBONX_ALLOW_DEV_OTP=${CARBONX_ALLOW_DEV_OTP:-0}
-      - CARBONX_ALLOW_SIMULATED_SETTLEMENT=${CARBONX_ALLOW_SIMULATED_SETTLEMENT:-0}
+      - CARBONX_ACCEPT_SIMULATED_PAYMENTS=${CARBONX_ACCEPT_SIMULATED_PAYMENTS:-0}
+      - REDIS_URL=redis://:${CARBONX_REDIS_PASSWORD:-carbonx-dev-redis-only}@redis:6379/0
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
       - SARVAM_DEFAULT_LANGUAGE=${SARVAM_DEFAULT_LANGUAGE:-te-IN}
       - CARBONX_PAYMENTS_PROVIDER=${CARBONX_PAYMENTS_PROVIDER:-simulated}
@@ -64,8 +66,6 @@ services:
       dockerfile: backend/Dockerfile.node
     container_name: carbonx-backend-bc
     restart: unless-stopped
-    ports:
-      - "3001:3001"
     environment:
       - PORT=3001
       - RPC_URL=${RPC_URL:-}
@@ -86,15 +86,18 @@ services:
     image: redis:7-alpine
     container_name: carbonx-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
+    # Redis is internal-only (no published ports) AND password-protected:
+    # it holds OTP rate-limit counters, settlement locks and token revocation
+    # state, so an unauthenticated reader could reset limits or race a lock.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${CARBONX_REDIS_PASSWORD:-carbonx-dev-redis-only}"]
+    environment:
+      - CARBONX_REDIS_PASSWORD=${CARBONX_REDIS_PASSWORD:-carbonx-dev-redis-only}
     volumes:
       - carbonx_redis_data:/data
     networks:
       - carbonx-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$${CARBONX_REDIS_PASSWORD:-carbonx-dev-redis-only}\" ping | grep PONG"]
       interval: 10s
       timeout: 3s
       retries: 3
