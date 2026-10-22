@@ -7,17 +7,53 @@ on:
 
 jobs:
   frontend:
-    name: Frontend — lint & build
+    name: Frontend — lint, unit & build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          # Vitest 4 requires Node >= 22.12; Vite 8 needs the same floor.
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - name: Unit tests (Vitest)
+        run: npm run test
       - run: npm run build
+
+  e2e:
+    name: E2E — Playwright (real backend, demo mode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: npm install
+        run: npm ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      # The Playwright config itself starts uvicorn (demo env, CARBONX_SKIP_DOTENV=1)
+      # and the Vite dev server, so this exercises the real /py-api proxy path.
+      - run: npm run test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
 
   backend:
     name: Backend — tests

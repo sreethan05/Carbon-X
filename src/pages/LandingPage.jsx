@@ -39,6 +39,7 @@ export default function LandingPage() {
               <select
                 value={currentLang}
                 onChange={(e) => changeLanguage(e.target.value)}
+                aria-label="Select interface language"
                 className="bg-transparent border-none outline-none text-xs font-semibold text-white cursor-pointer"
               >
                 {(supportedLanguages || [

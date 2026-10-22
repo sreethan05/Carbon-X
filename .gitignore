@@ -92,3 +92,9 @@ Thumbs.db
 
 # Supabase CLI local state
 supabase/.temp/
+
+# Frontend test artifacts (Vitest unit + Playwright E2E)
+.vitest/
+coverage/
+test-results/
+playwright-report/

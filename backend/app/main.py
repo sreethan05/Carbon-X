@@ -7,14 +7,21 @@ router registration. Keep this file thin — behavior belongs in the routers.
 """
 from pathlib import Path
 
+import os
+
 from dotenv import load_dotenv
 
 APP_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = APP_DIR.parent
 ROOT_DIR = BACKEND_DIR.parent
 
-load_dotenv(ROOT_DIR / ".env", override=True)
-load_dotenv(BACKEND_DIR / ".env", override=True)
+# CARBONX_SKIP_DOTENV=1 lets the E2E harness (Playwright webServer) control the
+# backend env fully: without it a developer's backend/.env overrides the
+# injected demo vars (override=True) and local E2E runs become non-deterministic.
+# Never set in production.
+if os.getenv("CARBONX_SKIP_DOTENV") != "1":
+    load_dotenv(ROOT_DIR / ".env", override=True)
+    load_dotenv(BACKEND_DIR / ".env", override=True)
 
 import asyncio
 from contextlib import asynccontextmanager

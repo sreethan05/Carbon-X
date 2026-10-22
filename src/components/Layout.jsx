@@ -169,6 +169,7 @@ export default function Layout({ children }) {
             <select
               value={currentLang}
               onChange={e => changeLanguage(e.target.value)}
+              aria-label="Select interface language"
               className="bg-transparent border-none outline-none text-xs font-bold text-forest-900 focus:ring-0 cursor-pointer"
             >
               {(supportedLanguages || []).map((lang) => (

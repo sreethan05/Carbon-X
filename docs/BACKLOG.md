@@ -63,9 +63,13 @@ and the trigger for doing them. "Deferred" ≠ rejected.
   only). build-push-action v6 bundles a provenance/attestations default
   change, so the bump needs individual verification of image metadata before
   landing.
-- #39 Frontend unit tests + Playwright E2E - the React app runs only lint +
-  build gates today (stated honestly in docs/TEST_PLAN.md Known gaps); the
-  API contract coverage lives in the backend suite. Add Vitest for pure logic
-  (money formatting, form validation) and a Playwright suite for the 4 core
-  journeys (signup -> scan -> list -> buy) before any live pilot launch;
-  remove the gap note from TEST_PLAN when it lands.
+- #39 Frontend unit tests + Playwright E2E — **DONE 2026-10-22.** Vitest
+  (`tests/unit/`, 21 logic tests: API envelope normalization, credit math,
+  marketplace query building, analytics mappers) + Playwright
+  (`e2e/app.spec.js`, 6 tests: landing, trust center, honest data-source
+  labeling, demo corporate login journey, 2 axe-core critical-scan gates)
+  against the real FastAPI backend booted in forced demo mode
+  (`CARBONX_SKIP_DOTENV=1` wedge in `backend/app/main.py`). CI: `frontend`
+  job runs Vitest; new `e2e` job runs the whole browser suite on
+  ubuntu (Node 22). TEST_PLAN gap note removed; residual gaps (non-critical
+  axe rules, Leaflet canvas flows) listed in TEST_PLAN Known gaps.
