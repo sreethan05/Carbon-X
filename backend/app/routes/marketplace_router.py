@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -40,6 +41,30 @@ def _get_user(phone: str):
 def _cert_id_for_listing(listing_id: str) -> str:
     lid = str(listing_id or "").replace("-", "")[:8].upper() or "UNKNOWN"
     return f"CX-{datetime.now(timezone.utc).year}-CERT-{lid}"
+
+
+def _redact_phone(phone: Optional[str]) -> Optional[str]:
+    if not phone:
+        return None
+    raw = str(phone).strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) >= 10:
+        return f"{digits[:3]}****{digits[-2:]}"
+    if len(digits) >= 4:
+        return f"{digits[:1]}***{digits[-1:]}"
+    return "***"
+
+
+def _sanitize_listing_for_caller(listing: dict, caller: Optional[dict]) -> dict:
+    item = dict(listing)
+    caller_phone = (caller or {}).get("phone")
+    caller_role = (caller or {}).get("role")
+    is_owner = bool(caller_phone and caller_phone == item.get("farmer_phone"))
+    is_authorized = caller_role in ("admin", "fpo", "verifier")
+    if not (is_owner or is_authorized):
+        if "farmer_phone" in item:
+            item["farmer_phone"] = _redact_phone(item.get("farmer_phone"))
+    return item
 
 
 def _resolve_fpo_link(farm: Optional[dict], farmer_phone: str) -> str:
@@ -237,6 +262,7 @@ def marketplace_listings(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     cursor: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     try:
         query_kwargs = {
@@ -288,10 +314,11 @@ def marketplace_listings(
             f"[marketplace/listings] source={'LIVE DB' if source == 'live_db' else 'FALLBACK sample data'} "
             f"| matched={result['total']} | returned={len(result['listings'])} | filters={applied or 'default'}"
         )
+        sanitized = [_sanitize_listing_for_caller(l, current_user) for l in result["listings"]]
         return {
             "success": True, "source": source, "total": result["total"],
-            "count": len(result["listings"]), "filters": applied,
-            "listings": result["listings"], "next_cursor": next_cursor,
+            "count": len(sanitized), "filters": applied,
+            "listings": sanitized, "next_cursor": next_cursor,
         }
     except Exception as e:
         return {"success": False, "message": str(e), "source": "error", "total": 0, "count": 0, "listings": []}

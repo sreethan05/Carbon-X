@@ -48,8 +48,8 @@ export default function WelcomeTutorial() {
     },
     {
       step: 3,
-      title: t('tutorialTitle2') || 'UPI Wallet Settlements',
-      desc: t('tutorialDesc2') || 'Once carbon credits are verified and minted, funds are wired directly into your bank account via instant UPI.',
+      title: t('tutorialTitle2') || 'Ledger Settlements & Payouts',
+      desc: t('tutorialDesc2') || 'When credits are purchased, your 70% share is locked to your ledger. Payout rails are demonstrated in simulation mode during the pilot.',
       icon: Wallet,
       bgColor: 'bg-amber-50 text-amber-800 border-amber-200'
     }

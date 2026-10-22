@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -76,6 +77,40 @@ def _cert_id_for_listing(listing_id: str) -> str:
     return f"CX-{datetime.now(timezone.utc).year}-CERT-{listing_id.replace('-', '')[:8].upper()}"
 
 
+def _redact_phone(phone: Optional[str]) -> Optional[str]:
+    if not phone:
+        return None
+    raw = str(phone).strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) >= 10:
+        return f"{digits[:3]}****{digits[-2:]}"
+    if len(digits) >= 4:
+        return f"{digits[:1]}***{digits[-1:]}"
+    return "***"
+
+
+def _sanitize_certificate_for_caller(cert: dict, caller: Optional[dict]) -> dict:
+    item = dict(cert)
+    caller_name = (caller or {}).get("name")
+    caller_phone = (caller or {}).get("phone")
+    caller_role = (caller or {}).get("role")
+
+    is_buyer = bool(caller_name and item.get("issued_to") and str(caller_name).lower() == str(item.get("issued_to")).lower())
+    is_farmer = bool(caller_phone and item.get("farmer_phone") and caller_phone == item.get("farmer_phone"))
+    is_staff = caller_role in ("admin", "fpo", "verifier")
+
+    if not (is_buyer or is_farmer or is_staff):
+        # Commercial purchase transaction value is strictly confidential
+        item["value_inr"] = None
+        # Aggregate smallholder label on public view
+        if item.get("farmer_name"):
+            item["farmer_name"] = "Verified Telangana Smallholder"
+        # If certificate is unretired (held in escrow), protect private beneficiary name
+        if item.get("status") != "RETIRED":
+            item["issued_to"] = "Held in Registry Escrow"
+    return item
+
+
 # ─── Models ───
 
 class EarningsCalcModel(BaseModel):
@@ -95,7 +130,7 @@ class EarningsCalcModel(BaseModel):
 # ─── Endpoints ───
 
 @router.get("/certificates")
-def list_certificates():
+def list_certificates(current_user: Optional[dict] = Depends(get_current_user_optional)):
     rows = None
     if not db.is_ready():
         rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
@@ -114,9 +149,10 @@ def list_certificates():
         retired = str(r.get("status")).lower() == "retired"
         loc = r.get("location") or "Location not recorded"
         crop_label = f" ({r.get('crop')})" if r.get("crop") else ""
-        certificates.append({
+        raw_cert = {
             "id": _cert_id_for_listing(r.get("id")),
             "listing_id": r.get("id"),
+            "farmer_phone": r.get("farmer_phone"),
             "issued_to": sales.get("buyer") or None,
             "farmer_name": r.get("farmer_name"),
             "crop": r.get("crop"),
@@ -130,12 +166,13 @@ def list_certificates():
             "ledger_verified": chain.get("verified", False),
             "tx_hash": r.get("tx_hash"),
             "on_chain": False,
-        })
+        }
+        certificates.append(_sanitize_certificate_for_caller(raw_cert, current_user))
     return {"success": True, "certificates": certificates}
 
 
 @router.get("/certificates/{cert_id}")
-def get_certificate(cert_id: str):
+def get_certificate(cert_id: str, current_user: Optional[dict] = Depends(get_current_user_optional)):
     rows = None
     if not db.is_ready():
         rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
@@ -155,25 +192,27 @@ def get_certificate(cert_id: str):
     retired = str(row.get("status")).lower() == "retired"
     loc = row.get("location") or "Location not recorded"
     crop_label = f" ({row.get('crop')})" if row.get("crop") else ""
+    raw_cert = {
+        "id": cert_id,
+        "listing_id": row.get("id"),
+        "farmer_phone": row.get("farmer_phone"),
+        "issued_to": sales.get("buyer") or None,
+        "farmer_name": row.get("farmer_name"),
+        "crop": row.get("crop"),
+        "volume_mt": sales["credits"] if sales["found"] else row.get("total_credits"),
+        "value_inr": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
+        "source_parcels": [f"{loc}{crop_label}"],
+        "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
+        "retired_at": ((row.get("updated_at") or "")[:10] or None) if retired else None,
+        "status": "RETIRED" if retired else "HELD_IN_ESCROW",
+        "batch_hash": chain.get("tail_hash"),
+        "ledger_verified": chain.get("verified", False),
+        "tx_hash": row.get("tx_hash"),
+        "on_chain": False,
+    }
     return {
         "success": True,
-        "certificate": {
-            "id": cert_id,
-            "listing_id": row.get("id"),
-            "issued_to": sales.get("buyer") or None,
-            "farmer_name": row.get("farmer_name"),
-            "crop": row.get("crop"),
-            "volume_mt": sales["credits"] if sales["found"] else row.get("total_credits"),
-            "value_inr": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
-            "source_parcels": [f"{loc}{crop_label}"],
-            "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-            "retired_at": ((row.get("updated_at") or "")[:10] or None) if retired else None,
-            "status": "RETIRED" if retired else "HELD_IN_ESCROW",
-            "batch_hash": chain.get("tail_hash"),
-            "ledger_verified": chain.get("verified", False),
-            "tx_hash": row.get("tx_hash"),
-            "on_chain": False,
-        },
+        "certificate": _sanitize_certificate_for_caller(raw_cert, current_user),
     }
 
 
@@ -359,11 +398,25 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
         "cycle": "5-day Sentinel-2 revisit",
     }
 
+    caller_phone = (current_user or {}).get("phone")
+    caller_role = (current_user or {}).get("role")
+    is_owner = bool(caller_phone and caller_phone == farm.get("owner_phone"))
+    is_staff = caller_role in ("admin", "fpo", "verifier")
+
+    if is_owner or is_staff:
+        public_phone = farm.get("owner_phone")
+        public_owner = (owner or {}).get("name") or "Registered Farmer"
+    else:
+        public_phone = _redact_phone(farm.get("owner_phone"))
+        raw_name = (owner or {}).get("name") or "Registered Farmer"
+        parts = raw_name.split()
+        public_owner = f"{parts[0]} ***" if len(parts) > 1 else raw_name
+
     return {
         "success": True, "passport_id": f"CX-FARM-{str(farm_id).replace('-', '')[:8].upper()}",
         "demo_mode": demo_mode, "farm_name": farm.get("name"),
-        "owner_name": (owner or {}).get("name") or "Registered Farmer",
-        "phone": farm.get("owner_phone"),
+        "owner_name": public_owner,
+        "phone": public_phone,
         "district": (owner or {}).get("district"), "village": (owner or {}).get("village"),
         "crop": farm.get("crop_type"), "irrigation": farm.get("irrigation"),
         "acreage": farm.get("area_hectares"), "badge": badge, "benchmark_price": benchmark,

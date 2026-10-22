@@ -43,6 +43,7 @@ export default function DetailedFarmAnalytics() {
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [useDeviceLocation, setUseDeviceLocation] = useState(true);
+  const [publicConsent, setPublicConsent] = useState(false);
   const [photoStatus, setPhotoStatus] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
@@ -294,6 +295,7 @@ export default function DetailedFarmAnalytics() {
         latitude: lat,
         longitude: lon,
         capturedAt: new Date().toISOString(),
+        public_consent: publicConsent,
       });
       if (res && res.success) {
         const geotag = res.photo?.geotag;
@@ -307,6 +309,7 @@ export default function DetailedFarmAnalytics() {
         if (photoPreview) URL.revokeObjectURL(photoPreview);
         setPhotoFile(null);
         setPhotoPreview(null);
+        setPublicConsent(false);
         await reloadEvidenceAndPassport();
       } else {
         setPhotoStatus({
@@ -666,6 +669,21 @@ export default function DetailedFarmAnalytics() {
                   />
                   <span>Attach device GPS if EXIF is missing</span>
                 </label>
+              </div>
+
+              <div className="space-y-1.5 pt-2 border-t border-forest-100">
+                <label className="flex items-start gap-2 text-agriText-muted cursor-pointer text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={publicConsent}
+                    onChange={(e) => setPublicConsent(e.target.checked)}
+                    className="mt-0.5 rounded text-primary focus:ring-primary h-3.5 w-3.5"
+                  />
+                  <span>Allow public display of this photo on the farm trust card (private & confidential by default)</span>
+                </label>
+                <p className="text-[10px] text-amber-800 bg-amber-50/80 rounded p-1.5 leading-tight">
+                  🔒 Data privacy: Exact coordinates are always coarsened for public visitors. Original photos remain private to you and certified verifiers unless you opt-in.
+                </p>
               </div>
 
               <button

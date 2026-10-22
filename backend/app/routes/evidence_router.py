@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.security import get_current_user
+from app.security import get_current_user, get_current_user_optional
 from app import supabase_db as db
 from app.services import evidence_service as evidence
 
@@ -129,6 +129,7 @@ async def upload_evidence_photo(
     latitude: Optional[str] = Form(None),
     longitude: Optional[str] = Form(None),
     captured_at: Optional[str] = Form(None),
+    public_consent: Optional[bool] = Form(False),
     current_user: dict = Depends(get_current_user),
 ):
     """Attach a practice photo (multipart ``file``, ≤8 MB, JPEG/PNG/WebP).
@@ -218,6 +219,7 @@ async def upload_evidence_photo(
         "inside_boundary": stored_inside,
         "captured_at": captured,
         "created_by": (current_user or {}).get("phone"),
+        "is_public": bool(public_consent),
     }
     if not evidence.persist_record(record):
         raise HTTPException(
@@ -245,6 +247,7 @@ async def upload_evidence_photo(
             "size_bytes": len(data),
             "captured_at": captured,
             "geotag": geotag,
+            "is_public": bool(public_consent),
         },
         "components": _components(safe_id),
     }
@@ -298,11 +301,47 @@ def add_farm_geotag(
 
 
 @router.get("/farms/{farm_id}/evidence")
-def get_farm_evidence(farm_id: str):
-    """Open evidence listing (no auth; transparency, same posture as /passport)."""
+def get_farm_evidence(
+    farm_id: str,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Evidence listing: full metadata for owner/verifier; coarse/public for external callers."""
     safe_id = _safe_farm_id(farm_id)
     flags = evidence.evidence_flags(safe_id)
     listing = evidence.list_evidence(safe_id)
+
+    # Check if caller has authorized access to exact coordinates and private photos
+    caller_phone = (current_user or {}).get("phone")
+    caller_role = (current_user or {}).get("role")
+    farm = _load_farm(safe_id)
+    is_owner = bool(farm and caller_phone and farm.get("owner_phone") == caller_phone)
+    is_authorized = is_owner or (caller_role in ("admin", "fpo", "verifier"))
+
+    sanitized_photos = []
+    for p in listing.get("photos", []):
+        p_item = dict(p)
+        is_pub = bool(p_item.get("is_public", False))
+        if not is_authorized and not is_pub:
+            # Mask exact GPS and mark private for non-consented photos
+            p_item["private"] = True
+            if "latitude" in p_item:
+                p_item["latitude"] = None
+            if "longitude" in p_item:
+                p_item["longitude"] = None
+        sanitized_photos.append(p_item)
+
+    sanitized_geotags = []
+    for g in listing.get("geotags", []):
+        g_item = dict(g)
+        if not is_authorized:
+            # Obfuscate exact sub-meter GPS for public callers; preserve boundary verification claim
+            if "latitude" in g_item and g_item["latitude"] is not None:
+                g_item["latitude"] = round(float(g_item["latitude"]), 2)
+            if "longitude" in g_item and g_item["longitude"] is not None:
+                g_item["longitude"] = round(float(g_item["longitude"]), 2)
+            g_item["exact_coordinates_hidden"] = True
+        sanitized_geotags.append(g_item)
+
     return {
         "success": True,
         "farm_id": safe_id,
@@ -314,18 +353,26 @@ def get_farm_evidence(farm_id: str):
         "photo_count": flags["photo_count"],
         "geotag_count": flags["geotag_count"],
         "last_photo_at": flags["last_photo_at"],
-        "photos": listing["photos"],
-        "geotags": listing["geotags"],
+        "photos": sanitized_photos,
+        "geotags": sanitized_geotags,
     }
 
 
 @router.get("/farms/{farm_id}/evidence/photo/{sha256}")
-def get_evidence_photo(farm_id: str, sha256: str):
-    """Retrieve an evidence photo file by farm_id and its SHA-256 hash."""
+def get_evidence_photo(
+    farm_id: str,
+    sha256: str,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Retrieve an evidence photo file by farm_id and its SHA-256 hash.
+    
+    Access requires farm owner / verifier authorization unless the photo has explicit public consent.
+    """
     safe_id = _safe_farm_id(farm_id)
     clean_sha = str(sha256).strip().lower()
     if not re.match(r"^[0-9a-f]{16,64}$", clean_sha):
         raise HTTPException(status_code=400, detail="Invalid sha256 identifier")
+
     folder = os.path.join(evidence.evidence_dir(), safe_id)
     pattern = os.path.join(folder, f"{clean_sha[:16]}.*")
     matches = [p for p in glob.glob(pattern) if os.path.isfile(p)]
@@ -336,6 +383,25 @@ def get_evidence_photo(farm_id: str, sha256: str):
     real_folder = os.path.realpath(folder)
     if not (real_path.startswith(real_folder + os.sep) or real_path == real_folder):
         raise HTTPException(status_code=404, detail="Photo not found")
+
+    # Consent and authorization check
+    records = evidence.list_records(safe_id)
+    photo_rec = next((r for r in records if r.get("sha256") and r.get("sha256", "").lower().startswith(clean_sha[:16])), None)
+    is_public = bool(photo_rec and photo_rec.get("is_public"))
+
+    caller_phone = (current_user or {}).get("phone")
+    caller_role = (current_user or {}).get("role")
+    farm = _load_farm(safe_id)
+    is_owner = bool(farm and caller_phone and farm.get("owner_phone") == caller_phone)
+    is_creator = bool(caller_phone and photo_rec and photo_rec.get("created_by") == caller_phone)
+    is_authorized = is_owner or is_creator or (caller_role in ("admin", "fpo", "verifier"))
+
+    if not is_public and not is_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="Evidence photo is private. Farm owner or verifier authorization required.",
+        )
+
     ext = os.path.splitext(filepath)[1].lower().lstrip(".")
     mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
     return FileResponse(filepath, media_type=mime_map.get(ext, "image/jpeg"))

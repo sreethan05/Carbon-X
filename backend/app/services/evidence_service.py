@@ -55,6 +55,7 @@ _PUBLIC_FIELDS = (
     "inside_boundary",
     "captured_at",
     "created_at",
+    "is_public",
 )
 
 _LOCK = threading.RLock()

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Wallet, ArrowRight, CheckCircle2, Building, ArrowLeft, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Wallet, ArrowRight, CheckCircle2, Building, ArrowLeft, ShieldCheck, AlertTriangle, Info } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getWallet, demoLogin } from '../services/api';
 
@@ -165,6 +165,17 @@ export default function CarbonWallet() {
           </div>
         )}
 
+        {/* Pilot Disclosure Banner */}
+        <div className="bg-sky-50 border border-sky-200 text-sky-900 rounded-2xl p-4 flex items-start gap-3">
+          <Info className="w-5 h-5 text-sky-600 shrink-0 mt-0.5" />
+          <div className="text-xs space-y-1">
+            <p className="font-bold">Pilot Phase Notice — Ledger Accounting &amp; Simulation Rails</p>
+            <p className="text-sky-800 leading-relaxed">
+              Sales settle according to the 70% farmer floor on the immutable ledger. Payout actions in this pilot demonstrate the settlement calculation; actual banking API connections (NPCI / UPI 2.0 rails) are simulated until regulatory pilot clearance.
+            </p>
+          </div>
+        </div>
+
         {/* Financial Summary Banner */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-surface-sage border border-forest-200 text-carbon-900 shadow-card rounded-2xl p-6 flex flex-col justify-between">
@@ -208,7 +219,7 @@ export default function CarbonWallet() {
               className="mt-4 w-full py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <Wallet className="w-4 h-4" />
-              <span>{withdrawableUpi > 0 ? 'Simulate Instant UPI Payout' : 'No Withdrawable Balance'}</span>
+              <span>{withdrawableUpi > 0 ? 'Simulate UPI Payout Preview' : 'No Withdrawable Balance'}</span>
             </button>
           </div>
         </div>
@@ -298,7 +309,7 @@ export default function CarbonWallet() {
           </div>
         </div>
 
-        {/* Instant UPI Withdrawal Modal */}
+        {/* UPI Withdrawal Simulation Modal */}
         {showWithdrawModal && (
           <div className="fixed inset-0 z-50 bg-carbon-900/40 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-white border border-forest-100 shadow-2xl rounded-2xl p-6 max-w-md w-full space-y-4">

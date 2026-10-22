@@ -39,7 +39,8 @@ logger = logging.getLogger("carbonx.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup/shutdown: ledger loop bridge + the 5-day monitor scheduler."""
+    """Startup/shutdown: validate production config, ledger loop bridge + the 5-day monitor scheduler."""
+    app_config.validate_production_configuration()
     from app.services import ledger as _ledger
     _ledger.set_main_loop(asyncio.get_running_loop())
     monitor_task = None

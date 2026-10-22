@@ -1,6 +1,9 @@
 import os
 import re
 import secrets
+import hashlib
+from app import redis_store
+from app import supabase_db
 import bcrypt
 import logging
 from jose import jwt, JWTError
@@ -13,6 +16,22 @@ logger = logging.getLogger("carbonx.security")
 _DEV_EPHEMERAL_SECRET = secrets.token_urlsafe(48)
 ALGORITHM = "HS256"
 _BCRYPT_MAX_BYTES = 72
+JWT_ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_HOURS", "24"))
+
+
+def token_signature(token: str) -> str:
+    """Return a fixed-length SHA-256 identifier for a token string."""
+    return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
+
+
+def revoke_token(token: str, ttl_seconds: int = 86400) -> None:
+    """Add a token to the revocation blocklist for cross-worker invalidation."""
+    redis_store.revoke_token(token_signature(token), ttl_seconds=ttl_seconds)
+
+
+def is_token_revoked(token: str) -> bool:
+    """Check if a token has been revoked."""
+    return redis_store.is_token_revoked(token_signature(token))
 
 
 def _get_secret_key() -> str:
@@ -53,12 +72,14 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
     to_encode.setdefault("iat", int(now.timestamp()))
-    to_encode["exp"] = now + (expires_delta or timedelta(hours=72))
+    to_encode["exp"] = now + (expires_delta or timedelta(hours=JWT_ACCESS_TOKEN_EXPIRE_HOURS))
     return jwt.encode(to_encode, _get_secret_key(), algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> Optional[dict]:
     if not token or not isinstance(token, str):
+        return None
+    if is_token_revoked(token):
         return None
     try:
         return jwt.decode(token, _get_secret_key(), algorithms=[ALGORITHM])
@@ -75,9 +96,30 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     token = parts[1].strip()
     if not token:
         raise HTTPException(status_code=401, detail="Invalid token")
+    if is_token_revoked(token):
+        raise HTTPException(status_code=401, detail="Token has been revoked")
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    # When live DB is active, enforce real-time status and role changes
+    if supabase_db.is_ready():
+        phone = payload.get("phone")
+        c_id = payload.get("c_id")
+        if phone:
+            profile = supabase_db.get_profile(phone)
+            if profile is not None:
+                if profile.get("is_active") is False or profile.get("status") == "disabled":
+                    raise HTTPException(status_code=403, detail="Account has been deactivated")
+                db_role = profile.get("role")
+                if db_role and db_role != payload.get("role"):
+                    payload["role"] = db_role
+        elif c_id is not None:
+            corp = supabase_db.get_corporate_by_id(c_id)
+            if corp is not None:
+                if corp.get("is_active") is False or corp.get("status") == "disabled":
+                    raise HTTPException(status_code=403, detail="Corporate account has been deactivated")
+
     return payload
 
 
