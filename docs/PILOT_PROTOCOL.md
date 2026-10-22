@@ -147,7 +147,9 @@ See `docs/INDEPENDENT_REVIEW.md`. None of these reviews is currently obtained.
 - [ ] Signed FPO agreements and farmer consent forms.
 - [ ] Independent sampler and qualified lab contracted.
 - [ ] R1/R2/R4 reviews completed and published.
-- [ ] `supabase/10_trust_controls.sql` applied to the pilot database.
+- [x] `supabase/10_trust_controls.sql` applied to the pilot database
+      (applied to the live project 2026-10-22; re-run in a fresh pilot
+      project's SQL editor before pilot launch).
 - [ ] Redis-backed locks and durable ledger storage configured.
 - [ ] Incident/grievance log and data-request SLA owner assigned.
 - [ ] Test-buyer account and controlled funds approved.
