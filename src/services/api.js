@@ -718,6 +718,24 @@ export async function updateCorporateSettings(payload) {
   return request(`${PY}/corporate/settings`, { method: 'PUT', body: payload });
 }
 
+// ── Support & grievance tickets ──
+
+export async function createSupportTicket(payload) {
+  return post(`${PY}/support/tickets`, payload);
+}
+
+export async function getMySupportTickets(limit = 50) {
+  return request(`${PY}/support/tickets?limit=${limit}`);
+}
+
+export async function getSupportStaffQueue(status = '', limit = 100) {
+  return request(`${PY}/support/staff/queue?status=${encodeURIComponent(status)}&limit=${limit}`);
+}
+
+export async function updateSupportTicket(ticketId, payload) {
+  return post(`${PY}/support/tickets/${encodeURIComponent(ticketId)}/update`, payload);
+}
+
 // ── Documents ──
 
 export async function parsePahaniDocument(file) {

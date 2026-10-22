@@ -124,6 +124,12 @@ This guide covers production deployment for the CarbonX platform across three co
    - Execute purchase and download certificate PDF from `GET /certificates/{cert_id}/pdf`.
 4. **Monitoring Cycle**:
    - Trigger `POST /monitor/run` with `X-Monitor-Secret: <CARBONX_MONITOR_SECRET>`. Verify 200 OK.
+5. **Staging smoke suite**:
+   - `python scripts/staging_smoke.py --base https://staging-api.<domain> [--token <JWT>]`
+     checks health/dev-OTP state, public redaction on listings + certificate CSV,
+     validation labels/claims, privacy policy, `/metrics` and websocket route
+     behaviour. Wire this into a 5-minute synthetic cron once staging exists —
+     `/metrics` thresholds and alert wiring are defined in `docs/OPS_TARGETS.md`.
 
 Startup behaviour summary: in `CARBONX_ENVIRONMENT=production` the process
 **refuses to start** unless `JWT_SECRET_KEY` (>=32 chars, not a placeholder),
@@ -131,3 +137,6 @@ Startup behaviour summary: in `CARBONX_ENVIRONMENT=production` the process
 `CORS_ORIGINS`, and an explicit payment mode (`razorpay` with all three
 Razorpay credentials, or `simulated` with `CARBONX_ACCEPT_SIMULATED_PAYMENTS=1`)
 are configured, and unless `CARBONX_ALLOW_DEV_OTP` is disabled.
+
+Dependency/supply-chain updates follow `docs/SECURITY_UPDATES.md` (Dependabot +
+the weekly report-only audit workflow; severity-triaged, no silent bumps).

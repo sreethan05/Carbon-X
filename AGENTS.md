@@ -285,8 +285,8 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   uses `USER appuser`; `backend/Dockerfile.node` uses `USER node`); docker-compose passes all
   payment, monitoring, and security variables; CI workflow `.github/workflows/ci.yml` runs
   frontend lint/build and hermetic backend tests.
-- **Gates**: backend 502 tests green (1 skipped live-DB opt-in), eslint 0 errors /
-  0 warnings, vite build OK.
+- **Gates**: backend tests green (1 skipped live-DB opt-in), eslint 0 errors /
+  0 warnings, vite build OK. Count documented in README (updates with suites).
 
 ## Trust program (2026-10-22 — validation, privacy, lifecycle, payouts, public access)
 
@@ -315,6 +315,12 @@ Implements the P0/P1 honesty work. Handler modules:
 - `app/routes/corporate_router.py` + `app/services/corporate_settings.py` —
   server-side buyer target (`corporate_settings` table; labelled in-memory
   fallback until the migration is applied).
+- `app/routes/support_router.py` + `app/services/support_tickets.py` —
+  farmer grievance ops (`support_tickets` table; memory fallback): categories
+  boundary/ownership/estimate/payout/privacy/other, statuses
+  Open→In Review→Resolved/Rejected, written resolution required to close;
+  reporter-scoped reads, staff queue + updates. "My Requests" panel in
+  Supporthero (`src/pages/SupportCenter.jsx`).
 
 Production hardening in `config.validate_production_configuration`: production
 startup blocks unless JWT secret (≥32 chars), Supabase service vars, managed
@@ -325,7 +331,8 @@ explicit payment mode (`razorpay` + all credentials, or `simulated` with
 **Migration `supabase/10_trust_controls.sql` is idempotent but NOT yet applied**
 (DDL not possible from this machine) — before any live production/pilot deploy:
 consent/privacy evidence tables + columns, monitor lifecycle columns, sale
-lifecycle columns, evidence/KYC deletion markers, and `corporate_settings`.
+lifecycle columns, evidence/KYC deletion markers, `corporate_settings`
+(section 9) and `support_tickets` (section 10).
 
 Honesty docs (all external items explicitly NOT-done): `docs/VALIDATION_PROTOCOL.md`,
 `docs/INDEPENDENT_REVIEW.md` (register of reviews NOT obtained),

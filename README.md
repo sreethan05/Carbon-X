@@ -115,12 +115,13 @@ model, and every surface shows what it is running on.
 ## Tests & CI
 
 ```powershell
-cd backend; python -m unittest discover tests   # ~499 tests: split/ledger/credit/ML/evidence/payments/voice/privacy/lifecycle
+cd backend; python -m unittest discover tests   # 510 tests: split/ledger/credit/ML/evidence/payments/voice/privacy/lifecycle/support/journeys
 npm run lint && npm run build
 ```
 
 CI runs lint + build + the backend suite on every push
-(.github/workflows/ci.yml).
+(.github/workflows/ci.yml). A weekly report-only dependency audit runs in
+.github/workflows/security-audit.yml (triage per docs/SECURITY_UPDATES.md).
 
 ## Repository map
 
@@ -129,16 +130,18 @@ src/                    React 18 + Vite + Tailwind frontend (port 5000)
 backend/app/            FastAPI composition root (port 8000)
 backend/app/routes/     modular domain routers (analyze, auth, corporate, evidence,
                         farms, fpo, marketplace, monitor, ops, payments, privacy,
-                        trust, validation, ws)
+                        support, trust, validation, ws)
 backend/app/services/   split_engine · ledger · credit_engine · evidence_service ·
                         payments · ml_service · certificate_pdf · gee_service · …
 backend/app/voice_agent/ vernacular voice assistant (Sarvam STT, TTS, Chat with role enforcement)
 backend/src/            optional Polygon-minting service (port 3001, roadmap)
-scripts/                seeding · scale simulation · tamper demo · SoilGrids ingestion
+scripts/                seeding · scale simulation · tamper demo · SoilGrids ingestion ·
+                        daily backup · staging smoke
 docs/                   architecture · methodology · model card · validation
                         protocol · independent review register · privacy DPIA ·
                         credit lifecycle · public access · pilot protocol ·
-                        economics · compliance · impact · demo · roadmap · deployment
+                        ops targets/alerts · security updates · economics ·
+                        compliance · impact · demo · roadmap · deployment
 ```
 
 ## License

@@ -244,6 +244,8 @@ from app.routes.validation_router import router as validation_router
 from app.routes.privacy_router import router as privacy_router, ops_router as ops_privacy_router
 from app.routes.fpo_router import router as fpo_router
 from app.routes.corporate_router import router as corporate_router
+from app.routes.support_router import router as support_router
+
 from app.voice_agent.voice_routes import router as voice_router
 
 app.include_router(analyze_router)
@@ -262,4 +264,5 @@ app.include_router(privacy_router)
 app.include_router(ops_privacy_router)
 app.include_router(fpo_router)
 app.include_router(corporate_router)
+app.include_router(support_router)
 app.include_router(voice_router)

@@ -23,6 +23,7 @@ published or linked before the corresponding claim is shown publicly.
 | R4 | Pilot ethics / consent | Independent reviewer or institutional ethics contact | Farmer recruitment, consent language, withdrawal, grievance, data minimisation, photo consent | **NOT OBTAINED** |
 | R5 | Financial controls | Chartered accountant or payments/audit specialist | Split eligibility, rounding, escrow, refunds, reconciliation, payout statements | **NOT OBTAINED** |
 | R6 | Registry / certification pathway | Registry-approved VVB or methodology expert | Whether the methodology can be listed/verified and what evidence is missing | **NOT OBTAINED** |
+| R7 | Language / consent comprehension (native speaker) | Native Telugu and Hindi reviewer with readability experience | Telugu/Hindi UI copy and consent text, especially financial and agronomy wording (`src/context/LanguageContext.jsx`, `/trust`, `/support`) | **NOT OBTAINED** |
 
 Statuses may change only to `IN REVIEW`, `COMPLETED` or `REJECTED`, with a
 reviewer name, date, signed scope and link to the deliverable. A verbal opinion

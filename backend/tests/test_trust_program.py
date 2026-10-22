@@ -552,5 +552,98 @@ class CorporateSettingsTests(unittest.TestCase):
         self.assertEqual(anon.status_code, 401)
 
 
+class SupportTicketsTests(unittest.TestCase):
+    """Grievance ops: track, scope and resolve requests without editing money."""
+
+    FARMER_A = "9770011001"
+    FARMER_B = "9770011002"
+
+    def setUp(self):
+        import app.services.support_tickets as svc
+
+        svc.reset_memory()
+        self._svc = svc
+
+    def test_farmer_can_file_and_see_own_ticket_only(self):
+        res_a = client.post(
+            "/support/tickets",
+            json={"category": "boundary", "title": "Boundary misses south canal",
+                  "detail": "Mapped boundary excludes the spelling-error canal strip."},
+            headers=_token(self.FARMER_A),
+        )
+        self.assertTrue(res_a.json().get("success"), res_a.json())
+        ticket_id = res_a.json()["ticket"]["id"]
+
+        own = client.get("/support/tickets", headers=_token(self.FARMER_A)).json()
+        self.assertTrue(own["success"])
+        self.assertEqual([t["id"] for t in own["tickets"]], [ticket_id])
+        self.assertEqual(own["tickets"][0]["status"], "Open")
+
+        b = client.get("/support/tickets", headers=_token(self.FARMER_B)).json()
+        self.assertEqual(b.get("tickets"), [])
+
+        anon = client.get("/support/tickets")
+        self.assertEqual(anon.status_code, 401)
+
+    def test_staff_resolution_requires_written_reason(self):
+        created = client.post(
+            "/support/tickets",
+            json={"category": "estimate", "title": "Estimate looks too high",
+                  "detail": "Credits doubled after neighbour sold three plots."},
+            headers=_token(self.FARMER_A),
+        ).json()
+        self.assertTrue(created.get("success"), created)
+        tid = created["ticket"]["id"]
+
+        # Unauthorized caller cannot move tickets
+        res_other = client.post(
+            f"/support/tickets/{tid}/update",
+            json={"status": "Resolved"},
+            headers=_token(self.FARMER_B),
+        )
+        self.assertEqual(res_other.status_code, 403)
+
+        # Staff cannot end a ticket without a written resolution
+        no_reason = client.post(
+            f"/support/tickets/{tid}/update",
+            json={"status": "Resolved"},
+            headers=_token("9000000001", role="fpo"),
+        )
+        self.assertEqual(no_reason.status_code, 422)
+
+        # Staff resolve path works end to end
+        resolved = client.post(
+            f"/support/tickets/{tid}/update",
+            json={
+                "status": "Resolved",
+                "staff_notes": "FPO walkover matched earlier survey.",
+                "resolution": "Estimate unchanged; farmer accepted with the field note.",
+            },
+            headers=_token("9000000001", role="fpo"),
+        )
+        self.assertTrue(resolved.json().get("success"), resolved.json())
+        row = resolved.json()["ticket"]
+        self.assertEqual(row["status"], "Resolved")
+        self.assertTrue(row["resolved_at"])
+
+        # Reporter sees the resolution, but staff identity stays de-marked
+        own = client.get("/support/tickets", headers=_token(self.FARMER_A)).json()
+        self.assertEqual(own["tickets"][0]["resolution"], "Estimate unchanged; farmer accepted with the field note.")
+
+    def test_invalid_category_and_too_short_detail_rejected(self):
+        res = client.post(
+            "/support/tickets",
+            json={"category": "money", "title": "Valid title here", "detail": "Explain the issue " * 4},
+            headers=_token(self.FARMER_A),
+        )
+        self.assertEqual(res.status_code, 422)
+        res = client.post(
+            "/support/tickets",
+            json={"category": "other", "title": "Valid title here", "detail": "short"},
+            headers=_token(self.FARMER_A),
+        )
+        self.assertEqual(res.status_code, 422)
+
+
 if __name__ == "__main__":
     unittest.main()

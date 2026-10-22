@@ -144,3 +144,33 @@ create table if not exists corporate_settings (
 alter table public.corporate_settings enable row level security;
 revoke all on public.corporate_settings from anon, authenticated;
 grant select, insert, update, delete on public.corporate_settings to service_role;
+
+-- ─── 10. Farmer support / grievance tickets ─────────────────────────────────
+-- Farmers must be able to report wrong boundaries, ownership mismatches,
+-- disputed estimates and missing payouts, and follow resolution in the app.
+create extension if not exists pgcrypto;
+create table if not exists support_tickets (
+  id             uuid primary key default gen_random_uuid(),
+  reporter_phone text not null,
+  farm_id        text,
+  category       text not null check (category in
+                   ('boundary', 'ownership', 'estimate', 'payout', 'privacy', 'other')),
+  status         text not null default 'Open' check (status in
+                   ('Open', 'In Review', 'Resolved', 'Rejected')),
+  title          text not null,
+  detail         text not null,
+  staff_notes    text,
+  resolution     text,
+  handled_by     text,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now(),
+  resolved_at    timestamptz
+);
+create index if not exists support_tickets_reporter_idx
+  on public.support_tickets(reporter_phone, created_at desc);
+create index if not exists support_tickets_open_idx
+  on public.support_tickets(status, created_at desc)
+  where status in ('Open', 'In Review');
+alter table public.support_tickets enable row level security;
+revoke all on public.support_tickets from anon, authenticated;
+grant select, insert, update on public.support_tickets to service_role;
