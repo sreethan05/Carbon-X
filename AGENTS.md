@@ -382,7 +382,8 @@ python scripts/seed_marketplace_data.py                 # seed sample marketplac
   demo mode (`CARBONX_SKIP_DOTENV=1` in `backend/app/main.py` — prevents a
   developer's `backend/.env` from overriding injected vars) + Vite dev proxy,
   walks landing/trust/marketplace/corporate-login journeys, and gates axe-core
-  `critical` violations on `/` and `/marketplace`.
+  `critical` violations on four public routes. 2026-10-22 full-severity audit
+  fixed every axe finding (incl. serious contrast) to 0 on those routes.
 - CI (`.github/workflows/ci.yml`): `frontend` job = lint + Vitest + build on
   Node 22 (Vitest 4 floor); new `e2e` job = uvicorn + vite via webServer
   array, `npx playwright install --with-deps chromium`, report artifact on

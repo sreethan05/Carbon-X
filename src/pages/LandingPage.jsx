@@ -19,7 +19,7 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900">
+    <main className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900">
       {/* Full-width Organic Green Header */}
       <header className="sticky top-0 z-50 bg-[#0C2A18] border-b border-emerald-900 text-white px-4 md:px-10 py-3.5 shadow-md">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
@@ -94,7 +94,7 @@ export default function LandingPage() {
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <button
               onClick={() => navigate('/farmer/register')}
-              className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
+              className="px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
             >
               <span>Farmer Voice Registration</span>
               <ArrowRight className="w-4 h-4" />
@@ -297,6 +297,6 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
-    </div>
+    </main>
   );
 }

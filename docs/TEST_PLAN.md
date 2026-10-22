@@ -78,8 +78,10 @@ CI also skips 2 live-Earth-Engine tests without GEE creds).
 
 - Ground-truth validation eval returns an honest empty state until real field
   SOC samples exist (external dependency, not a test gap).
-- axe accessibility gating covers `/` and `/marketplace` (critical violations
-  only); other routes are scanned ad-hoc, not gated in CI yet.
+- axe accessibility: gated in CI on `/`, `/marketplace`, `/trust`,
+  `/corporate/login` at `critical`; on 2026-10-22 all four were audited at
+  **every severity and fixed to zero findings** (contrast tokens, missing
+  `<main>` landmarks). Remaining pages get the same treatment opportunistically.
 - The gated Playwright suite covers the public surfaces + demo corporate login.
   The full farmer signup → scan → list → buy money journey is exercised by the
   510-test backend suite and API integration tests; browser-canvas flows (Leaflet

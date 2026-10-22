@@ -66,13 +66,16 @@ test.describe('corporate buyer journey (demo credentials, DB-off)', () => {
 });
 
 test.describe('accessibility (axe-core)', () => {
-  // Gated on the highest-severity class only; lower-severity findings are
-  // reviewed and tracked rather than blocking CI.
-  for (const path of ['/', '/marketplace']) {
+  const gatedRoutes = ['/', '/marketplace', '/trust', '/corporate/login'];
+
+  for (const path of gatedRoutes) {
     test(`no critical accessibility violations on ${path}`, async ({ page }) => {
       await page.goto(path);
-      // Wait for network to settle so async content is in the DOM before scan.
-      await page.waitForLoadState('networkidle');
+      // domcontentloaded + settle: networkidle proved brittle on dev servers
+      // (Vite re-optimization stalls and long-polling) while the DOM-settled
+      // app is already scannable.
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(2000);
       const axe = new AxeBuilder({ page });
       const results = await axe.analyze();
       const critical = results.violations.filter((v) => v.impact === 'critical');

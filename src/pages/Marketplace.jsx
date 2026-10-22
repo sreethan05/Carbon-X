@@ -444,7 +444,7 @@ export default function Marketplace() {
                       </div>
                       <div className="text-right shrink-0">
                         <p className="text-lg font-extrabold text-emerald-800 font-manrope">₹{item.price ?? '—'}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">per credit</p>
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">per credit</p>
                       </div>
                     </div>
 
@@ -457,15 +457,15 @@ export default function Marketplace() {
 
                     <div className="grid grid-cols-3 gap-2 text-center">
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">Available</p>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase">Available</p>
                         <p className="text-xs font-extrabold text-slate-900">{item.available ?? '—'}</p>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">Carbon</p>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase">Carbon</p>
                         <p className="text-xs font-extrabold text-slate-900">{item.carbonScore ?? '—'} t</p>
                       </div>
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase">Bio</p>
+                        <p className="text-[9px] font-bold text-slate-500 uppercase">Bio</p>
                         <p className="text-xs font-extrabold text-slate-900">{item.bioScore ?? '—'} t</p>
                       </div>
                     </div>
@@ -555,7 +555,7 @@ export default function Marketplace() {
                       {purchaseProof.split.lines.map(line => (
                         <div key={line.recipient} className="flex justify-between items-center">
                           <span className="text-slate-600 font-semibold">
-                            {line.recipient} <span className="text-slate-400">· {line.share_pct}%</span>
+                            {line.recipient} <span className="text-slate-500">· {line.share_pct}%</span>
                           </span>
                           <span className="font-mono font-bold text-slate-900">₹{Number(line.amount_inr).toLocaleString('en-IN')}</span>
                         </div>

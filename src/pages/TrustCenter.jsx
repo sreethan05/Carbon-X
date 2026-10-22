@@ -222,22 +222,22 @@ export default function TrustCenter() {
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-xl bg-surface-sage/60 border border-forest-100 p-3">
-                <span className="text-[10px] uppercase tracking-wide text-agriText-subtle font-bold">Verified rate samples</span>
+                <span className="text-[10px] uppercase tracking-wide text-agriText-muted font-bold">Verified rate samples</span>
                 <p className="text-xl font-extrabold text-carbon-900">{counts.verified_rate_samples ?? 0}</p>
                 <p className="text-[10px] text-agriText-muted">minimum {thresholds.min_verified_samples ?? 30}</p>
               </div>
               <div className="rounded-xl bg-surface-sage/60 border border-forest-100 p-3">
-                <span className="text-[10px] uppercase tracking-wide text-agriText-subtle font-bold">MAPE</span>
+                <span className="text-[10px] uppercase tracking-wide text-agriText-muted font-bold">MAPE</span>
                 <p className="text-xl font-extrabold text-carbon-900">{metrics.mape_pct == null ? '—' : `${metrics.mape_pct}%`}</p>
                 <p className="text-[10px] text-agriText-muted">limit {thresholds.max_mape_pct ?? 30}%</p>
               </div>
               <div className="rounded-xl bg-surface-sage/60 border border-forest-100 p-3">
-                <span className="text-[10px] uppercase tracking-wide text-agriText-subtle font-bold">Absolute bias</span>
+                <span className="text-[10px] uppercase tracking-wide text-agriText-muted font-bold">Absolute bias</span>
                 <p className="text-xl font-extrabold text-carbon-900">{metrics.bias_pct == null ? '—' : `${metrics.bias_pct}%`}</p>
                 <p className="text-[10px] text-agriText-muted">limit {thresholds.max_abs_bias_pct ?? 20}%</p>
               </div>
               <div className="rounded-xl bg-surface-sage/60 border border-forest-100 p-3">
-                <span className="text-[10px] uppercase tracking-wide text-agriText-subtle font-bold">CI90 coverage</span>
+                <span className="text-[10px] uppercase tracking-wide text-agriText-muted font-bold">CI90 coverage</span>
                 <p className="text-xl font-extrabold text-carbon-900">{metrics.ci90_coverage_pct == null ? '—' : `${metrics.ci90_coverage_pct}%`}</p>
                 <p className="text-[10px] text-agriText-muted">minimum {thresholds.min_ci90_coverage_pct ?? 50}%</p>
               </div>
@@ -281,7 +281,7 @@ export default function TrustCenter() {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="text-[10px] uppercase tracking-wide text-agriText-subtle border-b border-forest-100">
+                  <tr className="text-[10px] uppercase tracking-wide text-agriText-muted border-b border-forest-100">
                     <th className="py-2 pr-3">Record</th>
                     <th className="py-2 pr-3">Public</th>
                     <th className="py-2">Owner / buyer / staff</th>
@@ -331,7 +331,7 @@ export default function TrustCenter() {
                           </span>
                           <span className="block text-[11px] text-agriText-muted">{meta.description}</span>
                           {consent?.current?.[purpose]?.captured_at && (
-                            <span className="block text-[10px] text-agriText-subtle mt-1">
+                            <span className="block text-[10px] text-agriText-muted mt-1">
                               Last updated {String(consent.current[purpose].captured_at).slice(0, 10)}
                             </span>
                           )}
@@ -410,7 +410,7 @@ export default function TrustCenter() {
                 {requests.length > 0 && (
                   <div className="rounded-xl border border-forest-100 overflow-hidden">
                     <table className="w-full text-left text-[11px]">
-                      <thead className="bg-surface-sage/60 text-agriText-subtle uppercase text-[9px] tracking-wide">
+                      <thead className="bg-surface-sage/60 text-agriText-muted uppercase text-[9px] tracking-wide">
                         <tr><th className="p-2">Type</th><th className="p-2">Status</th><th className="p-2">Created</th></tr>
                       </thead>
                       <tbody className="divide-y divide-forest-50">

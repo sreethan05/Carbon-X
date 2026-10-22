@@ -42,7 +42,7 @@ export default function CorporateLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
+    <main className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
       <div className="max-w-md w-full space-y-6">
 
         {/* Corporate Auth Card */}
@@ -55,7 +55,7 @@ export default function CorporateLogin() {
               <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
                 Institutional Buyer Desk
               </span>
-              <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+              <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded">
                 ESG / BRSR
               </span>
             </div>
@@ -121,6 +121,6 @@ export default function CorporateLogin() {
         </div>
 
       </div>
-    </div>
+    </main>
   );
 }
