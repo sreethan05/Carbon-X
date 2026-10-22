@@ -63,3 +63,9 @@ and the trigger for doing them. "Deferred" ≠ rejected.
   only). build-push-action v6 bundles a provenance/attestations default
   change, so the bump needs individual verification of image metadata before
   landing.
+- #39 Frontend unit tests + Playwright E2E - the React app runs only lint +
+  build gates today (stated honestly in docs/TEST_PLAN.md Known gaps); the
+  API contract coverage lives in the backend suite. Add Vitest for pure logic
+  (money formatting, form validation) and a Playwright suite for the 4 core
+  journeys (signup -> scan -> list -> buy) before any live pilot launch;
+  remove the gap note from TEST_PLAN when it lands.
