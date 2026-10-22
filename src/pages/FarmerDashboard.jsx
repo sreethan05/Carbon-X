@@ -14,12 +14,14 @@ import {
 import VerificationBadge from '../components/VerificationBadge';
 import EarningsCalculator from '../components/EarningsCalculator';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { getMarketplaceListings } from '../services/api';
 
 export default function FarmerDashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, farms: realFarms, refreshUser } = useAuth();
+  const { t } = useLanguage();
 
   useEffect(() => {
     refreshUser();
@@ -134,12 +136,12 @@ export default function FarmerDashboard() {
               {currentFarm.flagged && (
                 <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider bg-amber-100 border border-amber-300 px-2 py-0.5 rounded flex items-center gap-1">
                   <AlertCircle className="w-3 h-3 text-amber-700" />
-                  Monitoring Flagged
+                  {t('monitoringFlagged', 'Monitoring Flagged')}
                 </span>
               )}
               {navState.farmerName && (
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100 border border-slate-200 px-2 py-0.5 rounded">
-                  FPO Inspected Record
+                  {t('fpoInspected', 'FPO Inspected Record')}
                 </span>
               )}
             </div>
@@ -147,7 +149,7 @@ export default function FarmerDashboard() {
             <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5 font-medium">
               <MapPin className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
               <span>
-                {village}, {district} | Selected Land Parcel: Survey {currentFarm.surveyNumber} (
+                {village}, {district} | {t('selectedLandParcel', 'Selected Land Parcel:')} Survey {currentFarm.surveyNumber} (
                 {currentFarm.areaHectares ?? '—'} ha)
               </span>
             </p>
@@ -156,7 +158,7 @@ export default function FarmerDashboard() {
           {/* Right-Aligned Horizontal Pill Selector (only if multiple farms exist) */}
           {farms.length > 1 && !navState.surveyNumber && (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-bold text-slate-500 mr-1">Switch Farm:</span>
+              <span className="text-xs font-bold text-slate-500 mr-1">{t('switchFarm', 'Switch Farm:')}</span>
               {farms.map((f, idx) => (
                 <button
                   key={f.id || idx}
@@ -178,7 +180,7 @@ export default function FarmerDashboard() {
         {farms.length === 0 && (
           <div className="bg-white border border-emerald-200 rounded-2xl p-8 text-center space-y-3 shadow-sm">
             <MapPin className="w-10 h-10 text-emerald-700 mx-auto" />
-            <h2 className="text-lg font-extrabold text-slate-900 font-manrope">No farms enrolled yet</h2>
+            <h2 className="text-lg font-extrabold text-slate-900 font-manrope">{t('noFarmsEnrolled', 'No farms enrolled yet')}</h2>
             <p className="text-xs text-slate-500 max-w-md mx-auto">
               Verify your land ownership, draw your parcel boundary, and run the satellite scan to mint your first carbon credits.
             </p>
@@ -187,7 +189,7 @@ export default function FarmerDashboard() {
               className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white font-bold text-xs rounded-xl transition-all shadow-sm inline-flex items-center gap-2"
             >
               <ShieldCheck className="w-4 h-4" />
-              <span>Enroll Your First Parcel</span>
+              <span>{t('enrollFirstParcel', 'Enroll Your First Parcel')}</span>
             </button>
           </div>
         )}

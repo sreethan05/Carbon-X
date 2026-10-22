@@ -131,7 +131,7 @@ export default function SupportCenter() {
           CarbonX operates under strict scientific honesty and verifiable claims. The statements below reflect the exact system architecture, code invariants, and pilot scope:
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
           {TRUTH_DISCLOSURES.map((item, idx) => {
             const Icon = item.icon;
             return (
@@ -172,7 +172,7 @@ export default function SupportCenter() {
           Pilot Helpdesk & Contact Channels
         </h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div className="bg-forest-50/60 border border-forest-100 rounded-xl p-4 flex items-start gap-3">
             <div className="p-2.5 bg-forest-100 text-forest-700 rounded-xl shrink-0">
               <PhoneCall className="w-4 h-4" />
@@ -195,7 +195,7 @@ export default function SupportCenter() {
             </div>
           </div>
 
-          <div className="bg-forest-50/60 border border-forest-100 rounded-xl p-4 flex items-start gap-3">
+          <div className="bg-forest-50/60 border border-forest-100 rounded-xl p-4 flex items-start gap-3 sm:col-span-2 lg:col-span-1">
             <div className="p-2.5 bg-forest-100 text-forest-700 rounded-xl shrink-0">
               <Clock className="w-4 h-4" />
             </div>
@@ -248,7 +248,7 @@ export default function SupportCenter() {
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder="Ask about farm mapping, credit calculations, 70% split floor, or hash ledger..."
-            className="flex-1 p-2.5 bg-forest-50/50 border border-forest-100 rounded-xl text-xs focus:outline-none focus:border-forest-600 focus:bg-white text-carbon-900"
+            className="flex-1 min-w-0 p-2.5 bg-forest-50/50 border border-forest-100 rounded-xl text-xs focus:outline-none focus:border-forest-600 focus:bg-white text-carbon-900"
           />
           <button
             type="submit"

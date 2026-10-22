@@ -10,15 +10,21 @@ from typing import Optional
 
 logger = logging.getLogger("carbonx.security")
 
-_DEFAULT_SECRET = "carbonx_dev_secret_change_in_production"
+_DEV_EPHEMERAL_SECRET = secrets.token_urlsafe(48)
 ALGORITHM = "HS256"
 _BCRYPT_MAX_BYTES = 72
 
 
 def _get_secret_key() -> str:
-    """Retrieve the active JWT secret key, allowing runtime environment overrides."""
+    """Retrieve a configured JWT key; production must never use a fallback."""
     secret = os.getenv("JWT_SECRET_KEY", "").strip()
-    return secret or _DEFAULT_SECRET
+    if secret:
+        return secret
+    if os.getenv("CARBONX_ENVIRONMENT", "development").strip().lower() in {"production", "prod"}:
+        raise RuntimeError("JWT_SECRET_KEY must be set in production")
+    # Development-only: an ephemeral process key is safer than a known shared
+    # default and intentionally invalidates sessions after a restart.
+    return _DEV_EPHEMERAL_SECRET
 
 
 # Backwards compatibility for modules importing SECRET_KEY directly

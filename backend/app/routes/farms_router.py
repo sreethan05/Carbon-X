@@ -353,7 +353,7 @@ def save_farm(data: SaveFarmModel, current_user: dict = Depends(get_current_user
 
 @router.get("/farm/{farm_id}/ndvi-history")
 @router.get("/farms/{farm_id}/ndvi-history")
-def get_farm_ndvi_history(farm_id: str):
+def get_farm_ndvi_history(farm_id: str, current_user: dict = Depends(get_current_user)):
     """Only stored measurements — never an interpolated time series.
 
     The farm row carries the latest Sentinel-2 NDVI plus (after a monitoring
@@ -364,6 +364,9 @@ def get_farm_ndvi_history(farm_id: str):
     farm = db.get_farm(farm_id) if db.is_ready() else None
     if not farm:
         return {"success": False, "message": "Farm not found", "history": [], "recommendations": []}
+    role = str(current_user.get("role", "")).lower()
+    if role not in ("admin", "verifier") and farm.get("owner_phone") != current_user.get("phone"):
+        raise HTTPException(status_code=403, detail="You do not have access to this farm history")
 
     base_ndvi = float(farm.get("ndvi") or 0)
     history = []

@@ -294,6 +294,8 @@ def fpo_onboard_farmer(data: FpoOnboardModel, current_user: dict = Depends(requi
             },
             "farm_id": (saved_farm or {}).get("id"),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         return {"success": False, "message": str(e)}
 

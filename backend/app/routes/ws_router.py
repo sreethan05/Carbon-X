@@ -17,6 +17,8 @@ from collections import deque
 from fastapi import APIRouter, WebSocket
 
 from app import redis_store
+from app import supabase_db as db
+from app.security import decode_token
 from app.services import ledger
 
 logger = logging.getLogger("carbonx.ws")
@@ -137,6 +139,25 @@ def _stop_listener_if_idle(farm_id: str) -> None:
 
 @router.websocket("/ws/ledger/{farm_id}")
 async def websocket_ledger(ws: WebSocket, farm_id: str):
+    # Browser WebSockets cannot send an Authorization header reliably, so the
+    # short-lived bearer token is supplied as a query value. Reject before
+    # accepting: ledger history is not public data.
+    token = ws.query_params.get("token", "")
+    user = decode_token(token) if token else None
+    if not user and db.is_ready():
+        await ws.close(code=4401, reason="Authentication required")
+        return
+    if db.is_ready() and user:
+        farm = db.get_farm(farm_id)
+        role = str(user.get("role", "")).lower()
+        if not farm:
+            await ws.close(code=4404, reason="Farm not found")
+            return
+        if role not in ("admin", "verifier") and farm.get("owner_phone") != user.get("phone"):
+            profile = db.get_profile(user.get("phone") or "") if role == "fpo" else {}
+            if not (role == "fpo" and profile and profile.get("fpo_id") == farm.get("fpo_id")):
+                await ws.close(code=4403, reason="Access denied")
+                return
     await ws.accept()
     _subscribers.setdefault(farm_id, set()).add(ws)
     _ensure_listener(farm_id)

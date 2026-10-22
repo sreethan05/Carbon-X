@@ -51,7 +51,9 @@ export function AuthProvider({ children }) {
   });
   const [farms, setFarms] = useState(() => safeGetJson('carbonx_farms', []));
   const [kyc, setKyc] = useState(() => safeGetJson('carbonx_kyc', null));
-  const [loading, setLoading] = useState(false);
+  // Do not render protected routes as logged-out while a persisted session is
+  // being validated; otherwise a page refresh can incorrectly bounce users.
+  const [loading, setLoading] = useState(() => Boolean(safeGetStorage('carbonx_token')));
 
   // Track mounted state to prevent state updates after unmount
   const isMountedRef = useRef(true);

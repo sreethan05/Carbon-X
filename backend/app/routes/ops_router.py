@@ -29,7 +29,7 @@ class GroundTruthModel(BaseModel):
 # ─── Endpoints ───
 
 @router.get("/summary")
-def ops_summary():
+def ops_summary(current_user: dict = Depends(require_role("admin", "verifier", "fpo"))):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database not configured", "mode": "demo"}
@@ -79,7 +79,7 @@ def add_ground_truth(data: GroundTruthModel,
 
 
 @router.get("/ground-truth/eval")
-def evaluate_ground_truth():
+def evaluate_ground_truth(current_user: Optional[dict] = Depends(get_current_user_optional)):
     sb = db._client()
     if not sb:
         return {"success": False, "message": "Database not configured"}
@@ -200,54 +200,3 @@ def calibrate_crop_factors(current_user: dict = Depends(require_role("admin", "v
 NDVI_DROP_ALERT = app_config.NDVI_DROP_ALERT
 
 
-@router.post("/monitor/run")
-def run_monitoring_cycle(current_user: Optional[dict] = Depends(get_current_user_optional),
-                         x_monitor_secret: Optional[str] = Header(None)):
-    """5-day continuous monitoring (the real Sentinel-2 revisit cycle)."""
-    required_secret = app_config.MONITOR_SECRET
-    if required_secret and x_monitor_secret != required_secret:
-        if not (current_user and current_user.get("role") in ("fpo", "admin", "verifier")):
-            return {"success": False, "message": "Monitoring requires the monitor secret or an FPO/admin session"}
-    if not db.is_ready():
-        return {"success": False, "message": "Monitoring needs the database (demo mode has no live farms)"}
-    try:
-        sb = db._client()
-        farms = (sb.table("farms").select("id,name,ndvi,status,last_monitor_ndvi,last_monitored_at").execute().data) or []
-        checked = 0
-        at_risk = []
-        healthy = 0
-        now_iso = datetime.now(timezone.utc).isoformat()
-        for farm in farms:
-            if str(farm.get("status") or "").lower() in ("pending",):
-                continue
-            checked += 1
-            current = farm.get("ndvi")
-            if current is None:
-                continue
-            current = float(current)
-            last = farm.get("last_monitor_ndvi")
-            drop = round(float(last) - current, 3) if last is not None else 0.0
-            sb.table("farms").update({
-                "last_monitor_ndvi": current,
-                "last_monitored_at": now_iso,
-            }).eq("id", farm["id"]).execute()
-            if last is not None and drop >= NDVI_DROP_ALERT:
-                sb.table("farms").update({"status": "Flagged"}).eq("id", farm["id"]).execute()
-                ledger.append_event(farm["id"], "MONITOR", {
-                    "risk": "ndvi_drop", "drop": drop,
-                    "previous_ndvi": float(last), "current_ndvi": current,
-                    "note": "Credits at-risk — routed to FPO review (drought/disease/abandonment possible)",
-                })
-                at_risk.append({
-                    "farm_id": farm["id"], "name": farm.get("name"),
-                    "drop": drop, "previous_ndvi": float(last), "current_ndvi": current,
-                })
-            else:
-                healthy += 1
-        return {
-            "success": True, "checked": checked, "healthy": healthy,
-            "at_risk_count": len(at_risk), "at_risk": at_risk,
-            "alert_threshold": NDVI_DROP_ALERT, "ran_at": now_iso,
-        }
-    except Exception as e:
-        return {"success": False, "message": str(e)}

@@ -1,15 +1,17 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, Building2, Globe, ArrowRight, ArrowLeft } from 'lucide-react';
+import { useLanguage } from '../context/LanguageContext';
 
 export default function RoleSelection() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const roleCards = [
     {
       id: 'farmer',
-      title: 'Farmer & Land Owner',
-      desc: 'Register farm parcels via Telugu/English voice input, upload land deeds for AI verification, and receive direct UPI carbon credit payouts.',
+      title: t('farmerLandOwner', 'Farmer & Land Owner'),
+      desc: t('farmerLandOwnerDesc', 'Register farm parcels via Telugu/Hindi/English voice input, upload land deeds for AI verification, and receive direct UPI carbon credit payouts.'),
       scope: 'Permission Scope: Land Deed Upload, Satellite Boundary Mapping, Carbon Passport, Wallet Payouts',
       icon: Users,
       badgeColor: 'bg-emerald-50 text-emerald-800 border-emerald-200',
@@ -17,8 +19,8 @@ export default function RoleSelection() {
     },
     {
       id: 'fpo',
-      title: 'FPO / Cooperative Officer',
-      desc: 'Manage member farmers, perform bulk direct onboarding, inspect flagged ground-truth records, and execute cooperative credit pooling.',
+      title: t('fpoOfficer', 'FPO / Cooperative Officer'),
+      desc: t('fpoOfficerDesc', 'Manage member farmers, perform bulk direct onboarding, inspect flagged ground-truth records, and execute cooperative credit pooling.'),
       scope: 'Permission Scope: Member Roster, Bulk Onboarding, Ground-Truth Overlap Inspector, Cooperative Pooling',
       icon: Building2,
       badgeColor: 'bg-amber-50 text-amber-800 border-amber-200',
@@ -26,8 +28,8 @@ export default function RoleSelection() {
     },
     {
       id: 'buyer',
-      title: 'Corporate Buyer & ESG Officer',
-      desc: 'Browse verified carbon credit listings, run bulk auto-match allocation algorithms, and manage Scope 1-3 retirement certificates.',
+      title: t('corporateBuyer', 'Corporate Buyer & ESG Officer'),
+      desc: t('corporateBuyerDesc', 'Browse verified carbon credit listings, run bulk auto-match allocation algorithms, and manage Scope 1-3 retirement certificates.'),
       scope: 'Permission Scope: Multi-Tier Badge Trading, Bulk Auto-Match Engine, BRSR Audit Export, Certificate Retirement',
       icon: Globe,
       badgeColor: 'bg-sky-50 text-sky-800 border-sky-200',
@@ -45,17 +47,17 @@ export default function RoleSelection() {
           className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Back to Gateway</span>
+          <span>{t('backToGateway', 'Back to Gateway')}</span>
         </button>
 
         {/* Title Header */}
         <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 text-center space-y-2">
           <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-block">
-            Role-Based Access Portal
+            {t('roleAccessPortal', 'Role-Based Access Portal')}
           </span>
-          <h1 className="text-3xl font-extrabold text-slate-900 font-manrope">Select Ecosystem Role</h1>
+          <h1 className="text-3xl font-extrabold text-slate-900 font-manrope">{t('selectEcosystemRole', 'Select Ecosystem Role')}</h1>
           <p className="text-xs text-slate-500 max-w-xl mx-auto">
-            Choose your role to access customized dashboards, verification workflows, and marketplace portals.
+            {t('selectRoleSubtitle', 'Choose your role to access customized dashboards, verification workflows, and marketplace portals.')}
           </p>
         </div>
 
@@ -83,7 +85,7 @@ export default function RoleSelection() {
                     type="button"
                     className="w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
                   >
-                    <span>Enter Portal</span>
+                    <span>{t('enterPortal', 'Enter Portal')}</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>

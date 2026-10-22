@@ -25,11 +25,11 @@ export default function CorporateWelcome() {
               Procure verified carbon credits directly from Indian farmers. Built for BRSR reporting, Scope 1-3 neutrality compliance, and satellite-verified MRV auditability.
             </p>
 
-            <div className="flex flex-wrap gap-4 pt-2">
+            <div className="flex flex-col sm:flex-row flex-wrap gap-3 pt-2">
               {user ? (
                 <button
                   onClick={() => navigate('/corporate/dashboard')}
-                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2"
                 >
                   <Building2 className="w-4 h-4 text-emerald-800" />
                   <span>Go to Corporate ESG Desk ({user.name || 'Corporate'})</span>
@@ -37,7 +37,7 @@ export default function CorporateWelcome() {
               ) : (
                 <button
                   onClick={() => navigate('/corporate/login')}
-                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                  className="px-6 py-3 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2"
                 >
                   <Building2 className="w-4 h-4 text-emerald-800" />
                   <span>Sign In to Corporate ESG Desk</span>
@@ -46,7 +46,7 @@ export default function CorporateWelcome() {
 
               <button
                 onClick={() => navigate('/marketplace')}
-                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2"
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2"
               >
                 <span>Explore Trading Marketplace</span>
                 <ArrowRight className="w-4 h-4" />
@@ -54,7 +54,7 @@ export default function CorporateWelcome() {
 
               <button
                 onClick={() => navigate('/marketplace/checkout')}
-                className="px-6 py-3 bg-[#15803D] hover:bg-[#10B981] text-[#D1FAE5] border border-emerald-500 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                className="px-6 py-3 bg-[#15803D] hover:bg-[#10B981] text-[#D1FAE5] border border-emerald-500 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4 text-emerald-300" />
                 <span>Run Bulk Auto-Match Engine</span>
@@ -100,7 +100,7 @@ export default function CorporateWelcome() {
         <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-6">
           <h2 className="text-lg font-bold text-slate-900">Institutional Verification Badge Hierarchy</h2>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
               <BadgePill badge="REGISTRY" size="sm" />
               <p className="text-xs font-bold text-slate-900 mt-2">Tier 1A: Cadastral Match</p>

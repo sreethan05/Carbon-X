@@ -11,37 +11,37 @@ import FarmerVoiceAssistant from '../features/voice-agent/FarmerVoiceAssistant';
 
 const ROLE_NAV = {
   farmer: [
-    { name: 'Dashboard', path: '/farmer/dashboard', icon: Home },
-    { name: 'Land Verification', path: '/farmer/land-verification', icon: ShieldCheck },
-    { name: 'Carbon Passport', path: '/farm-analytics', icon: Compass },
-    { name: 'Marketplace', path: '/marketplace', icon: ShoppingCart },
-    { name: 'Wallet & UPI Ledger', path: '/farmer/wallet', icon: Wallet },
-    { name: 'Support', path: '/support', icon: ClipboardList },
+    { name: 'Dashboard', key: 'dashboard', path: '/farmer/dashboard', icon: Home },
+    { name: 'Land Verification', key: 'landVerification', path: '/farmer/land-verification', icon: ShieldCheck },
+    { name: 'Carbon Passport', key: 'carbonPassport', path: '/farm-analytics', icon: Compass },
+    { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Wallet & UPI Ledger', key: 'walletLedger', path: '/farmer/wallet', icon: Wallet },
+    { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   fpo: [
-    { name: 'FPO Dashboard', path: '/fpo/dashboard', icon: Building2 },
-    { name: 'Credit Pooling', path: '/fpo/credit-pooling', icon: ShieldCheck },
-    { name: 'Marketplace', path: '/marketplace', icon: ShoppingCart },
-    { name: 'Support', path: '/support', icon: ClipboardList },
+    { name: 'FPO Dashboard', key: 'fpoDashboard', path: '/fpo/dashboard', icon: Building2 },
+    { name: 'Credit Pooling', key: 'creditPooling', path: '/fpo/credit-pooling', icon: ShieldCheck },
+    { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   buyer: [
-    { name: 'ESG Dashboard', path: '/corporate/dashboard', icon: Home },
-    { name: 'Marketplace', path: '/marketplace', icon: ShoppingCart },
-    { name: 'Bulk Auto-Match', path: '/marketplace/checkout', icon: BarChart3 },
-    { name: 'Certificates', path: '/corporate/dashboard', icon: ShieldCheck },
-    { name: 'Support', path: '/support', icon: ClipboardList },
+    { name: 'ESG Dashboard', key: 'esgDashboard', path: '/corporate/dashboard', icon: Home },
+    { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Bulk Auto-Match', key: 'bulkAutoMatch', path: '/marketplace/checkout', icon: BarChart3 },
+    { name: 'Certificates', key: 'certificates', path: '/corporate/dashboard', icon: ShieldCheck },
+    { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   verifier: [
-    { name: 'FPO Audit Desk', path: '/fpo/dashboard', icon: Home },
-    { name: 'Admin Compliance', path: '/admin/dashboard', icon: ShieldCheck },
-    { name: 'Marketplace', path: '/marketplace', icon: ShoppingCart },
-    { name: 'Support', path: '/support', icon: ClipboardList },
+    { name: 'FPO Audit Desk', key: 'fpoAuditDesk', path: '/fpo/dashboard', icon: Home },
+    { name: 'Admin Compliance', key: 'adminCompliance', path: '/admin/dashboard', icon: ShieldCheck },
+    { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   admin: [
-    { name: 'Admin Dashboard', path: '/admin/dashboard', icon: Home },
-    { name: 'FPO Desk', path: '/fpo/dashboard', icon: Building2 },
-    { name: 'Marketplace', path: '/marketplace', icon: ShoppingCart },
-    { name: 'Support', path: '/support', icon: ClipboardList },
+    { name: 'Admin Dashboard', key: 'adminDashboard', path: '/admin/dashboard', icon: Home },
+    { name: 'FPO Desk', key: 'fpoDesk', path: '/fpo/dashboard', icon: Building2 },
+    { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
 };
 
@@ -56,7 +56,7 @@ const ROLE_META = {
 export default function Layout({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { changeLanguage, currentLang } = useLanguage();
+  const { changeLanguage, currentLang, t, supportedLanguages } = useLanguage();
   const { user, logout, role, isAuthenticated } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -112,7 +112,7 @@ export default function Layout({ children }) {
         }`}
       >
         <Icon size={18} className={active ? 'text-forest-700' : 'text-carbon-400'} />
-        <span>{item.name}</span>
+        <span>{item.key ? t(item.key, item.name) : item.name}</span>
       </button>
     );
   });
@@ -166,9 +166,11 @@ export default function Layout({ children }) {
               onChange={e => changeLanguage(e.target.value)}
               className="bg-transparent border-none outline-none text-xs font-bold text-forest-900 focus:ring-0 cursor-pointer"
             >
-              <option value="en">English</option>
-              <option value="hi">हिन्दी</option>
-              <option value="te">తెలుగు</option>
+              {(supportedLanguages || []).map((lang) => (
+                <option key={lang.code} value={lang.code}>
+                  {lang.nativeLabel} ({lang.label})
+                </option>
+              ))}
             </select>
           </div>
 
@@ -189,7 +191,7 @@ export default function Layout({ children }) {
               <button
                 onClick={handleLogout}
                 className="p-2 hover:bg-rose-50 rounded-xl text-carbon-600 hover:text-rose-600 transition-colors"
-                title="Logout"
+                title={t('logout', 'Logout')}
               >
                 <LogOut size={18} />
               </button>
@@ -199,7 +201,7 @@ export default function Layout({ children }) {
               onClick={() => navigate('/farmer-login')}
               className="text-xs font-bold text-forest-800 hover:text-forest-900 px-3 py-1.5 rounded-xl hover:bg-forest-50 transition-colors"
             >
-              Login
+              {t('login', 'Login')}
             </button>
           )}
         </div>
@@ -210,12 +212,12 @@ export default function Layout({ children }) {
       {showNotifications && isAuthenticated && (
         <div className="fixed top-14 right-4 z-40 bg-white border border-forest-100 rounded-2xl shadow-xl p-4 w-80 max-h-96 overflow-y-auto">
           <div className="flex justify-between items-center mb-3">
-            <h3 className="text-xs font-bold text-carbon-800">Notifications</h3>
+            <h3 className="text-xs font-bold text-carbon-800">{t('notifications', 'Notifications')}</h3>
             <button onClick={() => setShowNotifications(false)} className="p-1 hover:bg-forest-50 rounded-lg">
               <X size={14} />
             </button>
           </div>
-          <p className="text-xs text-carbon-400 text-center py-4">No notifications yet</p>
+          <p className="text-xs text-carbon-400 text-center py-4">{t('noNotifications', 'No notifications yet')}</p>
         </div>
       )}
 
@@ -243,7 +245,7 @@ export default function Layout({ children }) {
                     className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors"
                   >
                     <LogOut size={16} />
-                    <span>Logout</span>
+                    <span>{t('logout', 'Logout')}</span>
                   </button>
                 </div>
               )}
@@ -272,7 +274,7 @@ export default function Layout({ children }) {
                 <Icon size={20} className={active ? 'text-forest-800' : 'text-carbon-400'} />
               </div>
               <span className={`text-[10px] font-bold mt-0.5 ${active ? 'text-carbon-800' : 'text-carbon-400'}`}>
-                {item.name}
+                {item.key ? t(item.key, item.name) : item.name}
               </span>
             </button>
           );

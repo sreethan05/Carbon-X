@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { sendVoiceAudioQuery, sendVoiceTextQuery, updateProfile } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../context/LanguageContext';
 
 const LANGUAGE_OPTIONS = [
   { value: 'te-IN', label: 'Telugu' },
@@ -55,7 +56,13 @@ export default function FarmerVoiceAssistant() {
   const [minimized, setMinimized] = useState(true);
   const navigate = useNavigate();
   const { role, refreshUser } = useAuth();
-  const [language, setLanguage] = useState('te-IN');
+  const { currentLang, changeLanguage } = useLanguage();
+  const [language, setLanguage] = useState(() => (currentLang === 'hi' ? 'hi-IN' : currentLang === 'en' ? 'en-IN' : 'te-IN'));
+
+  React.useEffect(() => {
+    const code = currentLang === 'hi' ? 'hi-IN' : currentLang === 'en' ? 'en-IN' : 'te-IN';
+    setLanguage(code);
+  }, [currentLang]);
   const [sessionId, setSessionId] = useState(null);
   const [text, setText] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -262,7 +269,12 @@ export default function FarmerVoiceAssistant() {
         </div>
         <select
           value={language}
-          onChange={(event) => setLanguage(event.target.value)}
+          onChange={(event) => {
+            const nextVal = event.target.value;
+            setLanguage(nextVal);
+            const short = nextVal.startsWith('hi') ? 'hi' : nextVal.startsWith('en') ? 'en' : 'te';
+            changeLanguage(short);
+          }}
           className="text-[11px] font-bold bg-forest-50 border border-forest-100 rounded-lg px-2 py-1.5 text-carbon-800 outline-none"
         >
           {LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}

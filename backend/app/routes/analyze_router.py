@@ -12,12 +12,13 @@ import os
 import time
 from typing import Literal, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from app import config as app_config
 from app import gee_runtime
 from app import redis_store
+from app.security import get_current_user_optional
 from app.services import credit_engine
 from app.services.polygon_service import (
     polygon_area_hectares as _polygon_area_hectares,
@@ -28,6 +29,22 @@ router = APIRouter()
 
 _ANALYZE_CACHE_TTL = app_config.ANALYZE_CACHE_TTL_SECONDS
 _ANALYZE_CACHE_NAMESPACE = "analyze:"
+_RATE_WINDOW_SECONDS = 60
+_RATE_MAX_REQUESTS = 12
+_rate_buckets: dict[str, list[float]] = {}
+
+
+def _enforce_scan_rate_limit(user: Optional[dict] = None) -> None:
+    """Small in-process safety valve; Redis/cache absorbs normal repeats."""
+    if not user:
+        return
+    key = str(user.get("phone") or user.get("sub") or "unknown")
+    now = time.time()
+    bucket = [stamp for stamp in _rate_buckets.get(key, []) if now - stamp < _RATE_WINDOW_SECONDS]
+    if len(bucket) >= _RATE_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Satellite scan rate limit reached; retry in one minute")
+    bucket.append(now)
+    _rate_buckets[key] = bucket
 
 
 def _analyze_cache_key(geojson: dict, crop_type: Optional[str]) -> str:
@@ -52,7 +69,9 @@ def _with_ee_backoff(fn, *, attempts=3, base_delay=1.5):
 
 
 @router.get("/predict")
-def predict(longitude: float, latitude: float):
+def predict(longitude: float, latitude: float, current_user: Optional[dict] = Depends(get_current_user_optional)):
+    if current_user:
+        _enforce_scan_rate_limit(current_user)
     try:
         if not (math.isfinite(latitude) and math.isfinite(longitude)):
             return {"success": False, "message": "Latitude and longitude must be finite numbers"}
@@ -137,7 +156,9 @@ class AnalyzeModel(BaseModel):
 
 # ── /analyze endpoint (core endpoint at root level) ───
 @router.post("/analyze")
-def analyze(data: AnalyzeModel):
+def analyze(data: AnalyzeModel, current_user: Optional[dict] = Depends(get_current_user_optional)):
+    if current_user:
+        _enforce_scan_rate_limit(current_user)
     try:
         geojson = data.geojson.model_dump()
         ok, err = _validate_polygon_geojson(geojson)

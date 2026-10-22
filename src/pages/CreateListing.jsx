@@ -54,7 +54,7 @@ export default function CreateListing() {
       setAssignedBadge(badge);
       setUnitPrice(selectedFarm.benchmark || getBadgeBenchmark(badge));
     }
-  }, [selectedFarmId, selectedFarm]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFarmId, selectedFarm]);
 
   // Live revenue calculations (mirrors backend services/split_engine.py:
   // farmer 70% floor, FPO 5% only when involvement is proven, platform

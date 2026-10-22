@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ShieldCheck, Download, Lock, ArrowLeft, Loader2, AlertTriangle, FileDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getCertificates, retireCertificate, PY_API_BASE } from '../services/api';
+import { getCertificates, getCertificate, getCertificatePdfUrl, retireCertificate } from '../services/api';
 
 export default function CertificateRetirementPage() {
   const { certId } = useParams();
@@ -22,9 +22,15 @@ export default function CertificateRetirementPage() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await getCertificates();
-        const list = (data && data.success && Array.isArray(data.certificates)) ? data.certificates : [];
-        const found = list.find((c) => c.id?.toLowerCase() === certId?.toLowerCase());
+        let found = null;
+        const singleRes = await getCertificate(certId).catch(() => null);
+        if (singleRes && singleRes.success && singleRes.certificate) {
+          found = singleRes.certificate;
+        } else {
+          const data = await getCertificates();
+          const list = (data && data.success && Array.isArray(data.certificates)) ? data.certificates : [];
+          found = list.find((c) => c.id?.toLowerCase() === certId?.toLowerCase());
+        }
         if (found) {
           setCert(found);
           if (found.status === 'RETIRED') setRetireTimestamp(found.retired_at || found.retired_timestamp || null);
@@ -78,7 +84,7 @@ export default function CertificateRetirementPage() {
     setPdfError('');
     try {
       const token = localStorage.getItem('carbonx_token');
-      const res = await fetch(`${PY_API_BASE}/certificates/${encodeURIComponent(certId)}/pdf`, {
+      const res = await fetch(getCertificatePdfUrl(certId), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const contentType = res.headers.get('content-type') || '';

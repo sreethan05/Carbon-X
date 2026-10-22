@@ -76,9 +76,18 @@ def _authorize_farm(farm_id: str, current_user: dict) -> Optional[dict]:
         raise HTTPException(status_code=404, detail="Farm not found")
     phone = (current_user or {}).get("phone")
     role = (current_user or {}).get("role", "farmer")
-    if farm.get("owner_phone") != phone and role not in ("fpo", "admin", "verifier"):
-        raise HTTPException(status_code=403, detail="You can only attach evidence to your own farms")
-    return farm
+    if role in ("admin", "verifier"):
+        return farm
+    if farm.get("owner_phone") == phone:
+        return farm
+    if role == "fpo":
+        profile = db.get_profile(phone) if db.is_ready() else {}
+        user_fpo = (profile or {}).get("fpo_id")
+        farm_fpo = farm.get("fpo_id")
+        if user_fpo and farm_fpo and str(user_fpo) != str(farm_fpo):
+            raise HTTPException(status_code=403, detail="You can only attach evidence to your own or FPO-scoped farms")
+        return farm
+    raise HTTPException(status_code=403, detail="You can only attach evidence to your own farms")
 
 
 def _parse_form_coord(value: Optional[str], name: str, limit: float) -> Optional[float]:

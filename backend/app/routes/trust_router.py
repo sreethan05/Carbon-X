@@ -145,7 +145,8 @@ def get_certificate(cert_id: str):
             rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
         except Exception as e:
             return {"success": False, "message": str(e)}
-    row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    clean_cert_id = str(cert_id).strip().upper()
+    row = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
     if not row:
         raise HTTPException(status_code=404, detail="Certificate not found")
     farm_id = row.get("farm_id") or ""
@@ -198,7 +199,8 @@ def download_certificate_pdf(cert_id: str):
             rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
         except Exception as e:
             return {"success": False, "message": str(e)}
-    row = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    clean_cert_id = str(cert_id).strip().upper()
+    row = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
     if not row:
         raise HTTPException(status_code=404, detail="Certificate not found")
     farm_id = row.get("farm_id") or ""
@@ -239,6 +241,8 @@ def retire_certificate(
             status_code=401,
             detail="Sign in to retire a certificate",
         )
+    if db.is_ready() and str((current_user or {}).get("role", "")).lower() != "buyer":
+        raise HTTPException(status_code=403, detail="Only the corporate buyer may retire a certificate")
     rows = None
     if not db.is_ready():
         rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() == "sold"]
@@ -248,10 +252,11 @@ def retire_certificate(
             rows = (sb.table("marketplace_listings").select("id,status,farm_id").eq("status", "Sold").execute().data) or []
         except Exception as e:
             return {"success": False, "message": str(e)}
-    target = next((r for r in rows if _cert_id_for_listing(r.get("id")) == cert_id), None)
+    clean_cert_id = str(cert_id).strip().upper()
+    target = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
     if not target:
         all_rows = market_store.all_rows() if not db.is_ready() else (sb.table("marketplace_listings").select("id,status,farm_id").execute().data or [])
-        already = next((r for r in all_rows if _cert_id_for_listing(r.get("id")) == cert_id and str(r.get("status")).lower() == "retired"), None)
+        already = next((r for r in all_rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id and str(r.get("status")).lower() == "retired"), None)
         if already:
             return {
                 "success": True, "message": f"Certificate {cert_id} is already permanently retired",
@@ -278,7 +283,7 @@ def retire_certificate(
 
 
 @router.get("/passport/{farm_id}")
-def get_carbon_passport(farm_id: str):
+def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get_current_user_optional)):
     if db.is_ready():
         farm = db.get_farm(farm_id)
         if not farm:
@@ -499,15 +504,17 @@ def earnings_calculator(data: EarningsCalcModel):
 
 
 @router.get("/ledger/{farm_id}")
-def get_farm_ledger(farm_id: str):
+def get_farm_ledger(farm_id: str, current_user: Optional[dict] = Depends(get_current_user_optional)):
+    farm = None
+    if db.is_ready():
+        farm = db.get_farm(farm_id)
+        if not farm:
+            return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
     chain = ledger.get_chain(farm_id)
     if not chain:
         # Anchor genesis only for a farm that actually exists: a real DB row,
         # or (demo mode) a known fallback listing — never a phantom id.
         if db.is_ready():
-            farm = db.get_farm(farm_id)
-            if not farm:
-                return {"success": False, "code": "NOT_FOUND", "message": "Farm not found"}
             snapshot = {
                 "farm": farm.get("name"), "crop": farm.get("crop_type"),
                 "ndvi": farm.get("ndvi"), "area_hectares": farm.get("area_hectares"),

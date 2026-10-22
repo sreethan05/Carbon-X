@@ -7,7 +7,7 @@ import { sendOtp, verifyRegistrationOtp, registerUser } from '../services/api';
 
 export default function FarmerRegister() {
   const navigate = useNavigate();
-  const { currentLang } = useLanguage();
+  const { currentLang, t } = useLanguage();
   const { login } = useAuth();
 
   // Voice input (Web Speech API when supported by the browser)
@@ -73,13 +73,13 @@ export default function FarmerRegister() {
     setFormError('');
     const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognitionCtor) {
-      setSpeechText('Voice input is not supported in this browser. Please type your details.');
+      setSpeechText(t('voiceNotSupported', 'Voice input is not supported in this browser. Please type your details.'));
       return;
     }
     try {
       const recognition = new SpeechRecognitionCtor();
       recognitionRef.current = recognition;
-      recognition.lang = currentLang === 'te' ? 'te-IN' : 'en-IN';
+      recognition.lang = currentLang === 'te' ? 'te-IN' : currentLang === 'hi' ? 'hi-IN' : 'en-IN';
       recognition.continuous = false;
       recognition.interimResults = false;
       recognition.onstart = () => setIsListening(true);
@@ -93,24 +93,22 @@ export default function FarmerRegister() {
       };
       recognition.onerror = () => {
         setIsListening(false);
-        setSpeechText('Could not capture your voice. Please type your details.');
+        setSpeechText(t('voiceCaptureError', 'Could not capture your voice. Please type your details.'));
       };
       recognition.onend = () => setIsListening(false);
       recognition.start();
     } catch {
       setIsListening(false);
-      setSpeechText('Could not start voice input on this device. Please type your details.');
+      setSpeechText(t('voiceDeviceError', 'Could not start voice input on this device. Please type your details.'));
     }
   };
 
   const playVoicePrompt = () => {
     if (!('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
-    const promptText = currentLang === 'te'
-      ? 'దయచేసి మీ పూర్తి పేరు, మొబైల్ నంబరు మరియు ఆధార్ వివరాలను నమోదు చేయండి.'
-      : 'Please enter your legal full name, mobile number, and identity details to enroll.';
+    const promptText = t('voicePrompt', 'Please enter your legal full name, mobile number, and identity details to enroll.');
     const utterance = new SpeechSynthesisUtterance(promptText);
-    utterance.lang = currentLang === 'te' ? 'te-IN' : 'en-IN';
+    utterance.lang = currentLang === 'te' ? 'te-IN' : currentLang === 'hi' ? 'hi-IN' : 'en-IN';
     window.speechSynthesis.speak(utterance);
   };
 
@@ -455,7 +453,7 @@ export default function FarmerRegister() {
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
                   <Phone className="w-5 h-5 text-emerald-700" />
-                  <h3 className="text-sm font-bold text-slate-900">Phone OTP Verification</h3>
+                  <h3 className="text-sm font-bold text-slate-900">{t('phoneOtpVerification', 'Phone OTP Verification')}</h3>
                 </div>
                 <span className="text-xs font-mono font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
                   {formatTimer(otpTimer)}
@@ -463,7 +461,7 @@ export default function FarmerRegister() {
               </div>
 
               <p className="text-xs text-slate-600">
-                A 6-digit authentication code has been dispatched to <span className="font-bold text-slate-900">+91 {phone}</span>.
+                {t('codeDispatchedTo', 'A 6-digit authentication code has been dispatched to')} <span className="font-bold text-slate-900">+91 {phone}</span>.
               </p>
 
               {isDevOtp && (
@@ -480,7 +478,7 @@ export default function FarmerRegister() {
 
               <form onSubmit={handleVerifyOtpSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Enter 6-Digit Code</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">{t('enter6DigitCode', 'Enter 6-Digit Code')}</label>
                   <input
                     type="tel"
                     inputMode="numeric"
@@ -496,7 +494,7 @@ export default function FarmerRegister() {
                 </div>
 
                 <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-600">
-                  <span>Didn't receive code?</span>
+                  <span>{t('didntReceiveCode', "Didn't receive code?")}</span>
                   <button
                     type="button"
                     onClick={handleModalResendOtp}
@@ -504,7 +502,7 @@ export default function FarmerRegister() {
                     className="px-2.5 py-1 rounded bg-white hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed border border-slate-200 text-emerald-800 text-xs font-bold transition-all flex items-center gap-1 shadow-xs"
                   >
                     {isResendingOtp ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                    <span>{isResendingOtp ? 'Resending…' : 'Resend Code'}</span>
+                    <span>{isResendingOtp ? t('resendingCode', 'Resending…') : t('resendCode', 'Resend Code')}</span>
                   </button>
                 </div>
 
@@ -515,7 +513,7 @@ export default function FarmerRegister() {
                     disabled={isRegistering}
                     className="flex-1 py-2.5 bg-slate-100 text-slate-700 disabled:opacity-50 rounded-lg text-xs font-bold hover:bg-slate-200"
                   >
-                    Cancel
+                    {t('cancel', 'Cancel')}
                   </button>
                   <button
                     type="submit"
@@ -523,7 +521,7 @@ export default function FarmerRegister() {
                     className="flex-1 py-2.5 bg-emerald-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 flex items-center justify-center gap-1"
                   >
                     {isRegistering && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    <span>{isRegistering ? 'Registering…' : 'Verify & Route'}</span>
+                    <span>{isRegistering ? 'Registering…' : t('verifyAndRoute', 'Verify & Route')}</span>
                     {!isRegistering && <ArrowRight className="w-3.5 h-3.5" />}
                   </button>
                 </div>

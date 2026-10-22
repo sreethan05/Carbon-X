@@ -5,7 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 
 export default function WelcomeTutorial() {
   const navigate = useNavigate();
-  const { t, currentLang } = useLanguage();
+  const { t } = useLanguage();
 
   const [slideIndex, setSlideIndex] = useState(() => {
     try {
@@ -137,8 +137,8 @@ export default function WelcomeTutorial() {
             {hasCompletedBefore && (
               <button
                 onClick={handleReset}
-                title="Restart walkthrough"
-                aria-label="Restart walkthrough"
+                title={t('restartTutorial', 'Restart walkthrough')}
+                aria-label={t('restartTutorial', 'Restart walkthrough')}
                 className="p-1.5 text-slate-400 hover:text-slate-700 transition-colors rounded-lg"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -148,7 +148,7 @@ export default function WelcomeTutorial() {
               onClick={() => markCompleteAndNavigate('/farmer/dashboard')}
               className="text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors"
             >
-              Skip
+              {t('skip', 'Skip')}
             </button>
           </div>
         </div>
@@ -162,12 +162,12 @@ export default function WelcomeTutorial() {
           <div className="space-y-2">
             <div className="flex items-center justify-center gap-1.5">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Step {currentStep.step} of 3
+                {t('step', 'Step')} {currentStep.step} {t('of', 'of')} 3
               </span>
               {hasCompletedBefore && (
                 <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded flex items-center gap-0.5">
                   <CheckCircle2 className="w-2.5 h-2.5" />
-                  Completed
+                  {t('completed', 'Completed')}
                 </span>
               )}
             </div>
@@ -176,9 +176,7 @@ export default function WelcomeTutorial() {
           </div>
 
           <div className="pt-2 text-[11px] text-slate-400">
-            {currentLang === 'te'
-              ? 'ముందుకు వెళ్ళడానికి కుడి బాణం లేదా బటన్ క్లిక్ చేయండి'
-              : 'Use left/right arrow keys or buttons to navigate'}
+            {t('tutorialNavHint', 'Use left/right arrow keys or buttons to navigate')}
           </div>
         </div>
 
@@ -189,8 +187,8 @@ export default function WelcomeTutorial() {
         >
           <span>
             {slideIndex < steps.length - 1
-              ? (t('continue') || 'Next Step')
-              : (t('getStarted') || 'Proceed to My Farm')}
+              ? t('nextStep', t('continue', 'Next Step'))
+              : t('proceedToFarm', t('getStarted', 'Proceed to My Farm'))}
           </span>
           <ArrowRight className="w-4 h-4" />
         </button>

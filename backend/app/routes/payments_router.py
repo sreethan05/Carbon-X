@@ -202,6 +202,8 @@ def create_checkout(
             status_code=401,
             detail="Sign in with a farmer or corporate account to purchase credits",
         )
+    if db.is_ready() and str((current_user or {}).get("role", "")).lower() != "buyer":
+        raise HTTPException(status_code=403, detail="Only corporate buyer accounts can initiate checkout")
     buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
 
     resolved = _resolve_purchase(data.listing_id, data.credits)
@@ -211,6 +213,11 @@ def create_checkout(
     credits = resolved["credits"]
 
     if not payments.is_live():
+        if db.is_ready() and not app_config.ALLOW_SIMULATED_SETTLEMENT:
+            raise HTTPException(
+                status_code=503,
+                detail="Live checkout is not configured. Set Razorpay credentials, or explicitly enable simulated settlement for a non-production demo.",
+            )
         # Simulated provider — or razorpay selected without keys — so no real
         # money can move: settle immediately, labelled simulated everywhere.
         result = settle_listing_purchase(

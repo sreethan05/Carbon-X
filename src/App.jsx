@@ -31,7 +31,8 @@ import CertificateRetirementPage from './pages/CertificateRetirementPage';
 import SupportCenter from './pages/SupportCenter';
 
 function ProtectedRoute({ children, roles }) {
-  const { isAuthenticated, role } = useAuth();
+  const { isAuthenticated, role, loading } = useAuth();
+  if (loading) return <div className="min-h-screen grid place-items-center text-sm text-slate-600">Restoring your secure session…</div>;
   if (!isAuthenticated) return <Navigate to="/farmer/login" replace />;
   if (roles && !roles.includes(role)) return <Navigate to="/dashboard" replace />;
   return children;
@@ -78,13 +79,13 @@ export default function App() {
               <Route path="/corporate-login" element={<CorporateLogin />} />
 
               {/* Farmer Verification & Mapping Flow */}
-              <Route path="/farmer/land-verification" element={<FarmOwnershipVerification />} />
-              <Route path="/farm-verification" element={<FarmOwnershipVerification />} />
-              <Route path="/farm-map" element={<FarmMapRegistration />} />
-              <Route path="/farm-details" element={<FarmDetailsForm />} />
-              <Route path="/satellite-preview" element={<SatellitePreview />} />
-              <Route path="/verification-success" element={<VerificationSuccess />} />
-              <Route path="/submission-success" element={<SuccessScreen />} />
+              <Route path="/farmer/land-verification" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><FarmOwnershipVerification /></ProtectedRoute>} />
+              <Route path="/farm-verification" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><FarmOwnershipVerification /></ProtectedRoute>} />
+              <Route path="/farm-map" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><FarmMapRegistration /></ProtectedRoute>} />
+              <Route path="/farm-details" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><FarmDetailsForm /></ProtectedRoute>} />
+              <Route path="/satellite-preview" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><SatellitePreview /></ProtectedRoute>} />
+              <Route path="/verification-success" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><VerificationSuccess /></ProtectedRoute>} />
+              <Route path="/submission-success" element={<ProtectedRoute roles={['farmer', 'fpo', 'verifier', 'admin']}><SuccessScreen /></ProtectedRoute>} />
 
               {/* Farmer Dashboard & Analytics & Wallet */}
               <Route path="/farmer/dashboard" element={<ProtectedRoute><FarmerDashboard /></ProtectedRoute>} />
@@ -104,12 +105,12 @@ export default function App() {
               {/* Corporate Buyer Portal & Marketplace */}
               <Route path="/corporate/welcome" element={<CorporateWelcome />} />
               <Route path="/corporate-welcome" element={<CorporateWelcome />} />
-              <Route path="/corporate/dashboard" element={<ProtectedRoute><CorporateDashboard /></ProtectedRoute>} />
+              <Route path="/corporate/dashboard" element={<ProtectedRoute roles={['buyer']}><CorporateDashboard /></ProtectedRoute>} />
               <Route path="/marketplace" element={<Marketplace />} />
               <Route path="/create-listing" element={<ProtectedRoute><CreateListing /></ProtectedRoute>} />
-              <Route path="/marketplace/checkout" element={<ProtectedRoute><CorporateCreditAnalysis /></ProtectedRoute>} />
-              <Route path="/credit-analysis/:id" element={<ProtectedRoute><CorporateCreditAnalysis /></ProtectedRoute>} />
-              <Route path="/buyer/certificates/:certId" element={<ProtectedRoute><CertificateRetirementPage /></ProtectedRoute>} />
+              <Route path="/marketplace/checkout" element={<ProtectedRoute roles={['buyer']}><CorporateCreditAnalysis /></ProtectedRoute>} />
+              <Route path="/credit-analysis/:id" element={<ProtectedRoute roles={['buyer']}><CorporateCreditAnalysis /></ProtectedRoute>} />
+              <Route path="/buyer/certificates/:certId" element={<ProtectedRoute roles={['buyer']}><CertificateRetirementPage /></ProtectedRoute>} />
 
               {/* Support */}
               <Route path="/support" element={<SupportCenter />} />

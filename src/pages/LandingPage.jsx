@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { currentLang, changeLanguage } = useLanguage();
+  const { currentLang, changeLanguage, supportedLanguages } = useLanguage();
   const { isAuthenticated, role } = useAuth();
 
   const handleFpoClick = () => {
@@ -41,8 +41,15 @@ export default function LandingPage() {
                 onChange={(e) => changeLanguage(e.target.value)}
                 className="bg-transparent border-none outline-none text-xs font-semibold text-white cursor-pointer"
               >
-                <option value="en" className="bg-[#0C2A18] text-white">English</option>
-                <option value="te" className="bg-[#0C2A18] text-white">తెలుగు (Telugu)</option>
+                {(supportedLanguages || [
+                  { code: 'en', label: 'English', nativeLabel: 'English' },
+                  { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी' },
+                  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు' }
+                ]).map((lang) => (
+                  <option key={lang.code} value={lang.code} className="bg-[#0C2A18] text-white">
+                    {lang.nativeLabel} ({lang.label})
+                  </option>
+                ))}
               </select>
             </div>
 
