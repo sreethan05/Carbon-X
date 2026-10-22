@@ -223,7 +223,7 @@ export default function FarmDetailsForm() {
 
           <p className="text-[11px] text-slate-500 text-center">
             Practice-specific factor tables (zero-till, AWD rice, cover crops) are on the MRV roadmap; today the engine
-            credits satellite-measured vegetation improvement plus a crop-calibrated soil factor.
+            credits satellite-estimated vegetation improvement plus a crop-calibrated soil factor. These are proxy estimates until independent field validation passes.
           </p>
         </form>
 

@@ -279,7 +279,7 @@ export default function FPODashboard() {
     const selected = farmersList.filter(f => selectedFarmerIds.has(f.id));
     const totalCredits = selected.reduce((sum, f) => sum + (parseFloat(f.credits) || 0), 0);
     if (totalCredits <= 0) {
-      setPoolPublishError('Please select at least one member with verified credits to assemble a pooled lot.');
+      setPoolPublishError('Please select at least one verified member parcel with credits to assemble a pooled lot.');
       return;
     }
     const unitPrice = parseFloat(poolPricePerCredit);
@@ -653,7 +653,7 @@ export default function FPODashboard() {
                 <p className="text-2xl font-extrabold text-emerald-900 font-manrope mt-1">
                   ₹{Math.round(farmersList.filter(f => selectedFarmerIds.has(f.id)).reduce((sum, f) => sum + (parseFloat(f.credits) || 0), 0) * poolPricePerCredit * 0.70).toLocaleString('en-IN')}
                 </p>
-                <p className="text-[11px] text-agriText-muted mt-0.5">Guaranteed directly to member UPI accounts</p>
+                <p className="text-[11px] text-agriText-muted mt-0.5">Ledger-recorded pilot payouts; bank transfer simulated in this phase</p>
               </div>
 
               <div className="bg-surface-sage/50 border border-forest-200 border-l-4 border-l-amber-500 rounded-xl p-4">

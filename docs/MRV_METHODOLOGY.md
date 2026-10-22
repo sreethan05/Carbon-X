@@ -17,6 +17,18 @@ aspirational.
   lab-grade SOC measurement. The uncertainty deduction is the honest bridge
   until ground-truth calibration data exists (`ground_truth_samples` table +
   `GET /ops/ground-truth/eval`).
+- **Current field-validation status (2026-10-22):** `proxy_unvalidated` — zero
+  verified annual-rate samples. Every credit figure must remain labelled a
+  proxy estimate. See `docs/VALIDATION_PROTOCOL.md` for the pre-registered
+  thresholds and statuses.
+- **External review status:** qualified MRV/agronomy review has **not** been
+  obtained. The review register and claim blocks are in
+  `docs/INDEPENDENT_REVIEW.md`.
+- **Pilot status:** not started. The protocol is in `docs/PILOT_PROTOCOL.md`;
+  demo fixtures are not field evidence.
+- The validation code separates annual **rate** samples (which can validate the
+  estimate) from SOC **stock** samples (physical plausibility only). Confidence
+  intervals are statistical proxy intervals, not measured guarantees.
 
 ## 1. Proxy chain (why NDVI is legitimate, and its limits)
 

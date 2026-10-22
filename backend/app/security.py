@@ -101,13 +101,24 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
     payload = decode_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
+    _phone = payload.get("phone")
+    if _phone:
+        from app.services import privacy
+        if privacy.deleted_in_session(_phone):
+            raise HTTPException(status_code=403, detail="Account has been deleted")
 
-    # When live DB is active, enforce real-time status and role changes
-    if supabase_db.is_ready():
+    # When live DB is active, enforce real-time status and role changes.
+    # Require an actual client as well: tests and degraded deployments may
+    # report ready while the client is unavailable, and a missing profile in
+    # that state must not log every farmer out.
+    if supabase_db.is_ready() and getattr(supabase_db, "_supabase", None) is not None:
         phone = payload.get("phone")
         c_id = payload.get("c_id")
         if phone:
             profile = supabase_db.get_profile(phone)
+            # A deleted account keeps a scrubbed tombstone row with
+            # is_active=false, so it is rejected below.  A transiently missing
+            # profile must not invalidate every token during a DB hiccup.
             if profile is not None:
                 if profile.get("is_active") is False or profile.get("status") == "disabled":
                     raise HTTPException(status_code=403, detail="Account has been deactivated")
@@ -124,15 +135,47 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
 
 
 def get_current_user_optional(authorization: Optional[str] = Header(None)) -> Optional[dict]:
-    """Resolve the JWT bearer if present; otherwise return None instead of 401."""
+    """Resolve the JWT bearer if present and valid; otherwise return None.
+
+    Deliberately validates revocation and live account state (rather than just
+    decoding) so a deleted/revoked user does not keep an *optional* session on
+    public-but-personalised endpoints such as passports and certificates.
+    """
     if not authorization or not authorization.strip():
         return None
     parts = authorization.split(None, 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        token = parts[1].strip()
-        if token:
-            return decode_token(token)
-    return None
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        return None
+    token = parts[1].strip()
+    if not token or is_token_revoked(token):
+        return None
+    payload = decode_token(token)
+    if not payload:
+        return None
+    _phone = payload.get("phone")
+    if _phone:
+        from app.services import privacy
+        if privacy.deleted_in_session(_phone):
+            return None
+    if supabase_db.is_ready() and getattr(supabase_db, "_supabase", None) is not None:
+        phone = payload.get("phone")
+        c_id = payload.get("c_id")
+        if phone:
+            profile = supabase_db.get_profile(phone)
+            if profile is None:
+                return None
+            if profile.get("is_active") is False or profile.get("status") == "disabled":
+                return None
+            db_role = profile.get("role")
+            if db_role and db_role != payload.get("role"):
+                payload["role"] = db_role
+        elif c_id is not None:
+            corp = supabase_db.get_corporate_by_id(c_id)
+            if corp is None:
+                return None
+            if corp.get("is_active") is False or corp.get("status") == "disabled":
+                return None
+    return payload
 
 
 def require_role(*allowed_roles: str):

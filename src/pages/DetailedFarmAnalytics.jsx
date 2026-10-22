@@ -467,12 +467,41 @@ export default function DetailedFarmAnalytics() {
             )}
           </div>
 
+          {passport?.validation && (
+            <div className={`rounded-xl border px-4 py-3 text-xs space-y-1 ${
+              passport.validation.status === 'field_validated_limited'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                : 'bg-amber-50 border-amber-200 text-amber-950'
+            }`}>
+              <div className="flex flex-wrap items-center gap-2 font-bold">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {passport.validation.label || 'Proxy estimate — not field-validated'}
+                <button
+                  onClick={() => navigate('/trust')}
+                  className="ml-auto underline underline-offset-2 text-[11px]"
+                >
+                  Validation evidence &amp; limits
+                </button>
+              </div>
+              <p className="text-[11px] opacity-90">
+                {passport.validation.verified_samples ?? 0} verified field-rate samples of{' '}
+                {passport.validation.required_samples ?? 30} required. The published uncertainty interval is a statistical
+                interval for a proxy estimate; it is not a measurement-based guarantee.
+              </p>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-surface-sage/30 border border-forest-100 rounded-xl p-4 space-y-1">
               <span className="text-[10px] text-agriText-subtle font-bold uppercase tracking-wider block">Annual Carbon Credits</span>
               <p className="text-2xl font-extrabold text-carbon-900 font-manrope">
                 {passport?.annual_credits ?? '—'} <span className="text-xs text-agriText-muted font-bold">tCO2e/yr</span>
               </p>
+              {passport?.validation?.proxy_estimate !== false && (
+                <span className="inline-block text-[9px] font-bold uppercase tracking-wide bg-amber-100 text-amber-900 border border-amber-200 rounded px-1.5 py-0.5">
+                  Proxy estimate
+                </span>
+              )}
               <p className="text-[11px] text-agriText-muted">
                 {passport?.carbon_tonnes ? `${passport.carbon_tonnes} tonnes soil/biomass` : 'Estimate pending'}
               </p>

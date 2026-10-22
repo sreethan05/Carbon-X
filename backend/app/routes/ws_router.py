@@ -19,13 +19,14 @@ from fastapi import APIRouter, WebSocket
 from app import redis_store
 from app import supabase_db as db
 from app.security import decode_token
-from app.services import ledger
+from app.services import access_policy, ledger
 
 logger = logging.getLogger("carbonx.ws")
 
 router = APIRouter()
 
 _subscribers: dict[str, set[WebSocket]] = {}
+_ws_access: dict[WebSocket, str] = {}
 _listeners: dict[str, asyncio.Task] = {}
 _delivered_ring: dict[str, deque] = {}
 _delivered_set: dict[str, set] = {}
@@ -54,16 +55,22 @@ async def _deliver(farm_id: str, event: dict) -> None:
     subscribers = _subscribers.get(farm_id)
     if not subscribers:
         return
-    msg = json.dumps(event, default=str)
+    # Money/identities only go to authenticated owner/FPO/staff sockets.  A
+    # demo/public socket receives the same redacted event shape as GET /ledger.
+    encoded = {
+        "full": json.dumps(access_policy.ledger_event_for(event, True), default=str),
+        "public": json.dumps(access_policy.ledger_event_for(event, False), default=str),
+    }
     dead = set()
     for ws in list(subscribers):
         try:
-            await ws.send_text(msg)
+            await ws.send_text(encoded[_ws_access.get(ws, "public")])
         except Exception:
             dead.add(ws)
     if dead:
         for ws in dead:
             subscribers.discard(ws)
+            _ws_access.pop(ws, None)
         if not subscribers:
             _subscribers.pop(farm_id, None)
             _stop_listener_if_idle(farm_id)
@@ -147,25 +154,32 @@ async def websocket_ledger(ws: WebSocket, farm_id: str):
     if not user and db.is_ready():
         await ws.close(code=4401, reason="Authentication required")
         return
+    full_access = False
     if db.is_ready() and user:
         farm = db.get_farm(farm_id)
         role = str(user.get("role", "")).lower()
         if not farm:
             await ws.close(code=4404, reason="Farm not found")
             return
-        if role not in ("admin", "verifier") and farm.get("owner_phone") != user.get("phone"):
-            profile = db.get_profile(user.get("phone") or "") if role == "fpo" else {}
-            if not (role == "fpo" and profile and profile.get("fpo_id") == farm.get("fpo_id")):
-                await ws.close(code=4403, reason="Access denied")
+        if role not in ("admin", "verifier"):
+            profile = db.get_profile(user.get("phone") or "")
+            if profile is None or profile.get("is_active") is False:
+                await ws.close(code=4401, reason="Account is inactive")
                 return
+            if farm.get("owner_phone") != user.get("phone"):
+                if not (role == "fpo" and profile.get("fpo_id") == farm.get("fpo_id")):
+                    await ws.close(code=4403, reason="Access denied")
+                    return
+        full_access = True
     await ws.accept()
     _subscribers.setdefault(farm_id, set()).add(ws)
+    _ws_access[ws] = "full" if full_access else "public"
     _ensure_listener(farm_id)
     try:
         verification = ledger.verify_chain(farm_id)
         chain = ledger.get_chain(farm_id)
         if chain:
-            events_list = [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain]
+            events_list = access_policy.ledger_events_for(chain, full_access=full_access)
             await ws.send_text(json.dumps({
                 "type": "snapshot",
                 "farm_id": farm_id,
@@ -173,6 +187,7 @@ async def websocket_ledger(ws: WebSocket, farm_id: str):
                 "verified": verification.get("valid", False),
                 "tail_hash": verification.get("tail_hash"),
                 "types": [e["type"] for e in chain],
+                "access": "full" if full_access else "public_redacted",
                 "history": events_list,
             }, default=str))
         while True:
@@ -180,6 +195,7 @@ async def websocket_ledger(ws: WebSocket, farm_id: str):
     except Exception:
         pass
     finally:
+        _ws_access.pop(ws, None)
         subs = _subscribers.get(farm_id)
         if subs is not None:
             subs.discard(ws)

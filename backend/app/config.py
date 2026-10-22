@@ -139,4 +139,58 @@ def validate_production_configuration() -> None:
     origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
     if "*" in origins:
         raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CORS_ORIGINS cannot contain wildcard '*' in production")
+    _insecure_origins = [o for o in origins if not o.lower().startswith("https://")]
+    if not origins or _insecure_origins:
+        raise RuntimeError(
+            "CRITICAL PRODUCTION CONFIG ERROR: every CORS_ORIGINS entry must be an "
+            "explicit https:// frontend origin in production (got: "
+            f"{', '.join(origins) or '<empty>'})"
+        )
+
+    # 6. Payments configuration. A real deployment must never reach a live
+    #    checkout while silently running the simulated settlement path.
+    provider = os.getenv("CARBONX_PAYMENTS_PROVIDER", PAYMENTS_PROVIDER).strip().lower()
+    if provider not in ("simulated", "razorpay"):
+        raise RuntimeError(
+            "CRITICAL PRODUCTION CONFIG ERROR: CARBONX_PAYMENTS_PROVIDER must be "
+            "'simulated' or 'razorpay' (unknown providers degrade to simulated)"
+        )
+    if provider == "razorpay":
+        _rp_missing = [
+            name
+            for name, value in (
+                ("RAZORPAY_KEY_ID", os.getenv("RAZORPAY_KEY_ID", "").strip()),
+                ("RAZORPAY_KEY_SECRET", os.getenv("RAZORPAY_KEY_SECRET", "").strip()),
+                ("RAZORPAY_WEBHOOK_SECRET", os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()),
+            )
+            if not value
+        ]
+        if _rp_missing:
+            raise RuntimeError(
+                "CRITICAL PRODUCTION CONFIG ERROR: live Razorpay payments require "
+                + ", ".join(_rp_missing)
+            )
+    elif not _env_bool("CARBONX_ACCEPT_SIMULATED_PAYMENTS", False):
+        # Simulated settlement is legitimate for a closed pilot, but it must be
+        # an explicit operator decision — never the silent default.
+        raise RuntimeError(
+            "CRITICAL PRODUCTION CONFIG ERROR: CARBONX_PAYMENTS_PROVIDER=simulated "
+            "in production requires explicit CARBONX_ACCEPT_SIMULATED_PAYMENTS=1 "
+            "(closed pilot only; buyer money never moves in this mode)"
+        )
+
+    # 7. Redis cannot stay on the localhost default: OTP limiting, settlement
+    #    locks and token revocation are shared across workers via Redis.
+    redis_url = os.getenv("REDIS_URL", REDIS_URL).strip()
+    if (
+        not redis_url
+        or redis_url.strip().lower() in {"redis://localhost:6379/0", "redis://127.0.0.1:6379/0"}
+        or "localhost" in redis_url.lower()
+        or "127.0.0.1" in redis_url
+    ):
+        raise RuntimeError(
+            "CRITICAL PRODUCTION CONFIG ERROR: REDIS_URL must point at a managed "
+            "Redis instance in production (limits, locks and revocations are "
+            "shared across workers)"
+        )
 

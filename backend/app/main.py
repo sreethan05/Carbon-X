@@ -240,6 +240,8 @@ from app.routes.marketplace_router import router as marketplace_router
 from app.routes.payments_router import router as payments_router
 from app.routes.trust_router import router as trust_router
 from app.routes.ops_router import router as ops_router
+from app.routes.validation_router import router as validation_router
+from app.routes.privacy_router import router as privacy_router, ops_router as ops_privacy_router
 from app.routes.fpo_router import router as fpo_router
 from app.routes.corporate_router import router as corporate_router
 from app.voice_agent.voice_routes import router as voice_router
@@ -255,6 +257,9 @@ app.include_router(marketplace_router)
 app.include_router(payments_router)
 app.include_router(trust_router)
 app.include_router(ops_router)
+app.include_router(validation_router)
+app.include_router(privacy_router)
+app.include_router(ops_privacy_router)
 app.include_router(fpo_router)
 app.include_router(corporate_router)
 app.include_router(voice_router)

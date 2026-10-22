@@ -146,7 +146,7 @@ export default function LandingPage() {
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmer Payout Target</p>
               <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR <CountUp value={12.4} decimals={1} /> Cr</p>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">70% farmer floor, paid via UPI</p>
+              <p className="text-xs text-emerald-700 font-medium mt-0.5">70% farmer floor, ledger-recorded (bank transfer simulated in pilot)</p>
             </div>
           </div>
         </div>
@@ -180,7 +180,7 @@ export default function LandingPage() {
           <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-widest bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
             The Trust Pipeline
           </span>
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope mt-4">From field photo to farmer payout — in five verified steps</h2>
+          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope mt-4">From field photo to farmer payout — in five evidence-tracked steps</h2>
           <p className="text-sm text-slate-600 mt-2 max-w-2xl mx-auto">
             Every credit on CarbonX walks the same auditable path. Nothing silently fails, nothing invisibly passes — and the farmer sees every rupee.
           </p>
@@ -229,7 +229,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-lg font-bold text-slate-900">Farmer Onboarding & Passport</h3>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Voice assistance onboarding in Telugu/English, land verification, satellite reality check, and 70/30 verified ledger splits.
+                Voice assistance onboarding in Telugu/English, land verification, a satellite reality check, and ledger-recorded splits with a 70% farmer floor.
               </p>
             </div>
             <button
@@ -269,7 +269,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-lg font-bold text-slate-900">Corporate Buyer Marketplace</h3>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Filter verified credits by badge tier, run bulk auto-match allocation algorithms, and manage Scope 1-3 retirement certificates.
+                Filter satellite-screened credits by badge tier, run bulk auto-match allocation, and manage scope 1-3 retirement certificates with the proxy-validation label attached.
               </p>
             </div>
             <button
@@ -292,6 +292,7 @@ export default function LandingPage() {
             <button onClick={() => navigate('/role-selection')} className="hover:text-white transition-colors">Role Portal</button>
             <button onClick={() => navigate('/marketplace')} className="hover:text-white transition-colors">Marketplace</button>
             <button onClick={() => navigate('/fpo/dashboard')} className="hover:text-white transition-colors">FPO Desk</button>
+            <button onClick={() => navigate('/trust')} className="hover:text-white transition-colors">Trust &amp; Data</button>
           </div>
         </div>
       </footer>

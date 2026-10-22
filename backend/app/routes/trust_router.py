@@ -1,9 +1,11 @@
 """Trust & transparency routes: certificates, wallet, passport, ledger, earnings calculator."""
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional
+import csv
+import hashlib
+import io
 import json
-import re
 import uuid
 from datetime import datetime, timezone
 
@@ -17,7 +19,18 @@ from app.security import (
 )
 from app import supabase_db as db
 from app import config as app_config
-from app.services import credit_engine, evidence_service, ledger, market_store, split_engine
+from app import redis_store
+from app.services import (
+    access_policy,
+    credit_engine,
+    credit_lifecycle,
+    evidence_service,
+    ledger,
+    market_store,
+    payouts,
+    split_engine,
+    validation,
+)
 
 router = APIRouter(tags=["trust"])
 
@@ -77,37 +90,56 @@ def _cert_id_for_listing(listing_id: str) -> str:
     return f"CX-{datetime.now(timezone.utc).year}-CERT-{listing_id.replace('-', '')[:8].upper()}"
 
 
-def _redact_phone(phone: Optional[str]) -> Optional[str]:
-    if not phone:
-        return None
-    raw = str(phone).strip()
-    digits = re.sub(r"\D", "", raw)
-    if len(digits) >= 10:
-        return f"{digits[:3]}****{digits[-2:]}"
-    if len(digits) >= 4:
-        return f"{digits[:1]}***{digits[-1:]}"
-    return "***"
+def _public_location(location: Optional[str]) -> Optional[str]:
+    """Drop the village, keep district/state for public transparency."""
+    return access_policy.public_location(location)
 
 
 def _sanitize_certificate_for_caller(cert: dict, caller: Optional[dict]) -> dict:
-    item = dict(cert)
-    caller_name = (caller or {}).get("name")
-    caller_phone = (caller or {}).get("phone")
-    caller_role = (caller or {}).get("role")
+    """One access policy for JSON, CSV, PDF and the UI.
 
-    is_buyer = bool(caller_name and item.get("issued_to") and str(caller_name).lower() == str(item.get("issued_to")).lower())
+    Public: certificate id, crop, volume, dates, status, hashes, validation
+    label and district-level location. Private: farmer name/phone, buyer name,
+    commercial value, payout split.
+    """
+    item = dict(cert)
+    caller_phone = (caller or {}).get("phone")
+    caller_role = str((caller or {}).get("role") or "").lower()
     is_farmer = bool(caller_phone and item.get("farmer_phone") and caller_phone == item.get("farmer_phone"))
     is_staff = caller_role in ("admin", "fpo", "verifier")
+    is_buyer = _caller_is_buyer(item, caller)
 
-    if not (is_buyer or is_farmer or is_staff):
-        # Commercial purchase transaction value is strictly confidential
+    item["public_view"] = not (is_farmer or is_staff or is_buyer)
+    item["access"] = {
+        "farmer": bool(is_farmer),
+        "buyer": bool(is_buyer),
+        "staff": bool(is_staff),
+    }
+    if not (is_farmer or is_staff):
+        item["farmer_phone"] = None
+    if not (is_farmer or is_staff or is_buyer):
         item["value_inr"] = None
-        # Aggregate smallholder label on public view
-        if item.get("farmer_name"):
-            item["farmer_name"] = "Verified Telangana Smallholder"
-        # If certificate is unretired (held in escrow), protect private beneficiary name
-        if item.get("status") != "RETIRED":
-            item["issued_to"] = "Held in Registry Escrow"
+        item["farmer_name"] = "Verified Telangana Smallholder"
+        item["issued_to"] = "Held in Registry Escrow" if item.get("status") != "RETIRED" else "Verified corporate buyer"
+        item["buyer"] = item["issued_to"]
+        item["location"] = _public_location(item.get("location"))
+        item["split"] = {}
+        item["unit_price"] = None
+    elif is_farmer or is_staff:
+        # Farmer/staff see the full split and buyer name for reconciliation.
+        pass
+    elif is_buyer:
+        item["split"] = {}
+        item["farmer_name"] = "Verified Telangana Smallholder"
+        item["farmer_phone"] = None
+        item["location"] = _public_location(item.get("location"))
+    if not (is_farmer or is_staff):
+        # Correction events can contain a pre-correction name; expose only the
+        # fact/field that was corrected.
+        item["corrections_applied"] = [
+            {k: c.get(k) for k in ("field", "at", "hash")}
+            for c in item.get("corrections_applied") or []
+        ]
     return item
 
 
@@ -127,140 +159,401 @@ class EarningsCalcModel(BaseModel):
     fpo_or_registry: Optional[bool] = False
 
 
+class RefundRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=3, max_length=1000)
+    reference: Optional[str] = None
+
+
+class DisputeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=3, max_length=1000)
+    detail: Optional[str] = Field(default=None, max_length=4000)
+
+
+class DisputeResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["release", "refund", "reject"]
+    note: str = Field(min_length=3, max_length=2000)
+
+
+class CorrectionLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    field: Literal["farmer_name", "location", "crop"]
+    corrected_value: str = Field(min_length=1, max_length=300)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 # ─── Endpoints ───
+
+def _all_listing_rows() -> list[dict]:
+    """All listing rows, including partially sold ones (status Active).
+
+    Certificates are now derived from SALE events, not just from rows whose
+    status is Sold/Retired.  Querying only terminal statuses would hide every
+    partial sale's certificate.
+    """
+    if not db.is_ready():
+        return market_store.all_rows()
+    try:
+        sb = db._client()
+        return (
+            sb.table("marketplace_listings").select("*")
+            .order("created_at", desc=True).limit(2000).execute().data
+        ) or []
+    except Exception as e:
+        print(f"[certificates] listing read failed ({e}) — using demo store")
+        return market_store.all_rows()
+
+
+def _derived_certificates() -> tuple[list[dict], dict]:
+    rows = _all_listing_rows()
+    chain_cache: dict[str, list] = {}
+
+    def chain_for(farm_id: str) -> list:
+        if farm_id not in chain_cache:
+            chain_cache[farm_id] = ledger.get_chain(farm_id) if farm_id else []
+        return chain_cache[farm_id]
+
+    certs = credit_lifecycle.derive_certificates(rows, chain_for)
+    status = validation.current_status()
+    verify_cache: dict[str, dict] = {}
+    for cert in certs:
+        farm_id = cert.get("farm_id") or ""
+        if farm_id not in verify_cache:
+            try:
+                verify_cache[farm_id] = ledger.verify_chain(farm_id)
+            except Exception:
+                verify_cache[farm_id] = {"verified": False, "error": "verification failed"}
+        cert["ledger_verified"] = bool((verify_cache.get(farm_id) or {}).get("verified"))
+        cert["credits_basis"] = "proxy_estimate"
+        cert["validation"] = status
+        cert["validation_status"] = status.get("status")
+        cert["source_parcels"] = [
+            f"{_public_location(cert.get('location')) or 'Telangana'} ({cert.get('crop') or 'Mixed'})"
+        ]
+    return certs, verify_cache
+
+
+def _caller_is_buyer(cert: dict, caller: Optional[dict]) -> bool:
+    """Buyer-of-record check.
+
+    The SALE payload stores the buyer's display name (not a phone).  Require a
+    corporate buyer role as well, so a farmer who happens to share a buyer's
+    name cannot inherit the buyer's certificate view.
+    """
+    if not caller or str(caller.get("role") or "").lower() != "buyer":
+        return False
+    name = str(caller.get("name") or "").strip().lower()
+    if not name:
+        return False
+    for key in ("issued_to", "buyer"):
+        if cert.get(key) and name == str(cert.get(key)).strip().lower():
+            return True
+    return False
+
+
+def _can_see_held(cert: dict, caller: Optional[dict]) -> bool:
+    phone = (caller or {}).get("phone")
+    role = str((caller or {}).get("role") or "").lower()
+    if role in ("admin", "verifier"):
+        return True
+    if role == "fpo":
+        if not db.is_ready():
+            return False
+        profile = db.get_profile(phone or "") or {}
+        farm = db.get_farm(cert.get("farm_id") or "") or {}
+        return bool(
+            profile.get("fpo_id")
+            and farm.get("fpo_id")
+            and str(profile.get("fpo_id")) == str(farm.get("fpo_id"))
+        )
+    if phone and cert.get("farmer_phone") == phone:
+        return True
+    return _caller_is_buyer(cert, caller)
+
+
+def _visible_certificates(certs: list[dict], caller: Optional[dict]) -> list[dict]:
+    """Public sees retired certificates; owners/buyers/staff also see held."""
+    return [
+        cert for cert in certs
+        if str(cert.get("status")).upper() == "RETIRED" or _can_see_held(cert, caller)
+    ]
+
+
+def _certificate_or_404(cert_id: str, caller: Optional[dict]) -> dict:
+    certs, _ = _derived_certificates()
+    cert = next(
+        (c for c in certs if str(c.get("id") or "").upper() == str(cert_id).strip().upper()),
+        None,
+    )
+    if not cert:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    if str(cert.get("status")).upper() != "RETIRED" and not _can_see_held(cert, caller):
+        # Do not leak the existence of a held certificate to the public.
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    return cert
+
+
+def _listing_row(listing_id: str) -> Optional[dict]:
+    if not listing_id:
+        return None
+    if not db.is_ready():
+        return market_store.get(listing_id)
+    try:
+        sb = db._client()
+        rows = (
+            sb.table("marketplace_listings").select("*")
+            .eq("id", listing_id).limit(1).execute().data
+        ) or []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def _statement_for(cert: dict) -> Optional[dict]:
+    chain = ledger.get_chain(cert.get("farm_id") or "")
+    statements = payouts.settlement_statements(chain, cert.get("listing_id"))
+    return next(
+        (s for s in statements if s.get("escrow_ref") == cert.get("escrow_ref")),
+        None,
+    )
+
+
+def _certificate_dispute_lock(cert: dict):
+    return f"listing:settle:{cert.get('listing_id')}"
+
+
+_LIFECYCLE_OPTIONAL_COLUMNS = {
+    "credits_sold", "lifecycle_state", "dispute_status", "dispute_reason",
+    "dispute_opened_at", "dispute_resolved_at",
+}
+
+
+def _apply_listing_fields(listing_id: str, fields: dict) -> bool:
+    if not db.is_ready():
+        return market_store.update(listing_id, fields) is not None
+    sb = db._client()
+    try:
+        res = (
+            sb.table("marketplace_listings").update(fields)
+            .eq("id", listing_id).execute()
+        )
+        return bool(res.data)
+    except Exception as e:
+        # Pre-migration deployments may not have the lifecycle columns yet.
+        # Retry the core balance/status update rather than blocking refunds.
+        core = {k: v for k, v in fields.items() if k not in _LIFECYCLE_OPTIONAL_COLUMNS}
+        if core and core != fields:
+            try:
+                res = (
+                    sb.table("marketplace_listings").update(core)
+                    .eq("id", listing_id).execute()
+                )
+                return bool(res.data)
+            except Exception as retry_error:
+                print(f"[lifecycle] listing update failed for {listing_id}: {retry_error}")
+                return False
+        print(f"[lifecycle] listing update failed for {listing_id}: {e}")
+        return False
+
+
+def _refund_locked(cert: dict, reason: str, reference: Optional[str], actor_role: str) -> dict:
+    """Execute a full-sale refund. Caller must hold the listing settle lock."""
+    if str(cert.get("status")).upper() == "REFUNDED":
+        return {
+            "success": True,
+            "already_refunded": True,
+            "certificate_id": cert.get("id"),
+            "message": "This sale was already refunded; no balance was changed again.",
+        }
+    statement = _statement_for(cert)
+    if not statement:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This certificate has no ledger SALE/SPLIT record (legacy row). "
+                "A refund cannot be derived safely; reconcile manually before changing balances."
+            ),
+        )
+    listing = _listing_row(cert.get("listing_id") or "")
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found for this certificate")
+    credits = float(statement.get("credits_sold") or 0)
+    previous_remaining = float(listing.get("total_credits") or 0)
+    restored_remaining = round(previous_remaining + credits, 4)
+    # Derive net sold from the ledger, not a possibly-stale/missing
+    # credits_sold column (pre-migration rows are common in the pilot).
+    net_before = 0.0
+    for event in ledger.get_chain(cert.get("farm_id") or ""):
+        payload = event.get("payload") or {}
+        if str(payload.get("listing_id") or "") != str(cert.get("listing_id")):
+            continue
+        if event.get("type") == "SALE":
+            net_before += float(payload.get("credits") or 0)
+        elif event.get("type") == "REFUND":
+            net_before -= float(payload.get("credits") or 0)
+    net_sold = max(0.0, net_before - credits)
+    lifecycle_state = "Active" if net_sold <= 1e-9 else "Partially Sold"
+    refund_ref = reference or credit_lifecycle.refund_reference(
+        cert.get("id") or "", cert.get("escrow_ref")
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    fields = {
+        "total_credits": restored_remaining,
+        "credits_sold": round(net_sold, 4),
+        "status": "Active",
+        "lifecycle_state": lifecycle_state,
+        "dispute_status": "RESOLVED" if str(listing.get("dispute_status") or "NONE").upper() != "NONE" else "NONE",
+        "updated_at": now,
+    }
+    if not _apply_listing_fields(cert.get("listing_id") or "", fields):
+        raise HTTPException(status_code=409, detail="Listing balance changed; refund not applied")
+    event = ledger.append_event(cert.get("farm_id") or "", "REFUND", {
+        "listing_id": cert.get("listing_id"),
+        "certificate_id": cert.get("id"),
+        "escrow_ref": cert.get("escrow_ref"),
+        "refund_ref": refund_ref,
+        "credits": round(credits, 4),
+        "gross_inr": statement.get("gross_inr"),
+        "farmer_inr": statement.get("farmer_inr"),
+        "fpo_inr": statement.get("fpo_inr"),
+        "platform_inr": statement.get("platform_inr"),
+        "reason": reason[:1000],
+        "refunded_by_role": actor_role,
+        "restored_credits": round(credits, 4),
+        "balance_after": restored_remaining,
+    })
+    try:
+        from app.services.certificate_pdf import invalidate_certificate_pdf
+        invalidate_certificate_pdf(cert.get("id") or "")
+    except Exception:
+        pass
+    return {
+        "success": True,
+        "certificate_id": cert.get("id"),
+        "listing_id": cert.get("listing_id"),
+        "refund_ref": refund_ref,
+        "refunded_inr": statement.get("gross_inr"),
+        "reversed_split": {
+            "farmer_inr": statement.get("farmer_inr"),
+            "fpo_inr": statement.get("fpo_inr"),
+            "platform_inr": statement.get("platform_inr"),
+        },
+        "credits_restored": round(credits, 4),
+        "balance_after": restored_remaining,
+        "lifecycle_state": lifecycle_state,
+        "ledger_hash": event.get("hash"),
+        "message": "Sale refunded; credits restored to the listing with a REFUND ledger event.",
+    }
+
+
+def _dispute_events(cert: dict) -> list[dict]:
+    chain = ledger.get_chain(cert.get("farm_id") or "")
+    return [
+        e for e in chain
+        if e.get("type") in ("DISPUTE", "DISPUTE_RESOLVED")
+        and str((e.get("payload") or {}).get("certificate_id") or "") == str(cert.get("id"))
+    ]
+
+
+_CERT_CSV_FIELDS = [
+    "id", "listing_id", "status", "crop", "volume_mt", "issued_date",
+    "retired_at", "refunded_at", "batch_hash", "validation_status",
+    "farmer_name", "issued_to", "value_inr", "location",
+]
+
 
 @router.get("/certificates")
 def list_certificates(current_user: Optional[dict] = Depends(get_current_user_optional)):
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
-        rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).order("updated_at", desc=True).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e), "certificates": []}
-    certificates = []
-    for r in rows:
-        farm_id = r.get("farm_id") or ""
-        chain = ledger.summary(farm_id) if farm_id else {}
-        sales = _ledger_sales(farm_id, r.get("id"))
-        retired = str(r.get("status")).lower() == "retired"
-        loc = r.get("location") or "Location not recorded"
-        crop_label = f" ({r.get('crop')})" if r.get("crop") else ""
-        raw_cert = {
-            "id": _cert_id_for_listing(r.get("id")),
-            "listing_id": r.get("id"),
-            "farmer_phone": r.get("farmer_phone"),
-            "issued_to": sales.get("buyer") or None,
-            "farmer_name": r.get("farmer_name"),
-            "crop": r.get("crop"),
-            "volume_mt": sales["credits"] if sales["found"] else r.get("total_credits"),
-            "value_inr": sales["gross_inr"] if sales["found"] else r.get("current_bid"),
-            "source_parcels": [f"{loc}{crop_label}"],
-            "issued_date": (r.get("updated_at") or r.get("created_at") or "")[:10],
-            "retired_at": ((r.get("updated_at") or "")[:10] or None) if retired else None,
-            "status": "RETIRED" if retired else "HELD_IN_ESCROW",
-            "batch_hash": chain.get("tail_hash"),
-            "ledger_verified": chain.get("verified", False),
-            "tx_hash": r.get("tx_hash"),
-            "on_chain": False,
-        }
-        certificates.append(_sanitize_certificate_for_caller(raw_cert, current_user))
-    return {"success": True, "certificates": certificates}
+    try:
+        certs, _ = _derived_certificates()
+    except Exception as e:
+        return {"success": False, "message": str(e), "certificates": []}
+    visible = _visible_certificates(certs, current_user)
+    return {
+        "success": True,
+        "count": len(visible),
+        "certificates": [
+            _sanitize_certificate_for_caller(c, current_user) for c in visible
+        ],
+        "access_note": (
+            "Public certificates are retired only and exclude buyer/farmer names, "
+            "commercial value and payout splits. Owners, the buyer of record and "
+            "staff see their own full record."
+        ),
+    }
+
+
+@router.get("/certificates/export.csv")
+def export_certificates_csv(current_user: Optional[dict] = Depends(get_current_user_optional)):
+    """CSV export that obeys exactly the same access policy as JSON/PDF."""
+    from fastapi.responses import Response
+    certs, _ = _derived_certificates()
+    visible = _visible_certificates(certs, current_user)
+    safe = [_sanitize_certificate_for_caller(c, current_user) for c in visible]
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=_CERT_CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for cert in safe:
+        writer.writerow({k: cert.get(k) for k in _CERT_CSV_FIELDS})
+    payload = out.getvalue().encode("utf-8")
+    return Response(
+        content=payload,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="carbonx-certificates.csv"',
+            "X-CarbonX-Access": "authenticated" if current_user else "public",
+        },
+    )
 
 
 @router.get("/certificates/{cert_id}")
 def get_certificate(cert_id: str, current_user: Optional[dict] = Depends(get_current_user_optional)):
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    clean_cert_id = str(cert_id).strip().upper()
-    row = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
-    if not row:
-        raise HTTPException(status_code=404, detail="Certificate not found")
-    farm_id = row.get("farm_id") or ""
-    chain = ledger.summary(farm_id) if farm_id else {}
-    sales = _ledger_sales(farm_id, row.get("id"))
-    retired = str(row.get("status")).lower() == "retired"
-    loc = row.get("location") or "Location not recorded"
-    crop_label = f" ({row.get('crop')})" if row.get("crop") else ""
-    raw_cert = {
-        "id": cert_id,
-        "listing_id": row.get("id"),
-        "farmer_phone": row.get("farmer_phone"),
-        "issued_to": sales.get("buyer") or None,
-        "farmer_name": row.get("farmer_name"),
-        "crop": row.get("crop"),
-        "volume_mt": sales["credits"] if sales["found"] else row.get("total_credits"),
-        "value_inr": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
-        "source_parcels": [f"{loc}{crop_label}"],
-        "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-        "retired_at": ((row.get("updated_at") or "")[:10] or None) if retired else None,
-        "status": "RETIRED" if retired else "HELD_IN_ESCROW",
-        "batch_hash": chain.get("tail_hash"),
-        "ledger_verified": chain.get("verified", False),
-        "tx_hash": row.get("tx_hash"),
-        "on_chain": False,
-    }
+    cert = _certificate_or_404(cert_id, current_user)
     return {
         "success": True,
-        "certificate": _sanitize_certificate_for_caller(raw_cert, current_user),
+        "certificate": _sanitize_certificate_for_caller(cert, current_user),
     }
 
 
 @router.get("/certificates/{cert_id}/pdf")
-def download_certificate_pdf(cert_id: str):
+def download_certificate_pdf(
+    cert_id: str,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
     from fastapi.responses import Response
-    from app.services.certificate_pdf import render_certificate_pdf, get_cached_certificate_pdf
+    from app.services.certificate_pdf import render_certificate_pdf
 
-    cached = get_cached_certificate_pdf(cert_id)
-    if cached:
-        return Response(
-            content=cached,
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
-        )
+    raw = _certificate_or_404(cert_id, current_user)
+    safe = _sanitize_certificate_for_caller(raw, current_user)
+    access = "full" if not safe.get("public_view") else "public"
 
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() in ("sold", "retired")]
-    else:
-        try:
-            sb = db._client()
-            rows = (sb.table("marketplace_listings").select("*").in_("status", ["Sold", "Retired"]).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    clean_cert_id = str(cert_id).strip().upper()
-    row = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
-    if not row:
-        raise HTTPException(status_code=404, detail="Certificate not found")
-    farm_id = row.get("farm_id") or ""
-    chain = ledger.summary(farm_id) if farm_id else {}
-    sales = _ledger_sales(farm_id, row.get("id"))
-    retired = str(row.get("status")).lower() == "retired"
     cert = {
-        "id": cert_id, "buyer": sales.get("buyer") or "—",
-        "farmer_name": row.get("farmer_name"), "crop": row.get("crop"),
-        "volume": sales["credits"] if sales["found"] else row.get("total_credits"),
-        "value": sales["gross_inr"] if sales["found"] else row.get("current_bid"),
-        "location": row.get("location"),
-        "issued_date": (row.get("updated_at") or row.get("created_at") or "")[:10],
-        "retired_date": ((row.get("updated_at") or "")[:10] or None) if retired else None,
-        "status": "RETIRED" if retired else "HELD_IN_ESCROW",
-        "batch_hash": chain.get("tail_hash") or row.get("tx_hash") or "",
+        "id": cert_id,
+        "buyer": safe.get("issued_to") or "—",
+        "farmer_name": safe.get("farmer_name"),
+        "crop": safe.get("crop"),
+        "volume": safe.get("volume_mt"),
+        "value": safe.get("value_inr"),
+        "location": safe.get("location"),
+        "issued_date": safe.get("issued_date"),
+        "retired_date": safe.get("retired_at"),
+        "status": safe.get("status"),
+        "dispute_status": safe.get("dispute_status"),
+        "batch_hash": safe.get("batch_hash") or safe.get("ledger_hash") or "",
+        "validation_label": (safe.get("validation") or {}).get("label"),
+        "validation_status": safe.get("validation_status"),
+        "credits_basis": safe.get("credits_basis"),
+        "public_view": safe.get("public_view"),
     }
     pdf_bytes = render_certificate_pdf(cert)
     return Response(
         content=pdf_bytes, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="CarbonX_Certificate_{cert_id}.pdf"',
+            "X-CarbonX-Access": access,
+        },
     )
 
 
@@ -270,54 +563,396 @@ def retire_certificate(
     scope: Optional[str] = "Scope 1 Neutrality",
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
-    """Permanently retire a held certificate.
+    """Permanently retire a held certificate (legacy rows) / confirm retirement.
 
-    Retirement is buyer action in production (live DB requires a signed-in
-    account); demo mode stays open so the certificate page works offline.
+    Purchases made through the escrow path are retired atomically at sale
+    time; this endpoint remains for legacy ``Sold`` rows and returns an
+    idempotent success for already-retired certificates.
     """
     if db.is_ready() and not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Sign in to retire a certificate",
-        )
+        raise HTTPException(status_code=401, detail="Sign in to retire a certificate")
     if db.is_ready() and str((current_user or {}).get("role", "")).lower() != "buyer":
         raise HTTPException(status_code=403, detail="Only the corporate buyer may retire a certificate")
-    rows = None
-    if not db.is_ready():
-        rows = [r for r in market_store.all_rows() if str(r.get("status")).lower() == "sold"]
-    else:
-        try:
+
+    cert = _certificate_or_404(cert_id, current_user)
+    if db.is_ready() and str(cert.get("status")).upper() == "RETIRED":
+        return {
+            "success": True, "message": f"Certificate {cert_id} is already permanently retired",
+            "cert_id": cert_id, "listing_id": cert.get("listing_id"),
+            "status": "RETIRED", "already_retired": True,
+        }
+    if str(cert.get("status")).upper() == "REFUNDED":
+        raise HTTPException(status_code=409, detail="A refunded certificate cannot be retired")
+
+    # Ledger-derived certificates are retired at sale time. Only a legacy row
+    # (no SALE event) needs a manual retirement transition.
+    if cert.get("source") == "ledger":
+        return {
+            "success": True,
+            "message": f"Certificate {cert_id} is already permanently retired",
+            "cert_id": cert_id,
+            "listing_id": cert.get("listing_id"),
+            "status": "RETIRED",
+            "already_retired": True,
+        }
+
+    listing_id = cert.get("listing_id")
+    lock_name = f"listing:retire:{listing_id}"
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=30):
+        raise HTTPException(status_code=409, detail="Retirement already in progress; retry")
+    try:
+        retired_ts = datetime.now(timezone.utc).isoformat()
+        if db.is_ready():
             sb = db._client()
-            rows = (sb.table("marketplace_listings").select("id,status,farm_id").eq("status", "Sold").execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    clean_cert_id = str(cert_id).strip().upper()
-    target = next((r for r in rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id), None)
-    if not target:
-        all_rows = market_store.all_rows() if not db.is_ready() else (sb.table("marketplace_listings").select("id,status,farm_id").execute().data or [])
-        already = next((r for r in all_rows if _cert_id_for_listing(r.get("id")).upper() == clean_cert_id and str(r.get("status")).lower() == "retired"), None)
-        if already:
-            return {
-                "success": True, "message": f"Certificate {cert_id} is already permanently retired",
-                "cert_id": cert_id, "status": "RETIRED", "already_retired": True,
-            }
-        raise HTTPException(status_code=404, detail="Certificate not found")
-    retired_ts = datetime.now(timezone.utc).isoformat()
-    if not db.is_ready():
-        market_store.update(target["id"], {"status": "Retired", "updated_at": retired_ts})
-    else:
-        sb = db._client()
-        sb.table("marketplace_listings").update({"status": "Retired", "updated_at": retired_ts}).eq("id", target["id"]).execute()
-    if target.get("farm_id"):
-        ledger.append_event(target["farm_id"], "RETIRE", {
-            "certificate_id": cert_id, "scope": scope, "manual": True,
+            sb.table("marketplace_listings").update({
+                "status": "Retired",
+                "lifecycle_state": "Retired",
+                "updated_at": retired_ts,
+            }).eq("id", listing_id).execute()
+        else:
+            market_store.update(listing_id, {
+                "status": "Retired", "lifecycle_state": "Retired",
+                "updated_at": retired_ts,
+            })
+        if cert.get("farm_id"):
+            ledger.append_event(cert["farm_id"], "RETIRE", {
+                "certificate_id": cert_id,
+                "listing_id": listing_id,
+                "scope": scope,
+                "manual": True,
+            })
+        from app.services.certificate_pdf import invalidate_certificate_pdf
+        invalidate_certificate_pdf(cert_id)
+        invalidate_certificate_pdf(f"{str(cert_id).strip().upper()}:full")
+        invalidate_certificate_pdf(f"{str(cert_id).strip().upper()}:public")
+        return {
+            "success": True, "message": f"Certificate {cert_id} permanently retired for {scope}",
+            "cert_id": cert_id, "listing_id": listing_id, "status": "RETIRED",
+            "scope": scope, "retired_timestamp": retired_ts,
+        }
+    finally:
+        redis_store.release_lock(lock_name)
+
+
+@router.post("/certificates/{cert_id}/refund")
+def refund_certificate(
+    cert_id: str,
+    data: RefundRequest,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Refund one settled sale and restore its credits to the listing.
+
+    Staff-only in production. The ledger gets an explicit REFUND event with
+    the reversed split; the SALE/SPLIT/REFUND history is never deleted, and
+    the certificate flips to REFUNDED while its id remains unique.
+    """
+    if db.is_ready():
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Staff sign-in required for refunds")
+        role = str(current_user.get("role") or "").lower()
+        if role not in ("admin", "verifier"):
+            raise HTTPException(status_code=403, detail="Only admin/verifier staff may refund a sale")
+    cert = _certificate_or_404(cert_id, current_user)
+    if cert.get("source") != "ledger":
+        raise HTTPException(status_code=409, detail="Legacy certificate has no ledger sale to refund")
+    listing_id = cert.get("listing_id")
+    lock_name = _certificate_dispute_lock(cert)
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=60):
+        raise HTTPException(status_code=409, detail="Settlement in progress; retry the refund")
+    try:
+        # Re-derive under the lock so two refund clicks cannot both restore credits.
+        fresh = _certificate_or_404(cert_id, current_user)
+        actor = str((current_user or {}).get("role") or "demo")
+        return _refund_locked(fresh, data.reason, data.reference, actor)
+    finally:
+        redis_store.release_lock(lock_name)
+
+
+@router.post("/certificates/{cert_id}/dispute")
+def open_certificate_dispute(
+    cert_id: str,
+    data: DisputeRequest,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Open a dispute on a sale, freezing the listing from further sales."""
+    if db.is_ready() and not current_user:
+        raise HTTPException(status_code=401, detail="Sign in to open a dispute")
+    cert = _certificate_or_404(cert_id, current_user)
+    if cert.get("source") != "ledger":
+        raise HTTPException(status_code=409, detail="Disputes require a ledger sale record")
+    role = str((current_user or {}).get("role") or "").lower()
+    farmer_owner = bool((current_user or {}).get("phone") and cert.get("farmer_phone") == current_user.get("phone"))
+    buyer = _caller_is_buyer(cert, current_user)
+    if db.is_ready() and not (farmer_owner or buyer or role in ("admin", "verifier")):
+        raise HTTPException(status_code=403, detail="Only the farmer, buyer of record or staff may dispute")
+    if str(cert.get("status")).upper() == "REFUNDED":
+        raise HTTPException(status_code=409, detail="A refunded certificate cannot be disputed")
+    if str(cert.get("dispute_status")).upper() == "OPEN":
+        raise HTTPException(status_code=409, detail="A dispute is already open for this certificate")
+
+    lock_name = _certificate_dispute_lock(cert)
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=60):
+        raise HTTPException(status_code=409, detail="Settlement in progress; retry the dispute")
+    try:
+        fresh = _certificate_or_404(cert_id, current_user)
+        if str(fresh.get("dispute_status")).upper() == "OPEN":
+            raise HTTPException(status_code=409, detail="A dispute is already open for this certificate")
+        dispute_id = "DSP-" + uuid.uuid4().hex[:12].upper()
+        now = datetime.now(timezone.utc).isoformat()
+        event = ledger.append_event(fresh.get("farm_id") or "", "DISPUTE", {
+            "dispute_id": dispute_id,
+            "certificate_id": fresh.get("id"),
+            "listing_id": fresh.get("listing_id"),
+            "escrow_ref": fresh.get("escrow_ref"),
+            "reason": data.reason[:1000],
+            "detail_present": bool(data.detail),
+            "opened_by_role": role or ("farmer" if farmer_owner else "buyer" if buyer else "demo"),
         })
-    from app.services.certificate_pdf import invalidate_certificate_pdf
-    invalidate_certificate_pdf(cert_id)
+        listing = _listing_row(fresh.get("listing_id") or "") or {}
+        _apply_listing_fields(fresh.get("listing_id") or "", {
+            "dispute_status": "OPEN",
+            "dispute_reason": data.reason[:1000],
+            "dispute_opened_at": now,
+            "lifecycle_state": "Disputed",
+        })
+        return {
+            "success": True,
+            "dispute_id": dispute_id,
+            "certificate_id": fresh.get("id"),
+            "listing_id": fresh.get("listing_id"),
+            "status": "OPEN",
+            "opened_at": now,
+            "ledger_hash": event.get("hash"),
+            "affected_balance": {
+                "credits_remaining": float(listing.get("total_credits") or 0),
+                "listing_status": listing.get("status"),
+            },
+            "message": (
+                "Dispute opened. The listing is frozen for new sales; refund and "
+                "release decisions are recorded in the ledger."
+            ),
+        }
+    finally:
+        redis_store.release_lock(lock_name)
+
+
+@router.post("/certificates/{cert_id}/dispute/resolve")
+def resolve_certificate_dispute(
+    cert_id: str,
+    data: DisputeResolveRequest,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Staff decision: release the sale, reject the dispute or refund it."""
+    if db.is_ready():
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Staff sign-in required")
+        if str(current_user.get("role") or "").lower() not in ("admin", "verifier"):
+            raise HTTPException(status_code=403, detail="Only admin/verifier staff may resolve a dispute")
+    cert = _certificate_or_404(cert_id, current_user)
+    if str(cert.get("dispute_status")).upper() != "OPEN":
+        raise HTTPException(status_code=409, detail="No open dispute for this certificate")
+
+    lock_name = _certificate_dispute_lock(cert)
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=60):
+        raise HTTPException(status_code=409, detail="Settlement in progress; retry")
+    try:
+        fresh = _certificate_or_404(cert_id, current_user)
+        if str(fresh.get("dispute_status")).upper() != "OPEN":
+            raise HTTPException(status_code=409, detail="No open dispute for this certificate")
+        dispute = next(
+            (e for e in reversed(_dispute_events(fresh)) if e.get("type") == "DISPUTE"),
+            None,
+        )
+        dispute_id = ((dispute or {}).get("payload") or {}).get("dispute_id")
+        refund_result = None
+        if data.decision == "refund":
+            refund_result = _refund_locked(
+                fresh, f"Dispute {dispute_id}: {data.note}", None,
+                str((current_user or {}).get("role") or "demo"),
+            )
+        now = datetime.now(timezone.utc).isoformat()
+        event = ledger.append_event(fresh.get("farm_id") or "", "DISPUTE_RESOLVED", {
+            "dispute_id": dispute_id,
+            "certificate_id": fresh.get("id"),
+            "listing_id": fresh.get("listing_id"),
+            "escrow_ref": fresh.get("escrow_ref"),
+            "decision": data.decision,
+            "note": data.note[:2000],
+            "resolved_by_role": str((current_user or {}).get("role") or "demo"),
+        })
+        listing = _listing_row(fresh.get("listing_id") or "") or {}
+        remaining = float((refund_result or {}).get("balance_after", listing.get("total_credits") or 0))
+        if remaining <= 1e-9 and str(listing.get("status")).lower() == "retired":
+            lifecycle = "Retired"
+        elif remaining <= 1e-9:
+            lifecycle = "Retired"
+        elif float(listing.get("credits_sold") or 0) > 0:
+            lifecycle = "Partially Sold"
+        else:
+            lifecycle = "Active"
+        _apply_listing_fields(fresh.get("listing_id") or "", {
+            "dispute_status": "REFUNDED" if data.decision == "refund" else "RESOLVED",
+            "dispute_resolved_at": now,
+            "lifecycle_state": lifecycle,
+        })
+        return {
+            "success": True,
+            "dispute_id": dispute_id,
+            "certificate_id": fresh.get("id"),
+            "decision": data.decision,
+            "resolved_at": now,
+            "refund": refund_result,
+            "lifecycle_state": lifecycle,
+            "ledger_hash": event.get("hash"),
+        }
+    finally:
+        redis_store.release_lock(lock_name)
+
+
+@router.post("/certificates/{cert_id}/correction")
+def correct_certificate(
+    cert_id: str,
+    data: CorrectionLifecycleRequest,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    """Correct non-financial certificate metadata with an audit event.
+
+    Financial corrections (credits/value) must go through refund + reissue;
+    changing money in place would make the certificate and ledger disagree.
+    """
+    if db.is_ready():
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Staff sign-in required")
+        if str(current_user.get("role") or "").lower() not in ("admin", "verifier"):
+            raise HTTPException(status_code=403, detail="Only admin/verifier staff may correct a certificate")
+    cert = _certificate_or_404(cert_id, current_user)
+    if cert.get("source") != "ledger":
+        raise HTTPException(status_code=409, detail="Corrections require a ledger sale record")
+    if str(cert.get("status")).upper() == "REFUNDED":
+        raise HTTPException(status_code=409, detail="Refunded certificates are not corrected in place")
+    lock_name = _certificate_dispute_lock(cert)
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=30):
+        raise HTTPException(status_code=409, detail="Settlement in progress; retry")
+    try:
+        old_value = cert.get(data.field)
+        event = ledger.append_event(cert.get("farm_id") or "", "CORRECTION", {
+            "certificate_id": cert.get("id"),
+            "listing_id": cert.get("listing_id"),
+            "escrow_ref": cert.get("escrow_ref"),
+            "field": data.field,
+            "old_value": old_value,
+            "new_value": data.corrected_value,
+            "reason": data.reason[:1000],
+            "corrected_by_role": str((current_user or {}).get("role") or "demo"),
+        })
+        _apply_listing_fields(cert.get("listing_id") or "", {data.field: data.corrected_value})
+        try:
+            from app.services.certificate_pdf import invalidate_certificate_pdf
+            invalidate_certificate_pdf(cert.get("id") or "")
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "certificate_id": cert.get("id"),
+            "field": data.field,
+            "old_value": old_value,
+            "new_value": data.corrected_value,
+            "ledger_hash": event.get("hash"),
+            "financial_values_unchanged": True,
+        }
+    finally:
+        redis_store.release_lock(lock_name)
+
+
+@router.get("/certificates/{cert_id}/lifecycle")
+def certificate_lifecycle(
+    cert_id: str,
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+):
+    cert = _certificate_or_404(cert_id, current_user)
+    listing = _listing_row(cert.get("listing_id") or "") or {}
+    chain = ledger.get_chain(cert.get("farm_id") or "")
+    snapshot = credit_lifecycle.lifecycle_snapshot(listing, chain)
+    statement = _statement_for(cert)
+    full_visibility = not _sanitize_certificate_for_caller(cert, current_user).get("public_view")
+    disputes = []
+    for event in chain:
+        payload = event.get("payload") or {}
+        if str(payload.get("certificate_id") or "") != str(cert.get("id")):
+            continue
+        if event.get("type") in ("DISPUTE", "DISPUTE_RESOLVED", "CORRECTION"):
+            disputes.append({
+                "type": event.get("type"),
+                "at": event.get("ts"),
+                "decision": payload.get("decision"),
+                "field": payload.get("field"),
+                "new_value": payload.get("new_value") if full_visibility else None,
+                "hash": event.get("hash"),
+            })
     return {
-        "success": True, "message": f"Certificate {cert_id} permanently retired for {scope}",
-        "cert_id": cert_id, "listing_id": target["id"], "status": "RETIRED",
-        "scope": scope, "retired_timestamp": retired_ts,
+        "success": True,
+        "certificate": _sanitize_certificate_for_caller(cert, current_user),
+        "lifecycle": snapshot,
+        "payout": {
+            k: statement.get(k) for k in (
+                "gross_inr", "farmer_inr", "fpo_inr", "platform_inr",
+                "farmer_floor_met", "payout_status", "refunded", "refund_ref",
+                "issues", "ledger_hash",
+            )
+        } if statement else None,
+        "audit_events": disputes,
+        "rules": {
+            "issuance": "A certificate is created per sale (unique id, sale_seq) after escrow CAS.",
+            "partial_sale": "Listing stays Active with lifecycle_state='Partially Sold'; each sale has its own certificate.",
+            "retirement": "Full purchase retires the purchased credits atomically; refunds restore the balance.",
+            "correction": "Non-financial fields are corrected with a CORRECTION event; money changes require refund + reissue.",
+            "dispute": "An open dispute freezes new sales and must end in release, reject or refund.",
+            "refund": "REFUND restores credits and reverses the split from the original SALE/SPLIT record.",
+        },
+    }
+
+
+@router.get("/ops/certificates/reconciliation")
+def certificates_reconciliation(
+    current_user: dict = Depends(require_role("admin", "verifier")),
+):
+    certs, _ = _derived_certificates()
+    ids = [c.get("id") for c in certs if c.get("id")]
+    duplicates = sorted({c for c in ids if ids.count(c) > 1})
+    listing_summaries = []
+    issues = []
+    for listing in _all_listing_rows():
+        chain = ledger.get_chain(listing.get("farm_id") or "")
+        statements = payouts.settlement_statements(chain, listing.get("id"))
+        recon = payouts.reconcile(statements)
+        snapshot = credit_lifecycle.lifecycle_snapshot(listing, chain)
+        if recon.get("issues") or snapshot.get("duplicate_certificate_ids"):
+            issues.append({
+                "listing_id": listing.get("id"),
+                "payout_issues": recon.get("issues"),
+                "lifecycle": snapshot,
+            })
+        listing_summaries.append({
+            "listing_id": listing.get("id"),
+            "status": listing.get("status"),
+            "lifecycle_state": snapshot.get("lifecycle_state"),
+            "credits_remaining": snapshot.get("credits_remaining"),
+            "credits_sold": snapshot.get("credits_sold"),
+            "certificates": snapshot.get("certificate_count"),
+            "reconciliation": recon.get("status"),
+        })
+    return {
+        "success": True,
+        "certificates_total": len(certs),
+        "unique_certificate_ids": len(set(ids)),
+        "duplicate_certificate_ids": duplicates,
+        "listings": listing_summaries,
+        "issues": issues,
+        "status": "reconciled" if not duplicates and not issues else "issues_found",
+        "note": (
+            "Checks are derived from the ledger. Legacy rows without SALE events "
+            "are reported as unreconciled rather than assumed correct."
+        ),
     }
 
 
@@ -363,12 +998,26 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
     kyc = db.get_kyc_status(farm.get("owner_phone") or "") if db.is_ready() else None
     badge = farm.get("badge") or (kyc or {}).get("badge") or "DOCUMENT"
     benchmark = {"REGISTRY": 340, "REGISTRY_DOC": 320, "FPO": 300}.get(badge, 310)
-    verification_hash = "0x" + uuid.uuid5(uuid.NAMESPACE_URL, f"carbonx:{farm_id}:{farm.get('updated_at')}").hex[:26]
+    # A real content hash over the passport's core fields.  The old value was a
+    # UUID5 of the id/timestamp dressed up as a verification hash; anyone can
+    # now recompute this one from the fields returned in this response.
+    hash_snapshot = {
+        "passport_id": f"CX-FARM-{str(farm_id).replace('-', '')[:8].upper()}",
+        "farm_id": farm_id,
+        "crop": farm.get("crop_type"),
+        "area_hectares": farm.get("area_hectares"),
+        "ndvi": farm.get("ndvi"),
+        "total_credits": farm.get("total_credits"),
+        "formula_version": farm.get("formula_version") or app_config.FORMULA_VERSION,
+        "updated_at": farm.get("updated_at"),
+    }
+    verification_hash = "0x" + hashlib.sha256(
+        json.dumps(hash_snapshot, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
     credits_total = float(farm.get("total_credits") or 0)
     income = credit_engine.income_projection(credits_total, badge)
 
-    verified_status = str(farm.get("status", "")).lower() in ("verified", "ver")
     # Only evidence the platform actually holds counts: the badge is a real
     # verification fact, a stored NDVI is real current satellite evidence, and
     # practice photos / geotags come from the real capture pipeline
@@ -389,7 +1038,14 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
             "carbon_tonnes": farm.get("carbon_tonnes"), "badge": badge, "status": farm.get("status"),
         }, ts=(farm.get("updated_at") or "") or None)
     chain = ledger.summary(farm_id)
-    chain["history"] = [{k: v for k, v in e.items() if not k.startswith("_")} for e in ledger.get_chain(farm_id)]
+    caller_is_full = bool(
+        access_policy.is_staff(current_user)
+        or access_policy.is_owner(current_user, farm.get("owner_phone"))
+    )
+    chain["history"] = access_policy.ledger_events_for(
+        ledger.get_chain(farm_id), full_access=caller_is_full
+    )
+    chain["access"] = "full" if caller_is_full else "public"
     farm_status = farm.get("status")
     monitoring = {
         "last_monitored_at": farm.get("last_monitored_at"),
@@ -398,36 +1054,54 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
         "cycle": "5-day Sentinel-2 revisit",
     }
 
-    caller_phone = (current_user or {}).get("phone")
-    caller_role = (current_user or {}).get("role")
-    is_owner = bool(caller_phone and caller_phone == farm.get("owner_phone"))
-    is_staff = caller_role in ("admin", "fpo", "verifier")
-
-    if is_owner or is_staff:
-        public_phone = farm.get("owner_phone")
-        public_owner = (owner or {}).get("name") or "Registered Farmer"
-    else:
-        public_phone = _redact_phone(farm.get("owner_phone"))
-        raw_name = (owner or {}).get("name") or "Registered Farmer"
-        parts = raw_name.split()
-        public_owner = f"{parts[0]} ***" if len(parts) > 1 else raw_name
+    identity = access_policy.passport_identity(farm, owner or {}, current_user)
+    validation_status = validation.current_status()
+    top_status = (
+        "FIELD-VALIDATED MRV RECORD (LIMITED)"
+        if validation_status.get("status") == "field_validated_limited"
+        else "MRV RECORD — PROXY ESTIMATE (NOT FIELD-VALIDATED)"
+    )
+    public_evidence = access_policy.evidence_public(evidence)
 
     return {
         "success": True, "passport_id": f"CX-FARM-{str(farm_id).replace('-', '')[:8].upper()}",
-        "demo_mode": demo_mode, "farm_name": farm.get("name"),
-        "owner_name": public_owner,
-        "phone": public_phone,
-        "district": (owner or {}).get("district"), "village": (owner or {}).get("village"),
+        "demo_mode": demo_mode,
+        # Farm name is owner-visible only; the public record is identified by
+        # passport id, crop, district and credits (no farmer name or phone).
+        "farm_name": farm.get("name") if caller_is_full else "Verified smallholder farm",
+        "owner_name": identity["owner_name"],
+        "phone": identity["phone"],
+        "district": identity["district"], "village": identity["village"],
+        "location_precision": identity["location_precision"],
+        "access": {
+            "public_view": not caller_is_full,
+            "owner": access_policy.is_owner(current_user, farm.get("owner_phone")),
+            "staff": access_policy.is_staff(current_user),
+        },
         "crop": farm.get("crop_type"), "irrigation": farm.get("irrigation"),
         "acreage": farm.get("area_hectares"), "badge": badge, "benchmark_price": benchmark,
         "annual_credits": farm.get("total_credits"), "carbon_tonnes": farm.get("carbon_tonnes"),
         "sentinel_ndvi": farm.get("ndvi"), "evi": farm.get("evi"),
         "biodiversity_index": round(float(farm.get("biodiversity_score") or 0) / 10, 1) if farm.get("biodiversity_score") else None,
-        "satellite_source": farm.get("satellite_source"), "ai_confidence": farm.get("ai_confidence"),
-        "verification_hash": verification_hash, "farm_status": farm_status,
-        "kyc_status": (kyc or {}).get("status"),
-        "status": "APPROVED MRV RECORD" if verified_status else "PENDING MRV REVIEW",
-        "expected_earnings": income,
+        "satellite_source": farm.get("satellite_source"),
+        # No calibrated model confidence exists; never present a heuristic as one.
+        "ai_confidence": None,
+        "confidence_basis": "Not reported — no calibrated model confidence.",
+        "evidence_quality": quality["score"],
+        "credits_basis": "proxy_estimate",
+        "validation": validation_status,
+        "verification_hash": verification_hash,
+        "verification_hash_covers": sorted(hash_snapshot.keys()),
+        "farm_status": farm_status,
+        "kyc_status": (kyc or {}).get("status") if caller_is_full else None,
+        "status": top_status,
+        "biodiversity_index_label": "Relative index — not a species census",
+        "expected_earnings": income if caller_is_full else None,
+        "expected_earnings_note": (
+            "Projected income visible to the farmer/staff only; the public record shows credits."
+            if not caller_is_full else
+            "Projection at the benchmark price, not a guaranteed payout."
+        ),
         "credits_ci90": {"low": farm.get("credits_ci90_low"), "high": farm.get("credits_ci90_high")},
         "formula_version": farm.get("formula_version") or app_config.FORMULA_VERSION,
         "s2_scene": farm.get("s2_scene"),
@@ -436,107 +1110,173 @@ def get_carbon_passport(farm_id: str, current_user: Optional[dict] = Depends(get
             "evidence_quality": quality["score"],
             "uncertainty_pct": credit_engine.uncertainty_pct(quality["score"]),
             "components": quality["components"],
-            "evidence": {
-                "practice_photo": evidence["practice_photo"],
-                "geotag_inside_boundary": evidence["geotag_inside_boundary"],
-                "photo_count": evidence["photo_count"],
-                "geotag_count": evidence["geotag_count"],
-                "last_photo_at": evidence["last_photo_at"],
-                "demo_mode": evidence["demo_mode"],
-            },
+            "evidence": public_evidence,
+            "evidence_access": "full" if caller_is_full else "presence_only",
             "verification_hash": verification_hash,
         },
         "ledger": chain,
     }
 
 
-@router.get("/wallet")
-def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
-    phone = current_user.get("phone")
+def _wallet_rows(phone: str) -> tuple[dict, list[dict]]:
     if not db.is_ready():
         from app import sample_data
         profile = sample_data.FARMERS.get(phone) or {}
         rows = [r for r in market_store.all_rows() if r.get("farmer_phone") == phone]
-    else:
-        try:
-            sb = db._client()
-            profile = db.get_profile(phone) or {}
-            rows = (sb.table("marketplace_listings").select("*").eq("farmer_phone", phone).execute().data) or []
-        except Exception as e:
-            return {"success": False, "message": str(e)}
+        return profile, rows
+    sb = db._client()
+    profile = db.get_profile(phone) or {}
+    rows = (sb.table("marketplace_listings").select("*").eq("farmer_phone", phone).execute().data) or []
+    return profile, rows
 
-    sold = [r for r in rows if str(r.get("status")).lower() in ("sold", "retired")]
-    active = [r for r in rows if str(r.get("status")).lower() == "active"]
 
-    farms_cache: dict = {}
+def _wallet_view(phone: str) -> dict:
+    profile, rows = _wallet_rows(phone)
+    active = [r for r in rows if str(r.get("status")).lower() in ("active", "partially sold", "partially_sold")]
+    all_statements = []
+    transactions = []
+    legacy_sales = []
 
-    def _farm(farm_id):
-        if not farm_id or not db.is_ready():
-            return None
-        if farm_id not in farms_cache:
-            farms_cache[farm_id] = db.get_farm(farm_id)
-        return farms_cache[farm_id]
+    for r in sorted(rows, key=lambda x: x.get("updated_at") or x.get("created_at") or "", reverse=True):
+        farm_id = r.get("farm_id") or ""
+        listing_id = r.get("id")
+        chain = ledger.get_chain(farm_id) if farm_id else []
+        statements = payouts.settlement_statements(chain, listing_id)
+        if statements:
+            all_statements.extend(statements)
+            for s in statements:
+                transactions.append({
+                    "date": str(s.get("sale_at") or r.get("updated_at") or r.get("created_at") or "")[:10],
+                    "tx_id": s.get("escrow_ref"),
+                    "escrow_ref": s.get("escrow_ref"),
+                    "certificate_id": s.get("certificate_id"),
+                    "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
+                    "listing_id": listing_id,
+                    "farm_id": farm_id,
+                    "credits_sold": s.get("credits_sold"),
+                    "rate": s.get("unit_price") or None,
+                    "gross": s.get("net_gross_inr"),
+                    "farmer_share": round(s["farmer_inr"] - s["refund_farmer_inr"], 2),
+                    "fpo_share": round(s["fpo_inr"] - s["refund_fpo_inr"], 2),
+                    "platform_share": round(s["platform_inr"] - s["refund_platform_inr"], 2),
+                    "split_model": s.get("split_model"),
+                    "ledger_hash": s.get("ledger_hash"),
+                    "status": (
+                        "FAILED_RECONCILIATION" if s.get("failed") else
+                        ("REFUNDED" if s.get("refunded") else "SETTLED")
+                    ),
+                    "payout_status": s.get("payout_status"),
+                    "reconciled": not s.get("issues"),
+                    "issues": s.get("issues") or [],
+                    "farmer_floor_met": s.get("farmer_floor_met"),
+                    "refund_ref": s.get("refund_ref"),
+                })
+            continue
 
-    # Proceeds come from the hash ledger (the money source of truth); the
-    # listing row is only a fallback for rows predating the ledger.
-    sales_by_listing = {
-        r.get("id"): _ledger_sales(r.get("farm_id") or "", r.get("id")) for r in rows
-    }
+        # Legacy row with no SALE/SPLIT events. This is an estimate, clearly
+        # labelled; it is NOT presented as a final payout record.
+        if str(r.get("status")).lower() in ("sold", "retired") or float(r.get("current_bid") or 0) > 0:
+            gross = float(r.get("current_bid") or 0) or (
+                float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0)
+            )
+            farm = db.get_farm(farm_id) if farm_id and db.is_ready() else None
+            fpo_name = _resolve_fpo_link(farm, r.get("farmer_phone") or phone)
+            split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
+            legacy_sales.append((r, gross, split))
+            transactions.append({
+                "date": (r.get("updated_at") or r.get("created_at") or "")[:10],
+                "tx_id": r.get("tx_hash") or f"TXN-{(listing_id or '')[:6].upper()}",
+                "escrow_ref": None,
+                "certificate_id": credit_lifecycle.certificate_id_for_sale(listing_id or "", 1),
+                "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
+                "listing_id": listing_id,
+                "farm_id": farm_id,
+                "credits_sold": r.get("total_credits"),
+                "rate": float(r.get("price_per_credit") or 0) or None,
+                "gross": round(gross, 2),
+                "farmer_share": split["farmer_amount_inr"],
+                "fpo_share": split["fpo_amount_inr"],
+                "platform_share": split["platform_amount_inr"],
+                "split_model": split["model"],
+                "ledger_hash": None,
+                "status": "LEGACY_ESTIMATE",
+                "payout_status": "legacy_recomputed_estimate",
+                "reconciled": False,
+                "issues": ["no_sale_event_in_ledger"],
+                "farmer_floor_met": True,
+                "refund_ref": None,
+            })
 
-    def _settled(r):
-        return sales_by_listing.get(r.get("id")) if sales_by_listing.get(r.get("id"), {}).get("found") else None
+    recon = payouts.reconcile(all_statements)
+    # Include legacy rows in the gross total, but never call them reconciled.
+    legacy_gross = round(sum(g for _, g, _ in legacy_sales), 2)
+    legacy_farmer = round(sum(s["farmer_amount_inr"] for _, _, s in legacy_sales), 2)
+    legacy_fpo = round(sum(s["fpo_amount_inr"] for _, _, s in legacy_sales), 2)
+    legacy_platform = round(sum(s["platform_amount_inr"] for _, _, s in legacy_sales), 2)
 
-    def _gross(r):
-        sales = _settled(r)
-        if sales:
-            return sales["gross_inr"]
-        bid = r.get("current_bid")
-        if bid:
-            return round(float(bid), 2)
-        return round(float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0), 2)
-
-    # Partially-bought listings stay Active: their settled proceeds belong in
-    # earnings, while only the *remaining* credits are pending escrow.
-    settled_rows = sold + [r for r in active if _settled(r)]
-    total_earned = round(sum(_gross(r) for r in settled_rows), 2)
+    total_earned = round(recon["net_gross_inr"] + legacy_gross, 2)
+    farmer_total = round(recon["farmer_inr"] + legacy_farmer, 2)
+    fpo_total = round(recon["fpo_inr"] + legacy_fpo, 2)
+    platform_total = round(recon["platform_inr"] + legacy_platform, 2)
     escrow_pending = round(sum(
-        float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0) for r in active
+        float(r.get("total_credits") or 0) * float(r.get("price_per_credit") or 0)
+        for r in active
     ), 2)
 
-    farmer_total = 0.0
-    fpo_total = 0.0
-    platform_total = 0.0
-    transactions = []
-    for r in sorted(settled_rows, key=lambda x: x.get("updated_at") or "", reverse=True):
-        gross = _gross(r)
-        fpo_name = _resolve_fpo_link(_farm(r.get("farm_id")), r.get("farmer_phone") or phone)
-        split = split_engine.compute_split(gross, fpo_involved=bool(fpo_name), fpo_name=fpo_name)
-        farmer_total += split["farmer_amount_inr"]
-        fpo_total += split["fpo_amount_inr"]
-        platform_total += split["platform_amount_inr"]
-        farm_id = r.get("farm_id") or ""
-        chain = ledger.summary(farm_id) if farm_id else {}
-        rate = float(r.get("price_per_credit") or 0)
-        sales = _settled(r)
-        transactions.append({
-            "date": (r.get("updated_at") or r.get("created_at") or "")[:10],
-            "tx_id": (r.get("tx_hash") or f"TXN-{(r.get('id') or '')[:6].upper()}"),
-            "source": f"Marketplace sale ({r.get('crop') or 'Mixed Crop'})",
-            "listing_id": r.get("id"), "farm_id": farm_id,
-            "credits_sold": sales["credits"] if sales else r.get("total_credits"),
-            "rate": rate or None, "gross": gross,
-            "farmer_share": split["farmer_amount_inr"], "fpo_share": split["fpo_amount_inr"],
-            "platform_share": split["platform_amount_inr"], "split_model": split["model"],
-            "ledger_hash": chain.get("tail_hash"),
-            "status": "SETTLED" if str(r.get("status")).lower() in ("sold", "retired") else "PARTIAL",
-        })
-
     return {
-        "success": True, "total_earned": total_earned, "escrow_pending": escrow_pending,
-        "withdrawable_upi": round(farmer_total, 2),
-        "farmer_share_total": round(farmer_total, 2), "fpo_share_total": round(fpo_total, 2),
-        "platform_share_total": round(platform_total, 2), "upi_id": profile.get("upi"),
-        "demo_mode": not db.is_ready(), "transactions": transactions,
+        "success": True,
+        "total_earned": total_earned,
+        "escrow_pending": escrow_pending,
+        "withdrawable_upi": farmer_total,
+        "farmer_share_total": farmer_total,
+        "fpo_share_total": fpo_total,
+        "platform_share_total": platform_total,
+        "upi_id": profile.get("upi"),
+        "demo_mode": not db.is_ready(),
+        "transactions": transactions,
+        "payout_status": "recorded_simulated_rails",
+        "payout_note": (
+            "Shares are read from the ledger's SPLIT/REFUND events. UPI/bank "
+            "rails are simulated in this pilot; no bank settlement is claimed."
+        ),
+        "reconciliation": {
+            **recon,
+            "legacy_rows_included": len(legacy_sales),
+            "legacy_gross_inr": legacy_gross,
+            "net_total_inr": total_earned,
+            "farmer_total_inr": farmer_total,
+            "fpo_total_inr": fpo_total,
+            "platform_total_inr": platform_total,
+            "display_matches_ledger": recon["status"] == "reconciled" and not legacy_sales,
+        },
+    }
+
+
+@router.get("/wallet")
+def get_wallet_ledger(current_user: dict = Depends(get_current_user)):
+    try:
+        return _wallet_view(current_user.get("phone") or "")
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@router.get("/wallet/reconciliation")
+def wallet_reconciliation(current_user: dict = Depends(get_current_user)):
+    """Machine-checkable proof that displayed shares equal the ledger record."""
+    view = _wallet_view(current_user.get("phone") or "")
+    return {
+        "success": True,
+        "reconciliation": view.get("reconciliation"),
+        "payout_status": view.get("payout_status"),
+        "payout_note": view.get("payout_note"),
+        "transactions": [
+            {k: t.get(k) for k in (
+                "escrow_ref", "certificate_id", "listing_id", "gross",
+                "farmer_share", "fpo_share", "platform_share",
+                "payout_status", "reconciled", "issues",
+            )}
+            for t in view.get("transactions", [])
+        ],
     }
 
 
@@ -553,7 +1293,14 @@ def earnings_calculator(data: EarningsCalcModel):
         quality_score=quality["score"],
     )
     income = credit_engine.income_projection(estimate["credits_tco2e"], data.badge or "DOCUMENT")
-    return {"success": True, "estimate": estimate, "income": income, "evidence_quality": quality}
+    return {
+        "success": True,
+        "estimate": estimate,
+        "income": income,
+        "evidence_quality": quality,
+        "credits_basis": estimate.get("basis", "proxy_estimate"),
+        "validation": validation.current_status(),
+    }
 
 
 @router.get("/ledger/{farm_id}")
@@ -585,8 +1332,24 @@ def get_farm_ledger(farm_id: str, current_user: Optional[dict] = Depends(get_cur
                 ledger.ensure_genesis(farm_id, snapshot)
         chain = ledger.get_chain(farm_id)
     verification = ledger.verify_chain(farm_id)
-    public_events = [{k: v for k, v in e.items() if not k.startswith("_")} for e in chain]
+    if db.is_ready() and farm:
+        farmer_phone = farm.get("owner_phone")
+    else:
+        row = next((r for r in market_store.all_rows() if r.get("farm_id") == farm_id), None)
+        farmer_phone = (row or {}).get("farmer_phone")
+    full_access = bool(
+        access_policy.is_staff(current_user)
+        or access_policy.is_owner(current_user, farmer_phone)
+    )
     return {
-        "success": True, "farm_id": farm_id,
-        "verification": verification, "events": public_events,
+        "success": True,
+        "farm_id": farm_id,
+        "verification": verification,
+        "access": "full" if full_access else "public_redacted",
+        "redaction_note": (
+            None if full_access else
+            "Public ledger shows event type, sequence, time, hash and credit quantities. "
+            "Buyer/farmer identities, rupee amounts, payout splits and free-text reasons are private."
+        ),
+        "events": access_policy.ledger_events_for(chain, full_access=full_access),
     }

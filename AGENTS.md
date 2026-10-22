@@ -285,8 +285,53 @@ Frontend: Marketplace buy modal shows a purchase-proof screen (split + hash);
   uses `USER appuser`; `backend/Dockerfile.node` uses `USER node`); docker-compose passes all
   payment, monitoring, and security variables; CI workflow `.github/workflows/ci.yml` runs
   frontend lint/build and hermetic backend tests.
-- **Gates**: backend 301 tests green (1 skipped live-DB opt-in), eslint 0 errors /
+- **Gates**: backend 502 tests green (1 skipped live-DB opt-in), eslint 0 errors /
   0 warnings, vite build OK.
+
+## Trust program (2026-10-22 — validation, privacy, lifecycle, payouts, public access)
+
+Implements the P0/P1 honesty work. Handler modules:
+
+- `app/services/validation.py` — pre-registered thresholds (30 verified
+  **annual-rate** samples, MAPE ≤30%, |bias| ≤20%, CI90 coverage ≥50%);
+  statuses `proxy_unvalidated` / `proxy_insufficient_data` /
+  `field_validated_limited` / `field_validation_failed`; estimates are frozen
+  at sampling time. Public endpoints `/validation/status` + `/validation/claims`.
+- `app/services/privacy.py` + `privacy_router.py` — versioned purpose-specific
+  consent, JSON export, correction requests, tombstone erasure with blockers;
+  `/privacy/*`.
+- `app/services/credit_lifecycle.py` + `trust_router.py` — per-sale unique
+  certificate ids, refunds (full-sale reversal only), disputes (freeze →
+  release/reject/refund), corrections (metadata-only; financial = refund +
+  reissue), lifecycle snapshot endpoint.
+- `app/services/payouts.py` — ledger-derived settlement statements +
+  `/wallet/reconciliation`; FAILED_RECONCILIATION rows are excluded from totals.
+- `app/services/access_policy.py` — single redaction policy for passports,
+  ledger (HTTP + WS), evidence, marketplace listings, certificates (JSON/CSV/
+  PDF). Public surfaces get placeholders ("Verified Telangana Smallholder",
+  district-level location); held/refunded/disputed certificates are not public.
+- Marketplace settlement uses per-listing Redis locks + CAS + `sale_seq`; on
+  ledger failure the balance is rolled back and a `SALE_FAILED` event is written.
+- `app/routes/corporate_router.py` + `app/services/corporate_settings.py` —
+  server-side buyer target (`corporate_settings` table; labelled in-memory
+  fallback until the migration is applied).
+
+Production hardening in `config.validate_production_configuration`: production
+startup blocks unless JWT secret (≥32 chars), Supabase service vars, managed
+(non-localhost) Redis, https-only CORS, `CARBONX_ALLOW_DEV_OTP` off, and an
+explicit payment mode (`razorpay` + all credentials, or `simulated` with
+`CARBONX_ACCEPT_SIMULATED_PAYMENTS=1`) are set.
+
+**Migration `supabase/10_trust_controls.sql` is idempotent but NOT yet applied**
+(DDL not possible from this machine) — before any live production/pilot deploy:
+consent/privacy evidence tables + columns, monitor lifecycle columns, sale
+lifecycle columns, evidence/KYC deletion markers, and `corporate_settings`.
+
+Honesty docs (all external items explicitly NOT-done): `docs/VALIDATION_PROTOCOL.md`,
+`docs/INDEPENDENT_REVIEW.md` (register of reviews NOT obtained),
+`docs/PRIVACY_DPIA.md`, `docs/CREDIT_LIFECYCLE.md`, `docs/PUBLIC_ACCESS.md`,
+`docs/PILOT_PROTOCOL.md`. Frontend `/trust` (TrustCenter) publishes the labels,
+claim limits and consent/privacy controls.
 
 ## Commands
 

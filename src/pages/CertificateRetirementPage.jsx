@@ -2,7 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ShieldCheck, Download, Lock, ArrowLeft, Loader2, AlertTriangle, FileDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getCertificates, getCertificate, getCertificatePdfUrl, retireCertificate } from '../services/api';
+import {
+  getCertificates,
+  getCertificate,
+  getCertificatePdfUrl,
+  getCertificateLifecycle,
+  openCertificateDispute,
+  retireCertificate,
+} from '../services/api';
 
 export default function CertificateRetirementPage() {
   const { certId } = useParams();
@@ -18,6 +25,11 @@ export default function CertificateRetirementPage() {
   const [pdfError, setPdfError] = useState('');
   const [selectedScope, setSelectedScope] = useState('Scope 1 Neutrality');
   const [retireTimestamp, setRetireTimestamp] = useState(null);
+  const [lifecycle, setLifecycle] = useState(null);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeError, setDisputeError] = useState('');
+  const [disputeNotice, setDisputeNotice] = useState('');
+  const [isDisputing, setIsDisputing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -34,16 +46,12 @@ export default function CertificateRetirementPage() {
         if (found) {
           setCert(found);
           if (found.status === 'RETIRED') setRetireTimestamp(found.retired_at || found.retired_timestamp || null);
+          const lifecycleRes = await getCertificateLifecycle(certId).catch(() => null);
+          if (lifecycleRes?.success) setLifecycle(lifecycleRes);
         } else if (certId && certId.toUpperCase().startsWith('PENDING-RZP-')) {
-          setCert({
-            id: certId,
-            issued_to: user?.name || 'Corporate Buyer',
-            volume_mt: 1,
-            status: 'PENDING_SETTLEMENT',
-            source_parcels: ['Verified Telangana Farmland'],
-            tx_hash: certId.replace('PENDING-RZP-', 'RZP-PAY-'),
-            issued_date: new Date().toISOString().slice(0, 10),
-          });
+          // A browser payment callback is not a certificate. The verified
+          // webhook issues the real, unique certificate id after settlement.
+          setLoadError('Payment is authorized, but the certificate has not been issued yet. CarbonX is waiting for the verified payment webhook — refresh in a moment.');
         } else {
           setLoadError(`Certificate ${certId} was not found in the escrow ledger.`);
         }
@@ -74,6 +82,28 @@ export default function CertificateRetirementPage() {
   };
 
   const status = cert?.status || 'HELD_IN_ESCROW';
+
+  const handleOpenDispute = async () => {
+    if (!disputeReason.trim()) {
+      setDisputeError('Describe the issue before opening a dispute.');
+      return;
+    }
+    setIsDisputing(true);
+    setDisputeError('');
+    const res = await openCertificateDispute(certId, {
+      reason: disputeReason.trim(),
+      detail: `Opened from buyer certificate page for ${certId}`,
+    });
+    setIsDisputing(false);
+    if (res?.success) {
+      setDisputeNotice(res.message || 'Dispute opened. The listing is frozen for new sales.');
+      setDisputeReason('');
+      const lifecycleRes = await getCertificateLifecycle(certId).catch(() => null);
+      if (lifecycleRes?.success) setLifecycle(lifecycleRes);
+    } else {
+      setDisputeError(res?.message || 'The dispute could not be opened.');
+    }
+  };
 
   const handleDownloadPdf = async () => {
     if (!certId) {
@@ -194,9 +224,23 @@ export default function CertificateRetirementPage() {
               </div>
 
               <div className="space-y-2 py-4">
-                <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest">Official Carbon Offset Certificate</p>
-                <h1 className="text-3xl md:text-4xl font-extrabold font-manrope text-slate-900">Certificate of Verified Offsets</h1>
+                <p className="text-xs font-bold text-emerald-800 uppercase tracking-widest">CarbonX Retirement Certificate</p>
+                <h1 className="text-3xl md:text-4xl font-extrabold font-manrope text-slate-900">Agricultural Carbon Credit Certificate</h1>
                 <p className="text-xs font-mono text-slate-500">Certificate ID: {certId}</p>
+              </div>
+
+              <div className={`rounded-xl border p-3 text-left text-[11px] space-y-1 ${
+                cert.validation_status === 'field_validated_limited'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  : 'bg-amber-50 border-amber-200 text-amber-950'
+              }`}>
+                <p className="font-bold">
+                  {cert.validation_label || 'Proxy estimate — not field-validated'}
+                </p>
+                <p>
+                  This certificate records a retired credit volume. Until independent field samples meet the published
+                  validation thresholds, the underlying sequestration volume is a proxy estimate, not a measured removal.
+                </p>
               </div>
 
               <div className="max-w-xl mx-auto space-y-3 text-xs text-slate-700 bg-white border border-slate-200 p-6 rounded-xl shadow-inner">
@@ -205,7 +249,8 @@ export default function CertificateRetirementPage() {
                 <p>has acquired and holds</p>
                 <p className="text-2xl font-black text-emerald-800 font-manrope">{Number(cert.volume_mt || 0).toFixed(2)} Metric Tonnes CO2e</p>
                 <p className="text-[11px] text-slate-500 pt-2 border-t border-slate-100">
-                  Sourced from verified Telangana farmland parcel{cert.crop ? '' : 's'}: <strong className="text-slate-800">{(cert.source_parcels || []).join(', ') || 'source record unavailable'}{cert.crop ? ` · ${cert.crop}` : ''}</strong>.
+                  Sourced from registered agricultural parcel{cert.crop ? '' : 's'}: <strong className="text-slate-800">{(cert.source_parcels || []).join(', ') || 'source record unavailable'}{cert.crop ? ` · ${cert.crop}` : ''}</strong>.
+                  Farmer identity and exact field location are withheld from public certificates.
                 </p>
               </div>
 
@@ -232,6 +277,92 @@ export default function CertificateRetirementPage() {
                 </div>
               )}
             </div>
+
+            {lifecycle?.lifecycle && (
+              <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-slate-900">Credit lifecycle &amp; dispute record</h2>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700">
+                    {lifecycle.lifecycle.lifecycle_state || '—'}
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    lifecycle.lifecycle.dispute_status === 'OPEN'
+                      ? 'bg-rose-50 border-rose-200 text-rose-800'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  }`}>
+                    Dispute: {lifecycle.lifecycle.dispute_status || 'NONE'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  {[
+                    ['Issued', lifecycle.lifecycle.credits_issued],
+                    ['Sold (net)', lifecycle.lifecycle.credits_sold],
+                    ['Refunded', lifecycle.lifecycle.credits_refunded],
+                    ['Remaining', lifecycle.lifecycle.credits_remaining],
+                  ].map(([label, value]) => (
+                    <div key={label} className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                      <p className="text-[10px] uppercase tracking-wide text-slate-500 font-bold">{label}</p>
+                      <p className="text-lg font-extrabold text-slate-900">{Number(value ?? 0).toFixed(2)}</p>
+                    </div>
+                  ))}
+                </div>
+                {lifecycle.payout && (
+                  <p className="text-[11px] text-slate-600">
+                    Payout status: <strong>{lifecycle.payout.payout_status || '—'}</strong>
+                    {lifecycle.payout.refunded ? ' · refunded from the original SALE/SPLIT record' : ' · farmer floor check passed'}
+                  </p>
+                )}
+                {(lifecycle.audit_events || []).length > 0 && (
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-left text-[11px]">
+                      <thead className="bg-slate-50 text-[9px] uppercase tracking-wide text-slate-500">
+                        <tr><th className="p-2">Event</th><th className="p-2">At</th><th className="p-2">Proof</th></tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(lifecycle.audit_events || []).map((event, index) => (
+                          <tr key={`${event.type}-${index}`}>
+                            <td className="p-2 font-semibold text-slate-800">{event.type}{event.decision ? ` · ${event.decision}` : ''}</td>
+                            <td className="p-2 text-slate-500">{String(event.at || '').slice(0, 19).replace('T', ' ')}</td>
+                            <td className="p-2 font-mono text-[9px] text-slate-400">{String(event.hash || '').slice(0, 12)}…</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {lifecycle.lifecycle.dispute_status !== 'OPEN'
+                  && status !== 'REFUNDED'
+                  && status !== 'FAILED_RECONCILIATION' && (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4 space-y-3">
+                    <div>
+                      <p className="text-xs font-bold text-rose-900">Open a dispute on this sale</p>
+                      <p className="text-[11px] text-rose-800 mt-0.5">
+                        An open dispute freezes new sales on the listing. It must end in release, rejection or a full refund;
+                        credits and money are never edited in place.
+                      </p>
+                    </div>
+                    <textarea
+                      value={disputeReason}
+                      onChange={(e) => setDisputeReason(e.target.value)}
+                      maxLength={1000}
+                      rows={2}
+                      placeholder="Describe the issue (e.g. wrong volume, parcel mismatch, duplicate certificate)"
+                      className="w-full rounded-xl border border-rose-200 bg-white px-3 py-2 text-xs"
+                    />
+                    {disputeError && <p className="text-[11px] font-semibold text-rose-800">{disputeError}</p>}
+                    {disputeNotice && <p className="text-[11px] font-semibold text-emerald-800">{disputeNotice}</p>}
+                    <button
+                      onClick={handleOpenDispute}
+                      disabled={isDisputing}
+                      className="px-4 py-2 rounded-xl bg-rose-700 text-white text-xs font-bold hover:bg-rose-800 disabled:opacity-60"
+                    >
+                      {isDisputing ? 'Opening…' : 'Open dispute'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Permanent Retirement Terminal */}
             <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">

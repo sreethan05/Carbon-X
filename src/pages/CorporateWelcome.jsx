@@ -22,7 +22,7 @@ export default function CorporateWelcome() {
               High-Integrity Agricultural Carbon Offsets
             </h1>
             <p className="text-xs md:text-sm text-slate-300 leading-relaxed">
-              Procure verified carbon credits directly from Indian farmers. Built for BRSR reporting, Scope 1-3 neutrality compliance, and satellite-verified MRV auditability.
+              Procure agricultural carbon credits directly from Indian farmers. Built for BRSR review, scope 1-3 retirement records and satellite-estimated MRV. Credits are proxy-labelled until independent field validation passes.
             </p>
 
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 pt-2">
@@ -81,7 +81,7 @@ export default function CorporateWelcome() {
             </div>
             <h3 className="text-sm font-bold text-slate-900">BRSR Regulatory Audit Export</h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Export one-click SEBI BRSR-aligned compliance packages containing certificate SHA-256 hashes, source cadastral parcels, and permanent retirement timestamps.
+              Export compliance packages containing certificate SHA-256 hashes, source parcel records and retirement timestamps for your own BRSR review. CarbonX does not itself certify BRSR compliance.
             </p>
           </div>
 
@@ -91,7 +91,7 @@ export default function CorporateWelcome() {
             </div>
             <h3 className="text-sm font-bold text-slate-900">Cryptographic Retirement Chain</h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Credits transition instantly from escrow to permanent retirement on the farm's SHA-256 hash ledger, eliminating double-counting and greenwashing risk.
+              Credits transition from escrow to retirement on the farm's SHA-256 hash ledger, with each sale carrying a unique certificate id. This makes double-sale attempts detectable; external assurance is still required before claiming credit-grade MRV.
             </p>
           </div>
         </div>

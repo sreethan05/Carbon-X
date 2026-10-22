@@ -1,9 +1,10 @@
-"""Corporate routes: corporate login, credit analysis."""
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+"""Corporate routes: login, profile, account settings, credit analysis."""
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.security import create_access_token, require_role, verify_password
 from app import supabase_db as db
+from app.services import corporate_settings as corporate_settings_service
 
 router = APIRouter(prefix="/corporate", tags=["corporate"])
 
@@ -14,6 +15,11 @@ class CorporateLoginModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
     password: str
+
+
+class CorporateSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_offsets_mt: float = Field(gt=0)
 
 
 # ─── Endpoints ───
@@ -61,6 +67,49 @@ def corporate_profile(current_user: dict = Depends(require_role("buyer", "corpor
             "name": current_user.get("name"),
             "role": current_user.get("role", "buyer"),
         },
+    }
+
+
+@router.get("/settings")
+def get_corporate_settings(current_user: dict = Depends(require_role("buyer", "corporate", "admin"))):
+    """Account-level preferences (decarbonization target) keyed to the buyer."""
+    try:
+        c_id = int(current_user.get("c_id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="A corporate buyer session is required")
+    if c_id <= 0:
+        raise HTTPException(status_code=401, detail="A corporate buyer session is required")
+    settings = corporate_settings_service.get_settings(c_id)
+    return {
+        "success": True,
+        "settings": settings,
+        "note": (
+            "Self-declared target used for the buyer's progress view only. It is "
+            "not a retirement or compliance record."
+            if settings.get("storage") == "live_db"
+            else "Database table not available; the target is stored in labelled in-memory demo storage until the migration is applied."
+        ),
+    }
+
+
+@router.put("/settings")
+def update_corporate_settings(
+    data: CorporateSettingsUpdate,
+    current_user: dict = Depends(require_role("buyer", "corporate", "admin")),
+):
+    """Persist account-level settings server-side across devices/sessions."""
+    try:
+        c_id = int(current_user.get("c_id") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="A corporate buyer session is required")
+    if c_id <= 0:
+        raise HTTPException(status_code=401, detail="A corporate buyer session is required")
+    result = corporate_settings_service.set_settings(c_id, data.target_offsets_mt)
+    if not result.get("success"):
+        raise HTTPException(status_code=422, detail=result.get("message") or "Invalid settings")
+    return {
+        "success": True,
+        "settings": {k: v for k, v in result.items() if k != "success"},
     }
 
 

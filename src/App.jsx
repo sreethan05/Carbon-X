@@ -29,6 +29,7 @@ import CreateListing from './pages/CreateListing';
 import CorporateCreditAnalysis from './pages/CorporateCreditAnalysis';
 import CertificateRetirementPage from './pages/CertificateRetirementPage';
 import SupportCenter from './pages/SupportCenter';
+import TrustCenter from './pages/TrustCenter';
 
 function ProtectedRoute({ children, roles }) {
   const { isAuthenticated, role, loading } = useAuth();
@@ -112,8 +113,10 @@ export default function App() {
               <Route path="/credit-analysis/:id" element={<ProtectedRoute roles={['buyer']}><CorporateCreditAnalysis /></ProtectedRoute>} />
               <Route path="/buyer/certificates/:certId" element={<ProtectedRoute roles={['buyer']}><CertificateRetirementPage /></ProtectedRoute>} />
 
-              {/* Support */}
+              {/* Support & trust */}
               <Route path="/support" element={<SupportCenter />} />
+              <Route path="/trust" element={<TrustCenter />} />
+              <Route path="/privacy" element={<TrustCenter />} />
 
               {/* Catch-all */}
               <Route path="*" element={<Navigate to="/" replace />} />

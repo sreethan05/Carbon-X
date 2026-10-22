@@ -11,7 +11,7 @@ export default function RoleSelection() {
     {
       id: 'farmer',
       title: t('farmerLandOwner', 'Farmer & Land Owner'),
-      desc: t('farmerLandOwnerDesc', 'Register farm parcels via Telugu/Hindi/English voice input, upload land deeds for AI verification, and receive direct UPI carbon credit payouts.'),
+      desc: t('farmerLandOwnerDesc', 'Register farm parcels via Telugu/Hindi/English voice input, upload land deeds for AI verification, and receive ledger-recorded pilot payouts (bank/UPI transfers simulated in this pilot).'),
       scope: 'Permission Scope: Land Deed Upload, Satellite Boundary Mapping, Carbon Passport, Wallet Payouts',
       icon: Users,
       badgeColor: 'bg-emerald-50 text-emerald-800 border-emerald-200',

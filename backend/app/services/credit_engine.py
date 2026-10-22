@@ -260,6 +260,18 @@ def estimate_credits(
         "ci90": ci90,
         "ci90_source": ci90_source,
         "formula_version": FORMULA_VERSION,
+        # Honesty contract: this engine is a transparent proxy, not a field
+        # measurement. Routes enrich ``validation`` with the live field-data
+        # report (app.services.validation); this baseline never overclaims.
+        "basis": "proxy_estimate",
+        "validation": {
+            "status": "proxy_unvalidated",
+            "label": (
+                "Proxy estimate — satellite NDVI plus published crop/soil "
+                "factors; not validated against field measurements."
+            ),
+            "claim_limit": "Screening / farmer preview only until field validation.",
+        },
     }
 
 

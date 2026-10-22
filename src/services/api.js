@@ -418,6 +418,84 @@ export async function getWallet() {
   return get(`${PY}/wallet`);
 }
 
+export async function getWalletReconciliation() {
+  return get(`${PY}/wallet/reconciliation`);
+}
+
+// ── Field validation & public claims ──
+
+export async function getValidationStatus() {
+  return get(`${PY}/validation/status`);
+}
+
+export async function getValidationClaims() {
+  return get(`${PY}/validation/claims`);
+}
+
+// ── Privacy / DPDP controls ──
+
+export async function getPrivacyPolicy() {
+  return get(`${PY}/privacy/policy`);
+}
+
+export async function getPrivacyConsent() {
+  return get(`${PY}/privacy/consent`);
+}
+
+export async function setPrivacyConsent(purposes, language = 'en') {
+  return post(`${PY}/privacy/consent`, { purposes, language, method: 'trust_center' });
+}
+
+export async function withdrawPrivacyConsent(purpose) {
+  return post(`${PY}/privacy/consent/withdraw/${encodeURIComponent(purpose)}`, {});
+}
+
+export async function getPrivacyExport() {
+  return get(`${PY}/privacy/export`);
+}
+
+export async function getPrivacyRequests() {
+  return get(`${PY}/privacy/requests`);
+}
+
+export async function submitPrivacyCorrection(payload) {
+  return post(`${PY}/privacy/corrections`, payload);
+}
+
+export async function getDeletionCheck() {
+  return get(`${PY}/privacy/deletion-check`);
+}
+
+export async function deleteMyAccount(reason) {
+  return post(`${PY}/privacy/delete`, { confirm: 'DELETE', reason });
+}
+
+export async function getStaffPrivacyRequests() {
+  return get(`${PY}/ops/privacy/requests`);
+}
+
+export async function resolveStaffCorrection(requestId, decision, note) {
+  return post(`${PY}/ops/privacy/corrections/${encodeURIComponent(requestId)}/resolve`, { decision, note });
+}
+
+// ── Credit lifecycle / disputes ──
+
+export async function getCertificateLifecycle(certId) {
+  return get(`${PY}/certificates/${encodeURIComponent(certId)}/lifecycle`);
+}
+
+export async function openCertificateDispute(certId, payload) {
+  return post(`${PY}/certificates/${encodeURIComponent(certId)}/dispute`, payload);
+}
+
+export async function resolveCertificateDispute(certId, decision, note) {
+  return post(`${PY}/certificates/${encodeURIComponent(certId)}/dispute/resolve`, { decision, note });
+}
+
+export async function refundCertificate(certId, reason, reference = null) {
+  return post(`${PY}/certificates/${encodeURIComponent(certId)}/refund`, { reason, reference });
+}
+
 export async function getCertificates() {
   return get(`${PY}/certificates`);
 }
@@ -630,6 +708,14 @@ export async function fpoReviewFarm(farmId, payload = {}) {
 
 export async function corporateLogin(name, password) {
   return post(`${PY}/corporate/login`, { name, password });
+}
+
+export async function getCorporateSettings() {
+  return get(`${PY}/corporate/settings`);
+}
+
+export async function updateCorporateSettings(payload) {
+  return request(`${PY}/corporate/settings`, { method: 'PUT', body: payload });
 }
 
 // ── Documents ──
