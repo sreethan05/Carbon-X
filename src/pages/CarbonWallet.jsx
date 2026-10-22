@@ -17,6 +17,8 @@ export default function CarbonWallet() {
   const [loadError, setLoadError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [isStartingDemo, setIsStartingDemo] = useState(false);
+  const [reconciliation, setReconciliation] = useState(null);
+  const [payoutNote, setPayoutNote] = useState('');
 
   // Bank Withdrawal Modal State
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
@@ -43,6 +45,8 @@ export default function CarbonWallet() {
         setPlatformShareTotal(data.platform_share_total || 0);
         setUpiIdInput(data.upi_id || user?.upi || '');
         setDemoMode(!!data.demo_mode);
+        setReconciliation(data.reconciliation || null);
+        setPayoutNote(data.payout_note || '');
         setTransactions((data.transactions || []).map((t) => ({
           date: t.date,
           txId: t.tx_id,
@@ -237,6 +241,49 @@ export default function CarbonWallet() {
           </div>
         </div>
 
+        {reconciliation && (
+          <div className={`rounded-2xl border p-5 space-y-3 ${
+            reconciliation.status === 'reconciled'
+              ? 'bg-emerald-50 border-emerald-200'
+              : 'bg-amber-50 border-amber-200'
+          }`}>
+            <div className="flex flex-wrap items-center gap-2">
+              {reconciliation.status === 'reconciled'
+                ? <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                : <AlertTriangle className="w-4 h-4 text-amber-700" />}
+              <p className="text-xs font-bold text-carbon-900">
+                {reconciliation.status === 'reconciled'
+                  ? 'Wallet totals reconcile to the ledger'
+                  : 'Wallet needs reconciliation review'}
+              </p>
+              {reconciliation.display_matches_ledger === false && (
+                <span className="text-[10px] font-bold bg-white/70 border border-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
+                  Display includes legacy or failed rows
+                </span>
+              )}
+              <span className="ml-auto text-[10px] font-mono text-carbon-600">
+                {reconciliation.settlements ?? 0} ledger sale(s)
+              </span>
+            </div>
+            <p className="text-[11px] text-carbon-700">
+              Settled net total ₹{Number(reconciliation.net_total_inr ?? 0).toLocaleString('en-IN')} · farmer ₹
+              {Number(reconciliation.farmer_total_inr ?? 0).toLocaleString('en-IN')} · FPO ₹
+              {Number(reconciliation.fpo_total_inr ?? 0).toLocaleString('en-IN')} · platform ₹
+              {Number(reconciliation.platform_total_inr ?? 0).toLocaleString('en-IN')}.
+              Failed settlements are excluded from reconciled totals and listed below for manual follow-up.
+            </p>
+            {(reconciliation.issues || []).length > 0 && (
+              <div className="rounded-xl bg-white/70 border border-amber-200 p-3 text-[11px] text-amber-950 space-y-1">
+                <p className="font-bold">Open reconciliation issues</p>
+                {(reconciliation.issues || []).slice(0, 8).map((issue, index) => (
+                  <p key={index}>• {typeof issue === 'string' ? issue : (issue.type || issue.issue || JSON.stringify(issue))}</p>
+                ))}
+              </div>
+            )}
+            {payoutNote && <p className="text-[10px] text-carbon-600">{payoutNote}</p>}
+          </div>
+        )}
+
         {/* Itemized Transaction Ledger */}
         <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-6">
           <div className="flex justify-between items-center">
@@ -291,9 +338,18 @@ export default function CarbonWallet() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <span className="bg-surface-sage text-primary border border-forest-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                        tx.status === 'FAILED_RECONCILIATION'
+                          ? 'bg-rose-50 text-rose-800 border-rose-200'
+                          : tx.status === 'REFUNDED'
+                            ? 'bg-amber-50 text-amber-900 border-amber-200'
+                            : 'bg-surface-sage text-primary border border-forest-200'
+                      }`}>
                         {tx.status}
                       </span>
+                      {tx.status === 'FAILED_RECONCILIATION' && (
+                        <p className="text-[9px] text-rose-700 mt-1">Excluded from totals — reconcile manually</p>
+                      )}
                     </td>
                   </tr>
                 ))}

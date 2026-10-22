@@ -64,13 +64,14 @@ This guide covers production deployment for the CarbonX platform across three co
 | `SUPABASE_URL` | **Yes** | Remote Supabase project URL (`https://<project-ref>.supabase.co`) |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | High-privilege service-role key for backend operations |
 | `JWT_SECRET_KEY` | **Yes** | Secure random key (>= 32 chars, e.g. `openssl rand -hex 32`) |
-| `CORS_ORIGINS` | **Yes** | Comma-separated allowed frontend origins (e.g. `https://app.carbonx.ag`) |
-| `REDIS_URL` | **Yes** | Redis connection URI (`redis://...`) for distributed locks & rate limiting |
+| `CORS_ORIGINS` | **Yes** | Comma-separated list of exact `https://` frontend origins only (e.g. `https://app.carbonx.ag`). Wildcards, empty values and plain-http origins are rejected at startup |
+| `REDIS_URL` | **Yes** | Managed Redis URI (`redis://...`) for distributed locks, OTP rate limiting and token revocation. The `localhost` default is rejected at startup in production — a single-worker in-memory fallback does not protect a multi-worker deployment |
 | `CARBONX_ALLOW_DEV_OTP` | **Must be 0** | **Strictly 0 or unset in production** (startup blocks if enabled) |
-| `CARBONX_PAYMENTS_PROVIDER` | **Yes** | `razorpay` for live payments (or `simulated` for closed pilot) |
+| `CARBONX_PAYMENTS_PROVIDER` | **Yes** | `razorpay` for live payments (or `simulated` for a closed pilot) |
+| `CARBONX_ACCEPT_SIMULATED_PAYMENTS` | Conditional | **Must be `1` when the provider is `simulated` in production.** Simulated (no-money) settlement is never the silent default; with Razorpay it is rejected outright |
 | `RAZORPAY_KEY_ID` | Conditional | Required when `CARBONX_PAYMENTS_PROVIDER=razorpay` |
 | `RAZORPAY_KEY_SECRET` | Conditional | Required when `CARBONX_PAYMENTS_PROVIDER=razorpay` |
-| `RAZORPAY_WEBHOOK_SECRET` | Conditional | Required for HMAC-SHA256 signature verification |
+| `RAZORPAY_WEBHOOK_SECRET` | Conditional | **Required** when `CARBONX_PAYMENTS_PROVIDER=razorpay` (webhook HMAC cannot verify without it) |
 | `CARBONX_FORCE_HTTPS` | Recommended | `1` (enforces HTTP Strict Transport Security header) |
 | `CARBONX_JSON_LOGS` | Recommended | `1` (formats all server logs as structured JSON) |
 | `CARBONX_MONITOR_SECRET` | Recommended | Bearer secret for external monitoring cron triggers |
@@ -115,6 +116,18 @@ This guide covers production deployment for the CarbonX platform across three co
    - Access role-guarded endpoints (`/fpo/dashboard`, `/admin/dashboard`, `/corporate/dashboard`).
 3. **Marketplace & Escrow**:
    - Browse listings on `GET /marketplace/listings`. Verify `farmer_phone` is redacted for third-party callers.
+   - Confirm the payment mode is intentional: `GET /payments/config` must show
+     the provider you expect. In a Razorpay deployment a test order must settle
+     only through the **signature-verified webhook** (browser redirects prove
+     authorization only); in a pilot deployment `simulated` must match
+     `CARBONX_ACCEPT_SIMULATED_PAYMENTS=1` and be labelled as simulated in the UI.
    - Execute purchase and download certificate PDF from `GET /certificates/{cert_id}/pdf`.
 4. **Monitoring Cycle**:
    - Trigger `POST /monitor/run` with `X-Monitor-Secret: <CARBONX_MONITOR_SECRET>`. Verify 200 OK.
+
+Startup behaviour summary: in `CARBONX_ENVIRONMENT=production` the process
+**refuses to start** unless `JWT_SECRET_KEY` (>=32 chars, not a placeholder),
+`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, a managed `REDIS_URL`, https-only
+`CORS_ORIGINS`, and an explicit payment mode (`razorpay` with all three
+Razorpay credentials, or `simulated` with `CARBONX_ACCEPT_SIMULATED_PAYMENTS=1`)
+are configured, and unless `CARBONX_ALLOW_DEV_OTP` is disabled.

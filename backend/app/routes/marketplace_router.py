@@ -3,10 +3,8 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 import json
-import re
 import time
 import uuid
-from datetime import datetime, timezone
 
 from app.security import (
     create_access_token,
@@ -18,7 +16,9 @@ from app.security import (
 )
 from app import supabase_db as db
 from app import config as app_config
-from app.services import credit_engine, ledger, market_store, split_engine
+from app import redis_store
+from app.services import access_policy, credit_engine, credit_lifecycle, ledger, market_store, split_engine
+from app.services import validation
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
@@ -38,21 +38,8 @@ def _get_user(phone: str):
     return db.get_profile(phone)
 
 
-def _cert_id_for_listing(listing_id: str) -> str:
-    lid = str(listing_id or "").replace("-", "")[:8].upper() or "UNKNOWN"
-    return f"CX-{datetime.now(timezone.utc).year}-CERT-{lid}"
-
-
-def _redact_phone(phone: Optional[str]) -> Optional[str]:
-    if not phone:
-        return None
-    raw = str(phone).strip()
-    digits = re.sub(r"\D", "", raw)
-    if len(digits) >= 10:
-        return f"{digits[:3]}****{digits[-2:]}"
-    if len(digits) >= 4:
-        return f"{digits[:1]}***{digits[-1:]}"
-    return "***"
+def _dispute_open(listing: dict) -> bool:
+    return str((listing or {}).get("dispute_status") or "NONE").upper() in ("OPEN", "DISPUTED")
 
 
 def _sanitize_listing_for_caller(listing: dict, caller: Optional[dict]) -> dict:
@@ -62,8 +49,14 @@ def _sanitize_listing_for_caller(listing: dict, caller: Optional[dict]) -> dict:
     is_owner = bool(caller_phone and caller_phone == item.get("farmer_phone"))
     is_authorized = caller_role in ("admin", "fpo", "verifier")
     if not (is_owner or is_authorized):
-        if "farmer_phone" in item:
-            item["farmer_phone"] = _redact_phone(item.get("farmer_phone"))
+        # Public marketplace: no phone, no farmer identity, district only.
+        item["farmer_phone"] = None
+        item["farmer_name"] = "Verified farmer (name withheld)"
+        item["location"] = access_policy.public_location(item.get("location"))
+        item["location_precision"] = "district"
+    else:
+        item["location_precision"] = "village"
+    item.setdefault("dispute_status", "NONE")
     return item
 
 
@@ -100,6 +93,7 @@ def settle_listing_purchase(
     apply_update,
     farm: Optional[dict] = None,
     payment_ref: Optional[str] = None,
+    rollback_update=None,
 ) -> dict:
     """Settle a (partial) credit purchase: CAS → SALE → SPLIT → RETIRE.
 
@@ -109,6 +103,10 @@ def settle_listing_purchase(
     the compare-and-swap on the listing row and return truthy only if the row
     still held the state that was read — a concurrent buyer loses cleanly.
 
+    ``rollback_update(fields)`` compensates the balance CAS if a ledger append
+    fails, so a failed chain write does not silently consume credits.  The
+    listing lock is still held, making the restore race-free.
+
     ``payment_ref``, when provided, is recorded on the SALE ledger event and
     echoed in the response so the chain links back to the payment provider.
     """
@@ -116,6 +114,9 @@ def settle_listing_purchase(
     unit_price = float(listing.get("price_per_credit") or 0)
     gross = round(credits * unit_price, 2)
     farm_id = listing.get("farm_id") or ""
+    listing_id = str(listing.get("id") or "")
+    if not listing_id:
+        return {"success": False, "message": "Listing id is required"}
     if farm is None and farm_id and db.is_ready():
         farm = db.get_farm(farm_id)
     fpo_name = _resolve_fpo_link(farm, listing.get("farmer_phone") or "")
@@ -124,87 +125,192 @@ def settle_listing_purchase(
     escrow_ref = "ESC-" + uuid.uuid4().hex[:12].upper()
     partial = credits < available - 1e-6
 
-    updates = {
-        "tx_hash": escrow_ref,
-        "current_bid": round(_prior_sale_gross(farm_id, listing.get("id")) + gross, 2),
-        "bids_count": int(listing.get("bids_count") or 0) + 1,
-    }
-    if partial:
-        updates["total_credits"] = round(available - credits, 4)
-    else:
-        updates["status"] = "Retired"
-
-    # Compare-and-swap: proceed (and write ledger events) only if the row was
-    # still in the state we read. A concurrent buyer wins the race and the
-    # loser aborts without touching the hash chain or paying a split.
-    if not apply_update(updates):
+    # Serialize the whole settle (balance CAS + ledger appends + certificate
+    # sequence allocation) per listing.  Redis makes this cross-worker; the
+    # memory fallback covers single-process/demo mode.  The CAS below is still
+    # the final authority if the lock expired or a worker missed it.
+    lock_name = f"listing:settle:{listing_id}"
+    if not redis_store.acquire_lock(lock_name, ttl_seconds=60):
         return {
             "success": False,
             "code": "CONFLICT",
-            "message": "Listing changed during checkout (concurrent purchase) — refresh and try again",
+            "message": "Another purchase is settling this listing — retry in a moment",
         }
+    try:
+        ledger_entity_id = farm_id or listing_id
+        chain = ledger.get_chain(ledger_entity_id)
+        sale_seq = credit_lifecycle.sale_index_from_chain(chain, listing_id) + 1
+        net_sold = 0.0
+        for event in chain:
+            payload = event.get("payload") or {}
+            if event.get("type") == "SALE" and str(payload.get("listing_id")) == listing_id:
+                net_sold += float(payload.get("credits") or 0)
+            elif event.get("type") == "REFUND" and str(payload.get("listing_id")) == listing_id:
+                net_sold -= float(payload.get("credits") or 0)
+        net_sold = max(0.0, net_sold)
+        prior = {
+            "total_credits": available,
+            "status": listing.get("status") or "Active",
+            "tx_hash": listing.get("tx_hash"),
+            "current_bid": listing.get("current_bid"),
+            "bids_count": listing.get("bids_count"),
+            "credits_sold": listing.get("credits_sold"),
+            "lifecycle_state": listing.get("lifecycle_state"),
+        }
+        prior = {k: v for k, v in prior.items() if v is not None}
+        prior.setdefault("status", "Active")
+        prior.setdefault("total_credits", available)
 
-    cert_id = _cert_id_for_listing(listing.get("id"))
-    sale_payload = {
-        "listing_id": listing.get("id"),
-        "buyer": buyer_name,
-        "credits": credits,
-        "unit_price": unit_price,
-        "gross_inr": gross,
-        "escrow_ref": escrow_ref,
-        "certificate_id": cert_id,
-    }
-    if payment_ref:
-        sale_payload["payment_ref"] = payment_ref
-    ledger_entity_id = farm_id or str(listing.get("id") or "unassigned_farm")
-    sale_event = ledger.append_event(ledger_entity_id, "SALE", sale_payload)
-    split_event = ledger.append_event(ledger_entity_id, "SPLIT", {
-        "escrow_ref": escrow_ref,
-        "model": split["model"],
-        "farmer_inr": split["farmer_amount_inr"],
-        "fpo_inr": split["fpo_amount_inr"],
-        "platform_inr": split["platform_amount_inr"],
-    })
-    batch_hash = split_event["hash"]
-    ledger.append_event(ledger_entity_id, "RETIRE", {
-        "certificate_id": cert_id,
-        "credits_retired": credits,
-        "escrow_ref": escrow_ref,
-        "batch_hash": batch_hash,
-        "buyer": buyer_name,
-    })
+        updates = {
+            "tx_hash": escrow_ref,
+            "current_bid": round(_prior_sale_gross(farm_id, listing_id) + gross, 2),
+            "bids_count": int(listing.get("bids_count") or 0) + 1,
+            "credits_sold": round(net_sold + credits, 4),
+            "lifecycle_state": "Retired" if not partial else "Partially Sold",
+        }
+        if partial:
+            updates["total_credits"] = round(available - credits, 4)
+        else:
+            updates["status"] = "Retired"
+            updates["total_credits"] = 0.0
+
+        # Compare-and-swap: proceed (and write ledger events) only if the row
+        # was still in the state we read. A concurrent buyer wins the race.
+        # ``credits_sold``/``lifecycle_state`` are new columns; retry without
+        # them on a pre-migration database rather than blocking every sale.
+        optional = {"credits_sold", "lifecycle_state"}
+        try:
+            cas_ok = apply_update(updates)
+        except Exception:
+            if not (set(updates) & optional):
+                raise
+            fallback = {k: v for k, v in updates.items() if k not in optional}
+            cas_ok = apply_update(fallback)
+        if not cas_ok:
+            return {
+                "success": False,
+                "code": "CONFLICT",
+                "message": "Listing changed during checkout (concurrent purchase) — refresh and try again",
+            }
+
+        cert_id = credit_lifecycle.certificate_id_for_sale(listing_id, sale_seq)
+        sale_payload = {
+            "listing_id": listing_id,
+            "buyer": buyer_name,
+            "credits": credits,
+            "unit_price": unit_price,
+            "gross_inr": gross,
+            "escrow_ref": escrow_ref,
+            "certificate_id": cert_id,
+            "sale_seq": sale_seq,
+        }
+        if payment_ref:
+            sale_payload["payment_ref"] = payment_ref
+        try:
+            sale_event = ledger.append_event(ledger_entity_id, "SALE", sale_payload)
+            split_event = ledger.append_event(ledger_entity_id, "SPLIT", {
+                "escrow_ref": escrow_ref,
+                "listing_id": listing_id,
+                "certificate_id": cert_id,
+                "gross_inr": gross,
+                "model": split["model"],
+                "farmer_inr": split["farmer_amount_inr"],
+                "fpo_inr": split["fpo_amount_inr"],
+                "platform_inr": split["platform_amount_inr"],
+            })
+            batch_hash = split_event["hash"]
+            ledger.append_event(ledger_entity_id, "RETIRE", {
+                "certificate_id": cert_id,
+                "listing_id": listing_id,
+                "credits_retired": credits,
+                "escrow_ref": escrow_ref,
+                "batch_hash": batch_hash,
+            })
+        except Exception as exc:
+            # The balance CAS committed but the chain did not.  First try to
+            # put the balance back (we still hold the per-listing lock), then
+            # record a SALE_FAILED reconciliation event.  Never pretend the
+            # purchase succeeded and never leave credits silently consumed.
+            balance_restored = False
+            if rollback_update is not None:
+                try:
+                    balance_restored = bool(rollback_update(prior))
+                except Exception as rollback_exc:
+                    print(f"[marketplace] balance rollback failed for {listing_id}: {rollback_exc}")
+            try:
+                ledger.append_event(ledger_entity_id, "SALE_FAILED", {
+                    "listing_id": listing_id,
+                    "certificate_id": cert_id,
+                    "escrow_ref": escrow_ref,
+                    "credits": credits,
+                    "gross_inr": gross,
+                    "error": str(exc)[:500],
+                    "balance_restored": balance_restored,
+                    "requires_reconciliation": not balance_restored,
+                })
+            except Exception:
+                pass
+            return {
+                "success": False,
+                "code": "LEDGER_WRITE_FAILED_BALANCE_RESTORED" if balance_restored else "LEDGER_WRITE_FAILED",
+                "message": (
+                    "The ledger write failed; the listing balance was restored. "
+                    "No certificate was issued. Retry the purchase."
+                    if balance_restored else
+                    "Payment/balance changed but the ledger write failed. "
+                    "Do not retry blindly; contact ops with the escrow reference."
+                ),
+                "escrow_ref": escrow_ref,
+                "certificate_id": cert_id,
+                "balance_restored": balance_restored,
+                "requires_reconciliation": not balance_restored,
+            }
+
+        result = {
+            "success": True,
+            "message": "Purchase complete — escrowed, split paid, credits retired",
+            "certificate_id": cert_id,
+            "sale_seq": sale_seq,
+            "listing_id": listing_id,
+            "farm_id": farm_id,
+            "buyer_name": buyer_name,
+            "escrow_ref": escrow_ref,
+            "batch_hash": batch_hash,
+            "ledger_tail": sale_event["hash"],
+            "retired": not partial,
+            "lifecycle_state": "Retired" if not partial else "Partially Sold",
+            "credits_purchased": credits,
+            "credits_remaining": round(max(0.0, available - credits), 4),
+            "gross_amount": gross,
+            "unit_price": unit_price,
+            "split": split,
+            "payout_status": "recorded_simulated_rails",
+            "farmer_name": listing.get("farmer_name"),
+            "farmer_phone": listing.get("farmer_phone"),
+            "crop": listing.get("crop"),
+            "location": listing.get("location"),
+            "source": listing.get("_source", "live_db"),
+        }
+        if payment_ref:
+            result["payment_ref"] = payment_ref
+        return result
+    finally:
+        redis_store.release_lock(lock_name)
 
 
-    result = {
-        "success": True,
-        "message": "Purchase complete — escrowed, split paid, credits retired",
-        "certificate_id": cert_id,
-        "listing_id": listing.get("id"),
-        "farm_id": farm_id,
-        "buyer_name": buyer_name,
-        "escrow_ref": escrow_ref,
-        "batch_hash": batch_hash,
-        "ledger_tail": sale_event["hash"],
-        "retired": not partial,
-        "credits_purchased": credits,
-        "credits_remaining": round(available - credits, 4),
-        "gross_amount": gross,
-        "unit_price": unit_price,
-        "split": split,
-        "farmer_name": listing.get("farmer_name"),
-        "farmer_phone": listing.get("farmer_phone"),
-        "crop": listing.get("crop"),
-        "location": listing.get("location"),
-        "source": listing.get("_source", "live_db"),
-    }
-    if payment_ref:
-        result["payment_ref"] = payment_ref
-    return result
-
-
-def _purchase_flow(listing: dict, credits: float, buyer_name: str, apply_update, farm: Optional[dict] = None) -> dict:
+def _purchase_flow(
+    listing: dict,
+    credits: float,
+    buyer_name: str,
+    apply_update,
+    farm: Optional[dict] = None,
+    rollback_update=None,
+) -> dict:
     """Legacy name for the marketplace buy path — no payment provider involved."""
-    return settle_listing_purchase(listing, credits, buyer_name, apply_update, farm=farm)
+    return settle_listing_purchase(
+        listing, credits, buyer_name, apply_update,
+        farm=farm, rollback_update=rollback_update,
+    )
 
 
 # ─── Models ───
@@ -315,9 +421,15 @@ def marketplace_listings(
             f"| matched={result['total']} | returned={len(result['listings'])} | filters={applied or 'default'}"
         )
         sanitized = [_sanitize_listing_for_caller(l, current_user) for l in result["listings"]]
+        validation_status = validation.current_status()
+        for item in sanitized:
+            item["credits_basis"] = "proxy_estimate"
+            item["validation"] = validation_status
         return {
             "success": True, "source": source, "total": result["total"],
             "count": len(sanitized), "filters": applied,
+            "credits_basis": "proxy_estimate",
+            "validation": validation_status,
             "listings": sanitized, "next_cursor": next_cursor,
         }
     except Exception as e:
@@ -402,6 +514,8 @@ def place_bid(listing_id: str, data: BidModel, current_user: Optional[dict] = De
             return {"success": False, "message": "Listing not found"}
         if str(listing.get("status") or "Active").lower() != "active":
             return {"success": False, "message": f"Bidding closed (listing status: {listing.get('status')})"}
+        if _dispute_open(listing):
+            return {"success": False, "code": "DISPUTED", "message": "Bidding is frozen while this certificate is under dispute"}
         current = float(listing.get("current_bid") or 0)
         base = float(listing.get("price_per_credit") or 0)
         floor = current if current > 0 else base
@@ -425,6 +539,8 @@ def place_bid(listing_id: str, data: BidModel, current_user: Optional[dict] = De
         listing = rows[0]
         if str(listing.get("status") or "Active").lower() != "active":
             return {"success": False, "message": f"Bidding closed (listing status: {listing.get('status')})"}
+        if _dispute_open(listing):
+            return {"success": False, "code": "DISPUTED", "message": "Bidding is frozen while this certificate is under dispute"}
         current = float(listing.get("current_bid") or 0)
         base = float(listing.get("price_per_credit") or 0)
         floor = current if current > 0 else base
@@ -497,6 +613,8 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             return {"success": False, "message": "Listing not found"}
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
+        if _dispute_open(listing):
+            return {"success": False, "code": "DISPUTED", "message": "This listing is frozen while a certificate dispute is open"}
         if current_user and current_user.get("phone") and listing.get("farmer_phone") == current_user.get("phone"):
             raise HTTPException(status_code=403, detail="Self-purchase / wash trading is prohibited.")
         available = float(listing.get("total_credits") or 0)
@@ -509,6 +627,7 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         return _purchase_flow(
             listing, credits, buyer,
             lambda fields: market_store.update_cas(data.listing_id, fields, expected_credits=available),
+            rollback_update=lambda fields: market_store.update(data.listing_id, fields) is not None,
         )
 
     try:
@@ -519,6 +638,8 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
         listing = rows[0]
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}
+        if _dispute_open(listing):
+            return {"success": False, "code": "DISPUTED", "message": "This listing is frozen while a certificate dispute is open"}
         if current_user and current_user.get("phone") and listing.get("farmer_phone") == current_user.get("phone"):
             raise HTTPException(status_code=403, detail="Self-purchase / wash trading is prohibited.")
         available = float(listing.get("total_credits") or 0)
@@ -539,7 +660,21 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             q = q.eq("status", listing.get("status") or "Active").eq("total_credits", available)
             return bool(q.select("id").execute().data)
 
-        return _purchase_flow(listing, credits, buyer, _cas_update, farm=farm)
+        def _rollback_update(fields: dict) -> bool:
+            # Unconditional restore is safe: the per-listing settlement lock is
+            # still held and the loser of any CAS never wrote the ledger.
+            try:
+                res = sb.table("marketplace_listings").update(fields).eq("id", data.listing_id).execute()
+                return bool(res.data)
+            except Exception:
+                core = {k: v for k, v in fields.items() if k not in ("credits_sold", "lifecycle_state")}
+                res = sb.table("marketplace_listings").update(core).eq("id", data.listing_id).execute()
+                return bool(res.data)
+
+        return _purchase_flow(
+            listing, credits, buyer, _cas_update, farm=farm,
+            rollback_update=_rollback_update,
+        )
 
     except Exception as e:
         return {"success": False, "message": str(e)}
@@ -572,7 +707,10 @@ def auto_match_bulk(data: AutoMatchModel):
             listings = (sb.table("marketplace_listings").select("*").eq("status", "Active").execute().data) or []
         except Exception as e:
             return {"success": False, "message": str(e), "matched_farms": []}
-    listings = [l for l in listings if float(l.get("total_credits") or 0) > 0]
+    listings = [
+        l for l in listings
+        if float(l.get("total_credits") or 0) > 0 and not _dispute_open(l)
+    ]
 
     # Apply criteria filters if provided
     if data.filters and isinstance(data.filters, dict):

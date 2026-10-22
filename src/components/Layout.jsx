@@ -16,12 +16,14 @@ const ROLE_NAV = {
     { name: 'Carbon Passport', key: 'carbonPassport', path: '/farm-analytics', icon: Compass },
     { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
     { name: 'Wallet & UPI Ledger', key: 'walletLedger', path: '/farmer/wallet', icon: Wallet },
+    { name: 'Trust & Privacy', key: 'trustPrivacy', path: '/trust', icon: ShieldCheck },
     { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   fpo: [
     { name: 'FPO Dashboard', key: 'fpoDashboard', path: '/fpo/dashboard', icon: Building2 },
     { name: 'Credit Pooling', key: 'creditPooling', path: '/fpo/credit-pooling', icon: ShieldCheck },
     { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Trust & Privacy', key: 'trustPrivacy', path: '/trust', icon: ShieldCheck },
     { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   buyer: [
@@ -29,18 +31,21 @@ const ROLE_NAV = {
     { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
     { name: 'Bulk Auto-Match', key: 'bulkAutoMatch', path: '/marketplace/checkout', icon: BarChart3 },
     { name: 'Certificates', key: 'certificates', path: '/corporate/dashboard', icon: ShieldCheck },
+    { name: 'Trust & Privacy', key: 'trustPrivacy', path: '/trust', icon: ShieldCheck },
     { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   verifier: [
     { name: 'FPO Audit Desk', key: 'fpoAuditDesk', path: '/fpo/dashboard', icon: Home },
     { name: 'Admin Compliance', key: 'adminCompliance', path: '/admin/dashboard', icon: ShieldCheck },
     { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Trust & Privacy', key: 'trustPrivacy', path: '/trust', icon: ShieldCheck },
     { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
   admin: [
     { name: 'Admin Dashboard', key: 'adminDashboard', path: '/admin/dashboard', icon: Home },
     { name: 'FPO Desk', key: 'fpoDesk', path: '/fpo/dashboard', icon: Building2 },
     { name: 'Marketplace', key: 'marketplaceTitle', path: '/marketplace', icon: ShoppingCart },
+    { name: 'Trust & Privacy', key: 'trustPrivacy', path: '/trust', icon: ShieldCheck },
     { name: 'Support', key: 'support', path: '/support', icon: ClipboardList },
   ],
 };

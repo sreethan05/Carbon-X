@@ -429,10 +429,12 @@ class EvidenceApiTests(unittest.TestCase):
 
     def test_db_ready_fpo_role_allowed_and_persists(self):
         fake = FakeSupabase()
-        foreign_farm = {"owner_phone": "9111111111", "geojson": SQUARE}
+        foreign_farm = {"owner_phone": "9111111111", "fpo_id": "fpo-a", "geojson": SQUARE}
         self.app.dependency_overrides[get_current_user] = lambda: {"phone": "9000000001", "role": "fpo"}
+        self.app.dependency_overrides[get_current_user_optional] = lambda: {"phone": "9000000001", "role": "fpo"}
         with patch.object(_db, "is_ready", return_value=True), \
                 patch.object(_db, "_client", return_value=fake), \
+                patch.object(_db, "get_profile", return_value={"phone": "9000000001", "fpo_id": "fpo-a"}), \
                 patch.object(evidence_router, "_load_farm", return_value=foreign_farm):
             r = self.client.post("/farms/farm-fpo/evidence/geotag",
                                  json={"latitude": 17.255, "longitude": 79.155})

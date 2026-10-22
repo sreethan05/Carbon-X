@@ -94,7 +94,10 @@ class PurchasePipelineTests(unittest.TestCase):
         if not listings:
             self.skipTest("no active listings left in demo store")
         target = min(listings, key=lambda l: float(l["total_credits"]))
-        phone = target.get("farmer_phone")
+        # Public listings no longer expose the farmer's phone; the demo store
+        # row still has it and is the authoritative login key for this test.
+        from app.services import market_store as _store
+        phone = (_store.get(target["id"]) or {}).get("farmer_phone")
         login = client.post("/demo/login", json={"phone": phone}).json()
         if not login.get("success"):
             self.skipTest("listing farmer is not a demo farmer")

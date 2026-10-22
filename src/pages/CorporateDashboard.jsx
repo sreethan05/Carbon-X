@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, FileText, Sparkles, ArrowRight, ShieldCheck, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getCertificates } from '../services/api';
+import { getCertificates, getCorporateSettings, updateCorporateSettings } from '../services/api';
 
 export default function CorporateDashboard() {
   const navigate = useNavigate();
@@ -15,8 +15,9 @@ export default function CorporateDashboard() {
   const [loadingCerts, setLoadingCerts] = useState(true);
   const [purchasedOffsets, setPurchasedOffsets] = useState(0.0);
   const [isExporting, setIsExporting] = useState(false);
-  // Self-declared decarbonization target — stored locally per corporate account
-  // (the platform has no per-corporate target field server-side yet).
+  // Self-declared decarbonization target. Account-level preference, persisted
+  // server-side so it follows the buyer across devices; localStorage is only a
+  // same-session optimistic cache/fallback when the settings API is offline.
   const [targetOffsets, setTargetOffsets] = useState(() => {
     const saved = parseFloat(localStorage.getItem(targetKey));
     return Number.isFinite(saved) && saved > 0 ? saved : 1000.0;
@@ -25,6 +26,8 @@ export default function CorporateDashboard() {
     const saved = parseFloat(localStorage.getItem(targetKey));
     return Number.isFinite(saved) && saved > 0 ? String(saved) : '1000';
   });
+  const [targetStorage, setTargetStorage] = useState('loading');
+  const [targetError, setTargetError] = useState('');
 
   const handleTargetChange = (val) => {
     setTargetInput(val);
@@ -32,6 +35,22 @@ export default function CorporateDashboard() {
     if (Number.isFinite(num) && num > 0) {
       setTargetOffsets(num);
       localStorage.setItem(targetKey, String(num));
+      // Persist to the account (fire and forget; status is surfaced below).
+      setTargetStorage('saving');
+      updateCorporateSettings({ target_offsets_mt: num })
+        .then((res) => {
+          if (res?.success) {
+            setTargetStorage(res.settings?.storage === 'live_db' ? 'saved' : 'memory');
+            setTargetError('');
+          } else {
+            setTargetStorage('offline');
+            setTargetError(res?.message || 'Target could not be saved; it remains on this device only.');
+          }
+        })
+        .catch(() => {
+          setTargetStorage('offline');
+          setTargetError('Settings service unreachable; this target remains on this device only.');
+        });
     }
   };
 
@@ -47,7 +66,26 @@ export default function CorporateDashboard() {
       } finally {
         setLoadingCerts(false);
       }
+
+      // Server-side target wins over the local optimistic cache.
+      try {
+        const res = await getCorporateSettings();
+        if (res?.success && res.settings) {
+          const t = res.settings.target_offsets_mt;
+          if (Number.isFinite(t) && t > 0 && t !== targetOffsets) {
+            setTargetOffsets(t);
+            setTargetInput(String(t));
+            localStorage.setItem(targetKey, String(t));
+          }
+          setTargetStorage(res.settings.storage === 'live_db' ? 'saved' : 'memory');
+        } else {
+          setTargetStorage('offline');
+        }
+      } catch {
+        setTargetStorage('offline');
+      }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const safeTarget = Number.isFinite(targetOffsets) && targetOffsets > 0 ? targetOffsets : 1.0;
@@ -154,6 +192,30 @@ export default function CorporateDashboard() {
               </label>
               <span className="text-lg sm:text-xl font-extrabold font-mono text-[#D1FAE5]">{progressPercent}% Achieved</span>
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[10px]">
+            <span className={`px-2 py-0.5 rounded-full font-bold border ${
+              targetStorage === 'saved'
+                ? 'bg-emerald-900/60 border-emerald-700 text-emerald-200'
+                : targetStorage === 'saving'
+                  ? 'bg-sky-900/60 border-sky-700 text-sky-200'
+                  : targetStorage === 'loading'
+                    ? 'bg-slate-800 border-slate-600 text-slate-300'
+                    : targetStorage === 'memory'
+                      ? 'bg-amber-900/60 border-amber-700 text-amber-200'
+                      : 'bg-rose-900/60 border-rose-700 text-rose-200'
+            }`}>
+              {targetStorage === 'saved' && 'Target saved to your account'}
+              {targetStorage === 'saving' && 'Saving target…'}
+              {targetStorage === 'loading' && 'Loading saved target…'}
+              {targetStorage === 'memory' && 'Demo storage only (DB migration pending)'}
+              {(targetStorage === 'offline') && 'Save failed — target on this device only'}
+            </span>
+            {targetStorage === 'memory' && (
+              <span className="text-amber-300/90">Attach the settings migration to persist this across devices.</span>
+            )}
+            {targetError && <span className="text-rose-300">{targetError}</span>}
           </div>
 
           <div className="w-full bg-emerald-950 border border-emerald-800 h-3.5 rounded-full overflow-hidden">

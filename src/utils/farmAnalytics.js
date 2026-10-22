@@ -23,7 +23,7 @@ export function farmToAnalytics(farm, index = 0) {
   const ndvi = parseFloat(farm.ndvi) || 0;
   const credits = combinedCredits(farm);
   const soilMoisture = parseFloat(farm.soil_moisture) || 0;
-  const aiConf = parseFloat(farm.ai_confidence) || 95;
+  const aiConf = farm.ai_confidence != null ? parseFloat(farm.ai_confidence) : NaN;
 
   return {
     id: farm.id || `farm-${index}`,
@@ -33,7 +33,7 @@ export function farmToAnalytics(farm, index = 0) {
     vegetationHealth: farm.vegetation_health || (ndvi > 0.6 ? 'Good' : ndvi > 0.4 ? 'Moderate' : 'Sparse'),
     carbonPot: `${credits.total} t CO2e/yr`,
     soilCarbon: `${soilMoisture}% SOC`,
-    aiConfidence: `${aiConf}%`,
+    aiConfidence: Number.isFinite(aiConf) ? `${aiConf}%` : 'Not available',
     biodiversity: `${farm.biodiversity_score ?? 0}/100`,
     waterRetention: `${soilMoisture}%`,
     areaHectares: farm.area_hectares,

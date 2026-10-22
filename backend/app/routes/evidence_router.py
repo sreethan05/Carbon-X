@@ -7,6 +7,7 @@ Registered by the orchestrator in ``app/main.py``. Endpoints:
 - ``GET  /farms/{farm_id}/evidence``            open listing (transparency, like /passport)
 """
 import glob
+import io
 import math
 import os
 import re
@@ -14,7 +15,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.security import get_current_user, get_current_user_optional
@@ -84,7 +85,9 @@ def _authorize_farm(farm_id: str, current_user: dict) -> Optional[dict]:
         profile = db.get_profile(phone) if db.is_ready() else {}
         user_fpo = (profile or {}).get("fpo_id")
         farm_fpo = farm.get("fpo_id")
-        if user_fpo and farm_fpo and str(user_fpo) != str(farm_fpo):
+        # Both sides must carry an FPO link and match.  Missing scope is not
+        # permission to cross FPO boundaries.
+        if not user_fpo or not farm_fpo or str(user_fpo) != str(farm_fpo):
             raise HTTPException(status_code=403, detail="You can only attach evidence to your own or FPO-scoped farms")
         return farm
     raise HTTPException(status_code=403, detail="You can only attach evidence to your own farms")
@@ -118,6 +121,47 @@ def _components(farm_id: str) -> dict:
         "practice_photo": flags["practice_photo"],
         "geotag_inside_boundary": flags["geotag_inside_boundary"],
     }
+
+
+def _caller_can_view_full(
+    farm: Optional[dict],
+    current_user: Optional[dict],
+    farm_id: Optional[str] = None,
+) -> bool:
+    """Owner/staff and the farm's own FPO may see exact GPS and all metadata."""
+    if not current_user:
+        return False
+    role = str(current_user.get("role") or "farmer").lower()
+    if role in ("admin", "verifier"):
+        return True
+    phone = current_user.get("phone")
+    if farm and phone and farm.get("owner_phone") == phone:
+        return True
+    if role == "fpo" and farm and phone and db.is_ready():
+        profile = db.get_profile(phone) or {}
+        return bool(profile.get("fpo_id") and str(profile.get("fpo_id")) == str(farm.get("fpo_id")))
+    # Demo/offline mode has no farm table to prove ownership from.  The
+    # uploader recorded on the evidence row is the only available proof, so
+    # grant them full access to their own farm's evidence.
+    if not farm and farm_id and phone and not db.is_ready():
+        rows = evidence.list_records(farm_id)
+        return any(r.get("created_by") == phone for r in rows)
+    return False
+
+
+def _photo_without_exif(filepath: str, mime: str) -> Response:
+    """Serve a public photo with all EXIF (including GPS) removed."""
+    try:
+        from PIL import Image
+        with Image.open(filepath) as img:
+            # copy() drops EXIF/ICC metadata; save() receives no exif argument.
+            clean = img.copy()
+            buf = io.BytesIO()
+            clean.save(buf, format={"image/png": "PNG", "image/webp": "WEBP"}.get(mime, "JPEG"))
+            return Response(content=buf.getvalue(), media_type=mime)
+    except Exception:
+        # Never fall back to the original bytes (they may contain GPS).
+        raise HTTPException(status_code=503, detail="Public photo could not be sanitised")
 
 
 # ─── Endpoints ───
@@ -305,47 +349,48 @@ def get_farm_evidence(
     farm_id: str,
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
-    """Evidence listing: full metadata for owner/verifier; coarse/public for external callers."""
+    """Evidence presence is public; exact GPS and private files are not.
+
+    Public callers get counts, verification booleans and only photos the
+    farmer explicitly marked public.  Exact coordinates, creator phone numbers
+    and private metadata stay with owner/FPO/verifier and staff.
+    """
     safe_id = _safe_farm_id(farm_id)
     flags = evidence.evidence_flags(safe_id)
     listing = evidence.list_evidence(safe_id)
-
-    # Check if caller has authorized access to exact coordinates and private photos
-    caller_phone = (current_user or {}).get("phone")
-    caller_role = (current_user or {}).get("role")
     farm = _load_farm(safe_id)
-    is_owner = bool(farm and caller_phone and farm.get("owner_phone") == caller_phone)
-    is_authorized = is_owner or (caller_role in ("admin", "fpo", "verifier"))
+    full = _caller_can_view_full(farm, current_user, farm_id=safe_id)
 
-    sanitized_photos = []
-    for p in listing.get("photos", []):
-        p_item = dict(p)
-        is_pub = bool(p_item.get("is_public", False))
-        if not is_authorized and not is_pub:
-            # Mask exact GPS and mark private for non-consented photos
-            p_item["private"] = True
-            if "latitude" in p_item:
-                p_item["latitude"] = None
-            if "longitude" in p_item:
-                p_item["longitude"] = None
-        sanitized_photos.append(p_item)
-
-    sanitized_geotags = []
-    for g in listing.get("geotags", []):
-        g_item = dict(g)
-        if not is_authorized:
-            # Obfuscate exact sub-meter GPS for public callers; preserve boundary verification claim
-            if "latitude" in g_item and g_item["latitude"] is not None:
-                g_item["latitude"] = round(float(g_item["latitude"]), 2)
-            if "longitude" in g_item and g_item["longitude"] is not None:
-                g_item["longitude"] = round(float(g_item["longitude"]), 2)
-            g_item["exact_coordinates_hidden"] = True
-        sanitized_geotags.append(g_item)
+    if full:
+        photos = [{k: v for k, v in dict(p).items() if not str(k).startswith("_")}
+                  for p in listing.get("photos", [])]
+        geotags = [{k: v for k, v in dict(g).items() if not str(k).startswith("_")}
+                   for g in listing.get("geotags", [])]
+    else:
+        photos = []
+        for p in listing.get("photos", []):
+            if not p.get("is_public"):
+                continue
+            photos.append({
+                "sha256": p.get("sha256"),
+                "mime": p.get("mime"),
+                "size_bytes": p.get("size_bytes"),
+                "captured_at": p.get("captured_at"),
+                "inside_boundary": p.get("inside_boundary"),
+                "is_public": True,
+            })
+        # No geotag record is public: a geotag is exact farm location.
+        geotags = []
 
     return {
         "success": True,
         "farm_id": safe_id,
         "demo_mode": flags["demo_mode"],
+        "access": {
+            "level": "full" if full else "public",
+            "exact_coordinates": bool(full),
+            "private_photos": bool(full),
+        },
         "components": {
             "practice_photo": flags["practice_photo"],
             "geotag_inside_boundary": flags["geotag_inside_boundary"],
@@ -353,8 +398,13 @@ def get_farm_evidence(
         "photo_count": flags["photo_count"],
         "geotag_count": flags["geotag_count"],
         "last_photo_at": flags["last_photo_at"],
-        "photos": sanitized_photos,
-        "geotags": sanitized_geotags,
+        "photos": photos,
+        "geotags": geotags,
+        "public_redaction_note": (
+            None if full else
+            "Only public-consent photos are listed without GPS/creator metadata. "
+            "Geotag coordinates are private."
+        ),
     }
 
 
@@ -390,11 +440,9 @@ def get_evidence_photo(
     is_public = bool(photo_rec and photo_rec.get("is_public"))
 
     caller_phone = (current_user or {}).get("phone")
-    caller_role = (current_user or {}).get("role")
     farm = _load_farm(safe_id)
-    is_owner = bool(farm and caller_phone and farm.get("owner_phone") == caller_phone)
     is_creator = bool(caller_phone and photo_rec and photo_rec.get("created_by") == caller_phone)
-    is_authorized = is_owner or is_creator or (caller_role in ("admin", "fpo", "verifier"))
+    is_authorized = _caller_can_view_full(farm, current_user) or is_creator
 
     if not is_public and not is_authorized:
         raise HTTPException(
@@ -404,5 +452,9 @@ def get_evidence_photo(
 
     ext = os.path.splitext(filepath)[1].lower().lstrip(".")
     mime_map = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
-    return FileResponse(filepath, media_type=mime_map.get(ext, "image/jpeg"))
+    mime = mime_map.get(ext, "image/jpeg")
+    if is_public and not is_authorized:
+        # Public consent covers the practice photo, not the GPS embedded in it.
+        return _photo_without_exif(filepath, mime)
+    return FileResponse(filepath, media_type=mime)
 

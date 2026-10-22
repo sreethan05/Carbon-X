@@ -41,7 +41,8 @@ audits to **≈₹29/farm/year**, monitored every 5 days by Sentinel-2.
 
 Full detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 [docs/MRV_METHODOLOGY.md](docs/MRV_METHODOLOGY.md) ·
-[docs/MODEL_CARD.md](docs/MODEL_CARD.md)
+[docs/MODEL_CARD.md](docs/MODEL_CARD.md) ·
+[docs/VALIDATION_PROTOCOL.md](docs/VALIDATION_PROTOCOL.md)
 
 ## Honest boundaries — what's real vs roadmap
 
@@ -52,15 +53,25 @@ multilingual farmer voice assistant (Telugu/Hindi/English via Sarvam AI),
 checkout with instant simulated escrow or Razorpay webhooks, real-time WebSocket
 ledger streaming, hash ledger with public recompute, marketplace, conditional splits,
 instant-retirement certificates as downloadable PDFs, FPO verification desk,
-5-day monitoring, offline demo mode, 301 backend tests, CI.
+5-day monitoring, consent/export/erasure controls, public-access redaction,
+partial-sale/refund/dispute lifecycle, offline demo mode, ~499 backend tests, CI.
 
 **Simulated & labelled:** payments (simulated provider default with instant CAS settlement;
 Razorpay webhook mode ready for live keys), UPI payout (rails simulated), land registry
 (30 seeded parcels; production path = Dharani/Bhu-Naksha integration).
 
-**Roadmap:** ground-truth SOC calibration (table + eval endpoint already
-built — needs field data), registry listing (Verra/GS), Polygon settlement
-(service scaffolded), production SMS provider.
+**Proxy, not field-validated (2026-10-22):** carbon volumes are satellite/soil-factor
+proxy estimates. Status is `proxy_unvalidated` with 0 verified annual-rate samples;
+every public surface carries that label. See
+[docs/VALIDATION_PROTOCOL.md](docs/VALIDATION_PROTOCOL.md).
+
+**Pending external work:** qualified MRV/agronomy review, privacy-counsel review,
+and the first live pilot are **not complete**. The review register is
+[docs/INDEPENDENT_REVIEW.md](docs/INDEPENDENT_REVIEW.md); the pilot protocol is
+[docs/PILOT_PROTOCOL.md](docs/PILOT_PROTOCOL.md).
+
+**Roadmap:** field sample collection to meet the validation thresholds, registry
+listing (Verra/GS), Polygon settlement (service scaffolded), production SMS provider.
 
 We retired our own first model for circular validation rather than show a
 fake 99% — [docs/MODEL_CARD.md](docs/MODEL_CARD.md) explains.
@@ -104,7 +115,7 @@ model, and every surface shows what it is running on.
 ## Tests & CI
 
 ```powershell
-cd backend; python -m unittest discover tests   # 301 tests: split/ledger/credit/ML/evidence/payments/voice
+cd backend; python -m unittest discover tests   # ~499 tests: split/ledger/credit/ML/evidence/payments/voice/privacy/lifecycle
 npm run lint && npm run build
 ```
 
@@ -116,15 +127,18 @@ CI runs lint + build + the backend suite on every push
 ```
 src/                    React 18 + Vite + Tailwind frontend (port 5000)
 backend/app/            FastAPI composition root (port 8000)
-backend/app/routes/     12 modular domain routers (analyze, auth, corporate, evidence,
-                        farms, fpo, marketplace, monitor, ops, payments, trust, ws)
+backend/app/routes/     modular domain routers (analyze, auth, corporate, evidence,
+                        farms, fpo, marketplace, monitor, ops, payments, privacy,
+                        trust, validation, ws)
 backend/app/services/   split_engine · ledger · credit_engine · evidence_service ·
                         payments · ml_service · certificate_pdf · gee_service · …
 backend/app/voice_agent/ vernacular voice assistant (Sarvam STT, TTS, Chat with role enforcement)
 backend/src/            optional Polygon-minting service (port 3001, roadmap)
 scripts/                seeding · scale simulation · tamper demo · SoilGrids ingestion
-docs/                   architecture · methodology · model card · economics ·
-                        compliance · impact · demo script · roadmap · deployment · DR runbook
+docs/                   architecture · methodology · model card · validation
+                        protocol · independent review register · privacy DPIA ·
+                        credit lifecycle · public access · pilot protocol ·
+                        economics · compliance · impact · demo · roadmap · deployment
 ```
 
 ## License

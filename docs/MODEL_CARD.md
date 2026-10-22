@@ -1,5 +1,11 @@
 # Model Card — CarbonX Biodiversity Model (v2, honest)
 
+**Status (2026-10-22):** research model, not a field-validated biodiversity
+measurement. The carbon credit engine is separately labelled
+`proxy_unvalidated`; see `docs/VALIDATION_PROTOCOL.md` and
+`docs/INDEPENDENT_REVIEW.md`. Neither model has completed qualified external
+review.
+
 ## What it predicts
 Species richness (number of unique species) for a 0.02° (~2 km) grid cell in
 India, inferred from Sentinel-2 satellite features. Served to farmers as a

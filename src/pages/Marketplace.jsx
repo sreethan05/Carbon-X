@@ -21,6 +21,7 @@ export default function Marketplace() {
   const [listings, setListings] = useState([]);
   const [dataSource, setDataSource] = useState('loading');
   const [loadError, setLoadError] = useState('');
+  const [validation, setValidation] = useState(null);
 
   const loadListings = async () => {
     setDataSource('loading');
@@ -48,6 +49,7 @@ export default function Marketplace() {
         imageUrl: l.image_url,
       }));
     setListings(mapped);
+    setValidation(data.validation || null);
     setDataSource(data.source || 'live_db');
   };
 
@@ -168,31 +170,16 @@ export default function Marketplace() {
           name: 'CarbonX Market',
           description: `Retirement of ${qty} credits (${checkoutModalItem.crop})`,
           handler: (response) => {
-            const gross = checkoutTotal || (qty * price);
-            const farmerShare = Math.round(gross * 0.70);
-            const fpoShare = Math.round(gross * 0.05);
-            const platformShare = gross - farmerShare - fpoShare;
+            // The browser callback only proves the provider accepted a payment.
+            // Credits, certificate IDs and splits are created by the verified
+            // webhook; never display a browser-computed split as settled.
             setPurchaseProof({
-              success: true,
-              certificate_id: `PENDING-RZP-${(response.razorpay_payment_id || '').slice(-8)}`,
-              escrow_ref: response.razorpay_payment_id || 'RZP-ESCROW',
-              gross_inr: gross,
-              farmer_share_inr: farmerShare,
-              fpo_share_inr: fpoShare,
-              platform_share_inr: platformShare,
+              pending: true,
               payment_ref: response.razorpay_payment_id,
-              batch_hash: response.razorpay_signature || 'Awaiting signature verification',
-              split: {
-                model: '3-way conditional',
-                lines: [
-                  { recipient: 'Farmer', share_pct: 70, amount_inr: farmerShare },
-                  { recipient: 'FPO / Verifier', share_pct: 5, amount_inr: fpoShare },
-                  { recipient: 'Platform & Monitoring', share_pct: 25, amount_inr: platformShare },
-                ],
-              },
+              message: 'Payment authorized. CarbonX is waiting for the verified provider webhook before retiring credits and issuing the certificate.',
             });
             setIsProcessing(false);
-            loadListings();
+            window.setTimeout(loadListings, 4000);
           },
           modal: {
             ondismiss: () => {
@@ -272,7 +259,7 @@ export default function Marketplace() {
             <div>
               <h1 className="text-2xl font-extrabold text-[#0F172A] font-manrope">Carbon Credit Marketplace</h1>
               <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                Direct agricultural carbon offset procurement from verified Telangana farms.
+                Direct agricultural carbon credit procurement from registered Telangana farms. Volumes are proxy estimates until field validation passes.
                 {dataSource === 'fallback' && (
                   <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
                     SAMPLE DATA (DB offline)
@@ -299,6 +286,29 @@ export default function Marketplace() {
               </button>
             </div>
           </div>
+
+          {validation && (
+            <div className={`rounded-xl border px-4 py-3 text-xs flex flex-col sm:flex-row sm:items-center gap-2 ${
+              validation.status === 'field_validated_limited'
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                : 'bg-amber-50 border-amber-200 text-amber-950'
+            }`}>
+              <div className="flex items-center gap-2 font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                {validation.public_label || 'Proxy estimate — not field-validated'}
+              </div>
+              <span className="text-[11px] opacity-90">
+                {validation.counts?.verified_rate_samples ?? 0} verified field samples of{' '}
+                {validation.thresholds?.min_verified_samples ?? 30} required. Carbon volumes are proxy estimates, not measured removals.
+              </span>
+              <button
+                onClick={() => navigate('/trust')}
+                className="sm:ml-auto text-[11px] font-bold underline underline-offset-2 whitespace-nowrap"
+              >
+                Evidence &amp; limits
+              </button>
+            </div>
+          )}
 
           {/* Full-width clean white search bar */}
           <div className="relative w-full">
@@ -515,15 +525,28 @@ export default function Marketplace() {
 
               {purchaseProof ? (
                 <div className="space-y-3 text-xs">
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-950 p-4 rounded-xl text-center space-y-1">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-700 mx-auto" />
-                    <p className="font-bold text-sm">Purchase complete — credits retired</p>
-                    <p className="text-[11px] text-slate-600">
-                      Escrow {purchaseProof.escrow_ref} · Certificate {purchaseProof.certificate_id}
+                  <div className={`p-4 rounded-xl text-center space-y-1 border ${
+                    purchaseProof.pending
+                      ? 'bg-amber-50 border-amber-200 text-amber-950'
+                      : 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  }`}>
+                    {purchaseProof.pending
+                      ? <AlertTriangle className="w-8 h-8 text-amber-700 mx-auto" />
+                      : <CheckCircle2 className="w-8 h-8 text-emerald-700 mx-auto" />}
+                    <p className="font-bold text-sm">
+                      {purchaseProof.pending ? 'Payment authorized — settlement pending' : 'Purchase complete — credits retired'}
                     </p>
+                    <p className="text-[11px] text-slate-600">
+                      {purchaseProof.pending
+                        ? purchaseProof.message
+                        : `Escrow ${purchaseProof.escrow_ref} · Certificate ${purchaseProof.certificate_id}`}
+                    </p>
+                    {purchaseProof.pending && purchaseProof.payment_ref && (
+                      <p className="text-[10px] font-mono text-slate-500 break-all">Payment ref: {purchaseProof.payment_ref}</p>
+                    )}
                   </div>
 
-                  {purchaseProof.split?.lines?.length > 0 && (
+                  {!purchaseProof.pending && purchaseProof.split?.lines?.length > 0 && (
                     <div className="border border-slate-200 rounded-xl p-3 space-y-1.5">
                       <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">
                         Transparent payout split ({purchaseProof.split.model})
@@ -557,12 +580,14 @@ export default function Marketplace() {
                     >
                       Close
                     </button>
-                    <button
-                      onClick={() => navigate(`/buyer/certificates/${purchaseProof.certificate_id}`)}
-                      className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold shadow-sm"
-                    >
-                      View Certificate
-                    </button>
+                    {!purchaseProof.pending && purchaseProof.certificate_id && (
+                      <button
+                        onClick={() => navigate(`/buyer/certificates/${purchaseProof.certificate_id}`)}
+                        className="flex-1 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold shadow-sm"
+                      >
+                        View Certificate
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : (

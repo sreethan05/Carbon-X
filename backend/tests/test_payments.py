@@ -28,6 +28,7 @@ from app.main import app  # noqa: E402
 from app import supabase_db as _db  # noqa: E402
 from app import config as app_config  # noqa: E402
 from app.services import market_store, payments  # noqa: E402
+from app.services import ledger as ledger_service  # noqa: E402
 from app.routes import payments_router as payments_routes  # noqa: E402
 
 # post-import reset (main.py load_dotenv(override=True) re-reads backend/.env)
@@ -354,9 +355,10 @@ class RazorpayWebhookFlowTests(unittest.TestCase):
         self.assertEqual(row["status"], "Retired")
         self.assertTrue(row["tx_hash"])
 
-        # the SALE ledger event carries the provider payment ref
-        chain = client.get(f"/ledger/{settlement['farm_id']}").json()
-        tagged = [e for e in chain["events"]
+        # the SALE ledger event carries the provider payment ref (internal
+        # audit view; the public /ledger endpoint redacts payment refs)
+        internal_events = ledger_service.get_chain(settlement["farm_id"])
+        tagged = [e for e in internal_events
                   if e.get("type") == "SALE"
                   and (e.get("payload") or {}).get("payment_ref") == "RZP-pay_e2e_1"]
         self.assertEqual(len(tagged), 1)
@@ -367,8 +369,8 @@ class RazorpayWebhookFlowTests(unittest.TestCase):
             dup = client.post("/payments/webhook", content=raw, headers=headers).json()
         self.assertTrue(dup["success"])
         self.assertTrue(dup["duplicate"])
-        chain2 = client.get(f"/ledger/{settlement['farm_id']}").json()
-        self.assertEqual(len(chain2["events"]), len(chain["events"]))
+        chain2 = ledger_service.get_chain(settlement["farm_id"])
+        self.assertEqual(len(chain2), len(internal_events))
         self.assertEqual(str(market_store.get(listing["id"])["status"]), "Retired")
 
     def test_webhook_invalid_signature_rejected_400(self):

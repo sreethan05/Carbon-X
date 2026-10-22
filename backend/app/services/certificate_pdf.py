@@ -92,8 +92,12 @@ def get_cached_certificate_pdf(cert_id: str) -> Optional[bytes]:
 
 
 def invalidate_certificate_pdf(cert_id: str) -> None:
-    """Remove certificate from the LRU cache (e.g. on retirement)."""
+    """Remove every cached variant of a certificate (public/full)."""
     _pdf_cache.invalidate(cert_id)
+    prefix = f"{cert_id}:"
+    for key in list(getattr(_pdf_cache, "_cache", {}).keys()):
+        if str(key).startswith(prefix):
+            _pdf_cache.invalidate(key)
 
 
 def clear_certificate_pdf_cache() -> None:
@@ -171,8 +175,12 @@ def render_certificate_pdf(cert: dict, use_cache: bool = True) -> bytes:
     cert_id = "" if cert.get("id") is None else str(cert.get("id"))
     status = str(cert.get("status") or "RETIRED").upper()
     retired = status == "RETIRED"
+    refunded = status == "REFUNDED"
+    failed = status == "FAILED"
+    disputed = str(cert.get("dispute_status") or "").upper() == "OPEN"
     batch_hash = "" if cert.get("batch_hash") is None else str(cert.get("batch_hash"))
-    cache_key = f"{cert_id}:{status}:{batch_hash}" if cert_id else ""
+    access = "public" if cert.get("public_view") else "full"
+    cache_key = f"{cert_id}:{status}:{batch_hash}:{access}:{disputed}" if cert_id else ""
 
     if use_cache and cache_key:
         cached = _pdf_cache.get(cache_key)
@@ -197,11 +205,16 @@ def render_certificate_pdf(cert: dict, use_cache: bool = True) -> bytes:
     c.setFillColor(WATERMARK_PRIMARY)
     c.translate(w / 2, h / 2 - 25)
     c.rotate(28)
-    watermark_text = (
-        "CARBONX REGISTRY · PERMANENTLY RETIRED · IMMUTABLE"
-        if retired else
-        "CARBONX REGISTRY · ESCROW HELD · PENDING RETIREMENT"
-    )
+    if refunded:
+        watermark_text = "CARBONX REGISTRY · REFUNDED · VOID FOR OFFSET CLAIMS"
+    elif failed:
+        watermark_text = "CARBONX REGISTRY · SETTLEMENT FAILED · NOT VALID"
+    elif disputed:
+        watermark_text = "CARBONX REGISTRY · DISPUTED · FROZEN"
+    elif retired:
+        watermark_text = "CARBONX REGISTRY · PERMANENTLY RETIRED · IMMUTABLE"
+    else:
+        watermark_text = "CARBONX REGISTRY · ESCROW HELD · PENDING RETIREMENT"
     c.drawCentredString(0, 0, watermark_text)
     c.setFont("Helvetica", 13)
     c.setFillColor(WATERMARK_SECONDARY)
@@ -215,7 +228,7 @@ def render_certificate_pdf(cert: dict, use_cache: bool = True) -> bytes:
     c.setFont("Helvetica-Bold", 26)
     c.drawString(64, h - 78, "CarbonX")
     c.setFont("Helvetica", 12.5)
-    c.drawString(64, h - 100, "Carbon Credit Retirement Certificate — Sentinel-2 verified, hash-anchored")
+    c.drawString(64, h - 100, "Pilot MRV retirement record — Sentinel-2 based, hash-anchored")
     c.setFillColor(HexColor("#95D5B2"))
     c.setFont("Helvetica-Bold", 11)
     header_cert_label = _fit_string(c, f"Certificate {cert_id}".strip(), "Helvetica-Bold", 11, w / 2 - 80)
@@ -234,9 +247,16 @@ def render_certificate_pdf(cert: dict, use_cache: bool = True) -> bytes:
     y -= 26
     c.setFont("Helvetica", 12.5)
     c.setFillColor(MUTE)
-    statement = ("has permanently retired the following carbon credits — purchase equals retirement, one step."
-                 if retired else
-                 "holds the following carbon credits in escrow — not yet permanently retired.")
+    if refunded:
+        statement = "was refunded for the following credits — this certificate is void for offset claims."
+    elif failed:
+        statement = "has a failed settlement — no certificate was issued for these credits."
+    elif disputed:
+        statement = "has a disputed record — this certificate is frozen pending staff resolution."
+    elif retired:
+        statement = "has permanently retired the following carbon credits — purchase equals retirement, one step."
+    else:
+        statement = "holds the following carbon credits in escrow — not yet permanently retired."
     c.drawCentredString(w / 2, y, statement)
 
     # Details grid
@@ -244,9 +264,17 @@ def render_certificate_pdf(cert: dict, use_cache: bool = True) -> bytes:
     vol = cert.get("volume")
     vol_str = f"{vol} tCO2e" if vol is not None else "— tCO2e"
     crop_str = cert.get("crop") or "crop not recorded"
+    basis = "PROXY ESTIMATE — not field validated" if str(cert.get("credits_basis") or "").startswith("proxy") else "Field-validated estimate"
+    credit_label = "Credits refunded" if refunded else ("Credits retired" if retired else "Credits held")
     rows = [
-        ("Credits retired" if retired else "Credits held", vol_str),
-        ("Credit type", f"Agricultural carbon ({crop_str}) — VM0042-aligned methodology"),
+        (credit_label, vol_str),
+        ("Certificate status", (
+            "REFUNDED — VOID" if refunded else
+            ("SETTLEMENT FAILED" if failed else
+             ("DISPUTED — FROZEN" if disputed else status))
+        )),
+        ("Credit type", f"Agricultural carbon ({crop_str}) — VM0042-structured methodology"),
+        ("Estimate basis", basis),
         ("Source parcels", cert.get("location") or "location not recorded"),
         ("Farmers", cert.get("farmer_name") or "not recorded"),
         ("Retirement date", (cert.get("retired_date") or "—") if retired else "Not retired"),

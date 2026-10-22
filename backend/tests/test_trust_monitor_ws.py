@@ -69,7 +69,9 @@ class PassportTests(unittest.TestCase):
         _db._ready = False
 
     def test_passport_expected_earnings_and_trust(self):
-        r = client.get("/passport/demo")
+        auth = {"Authorization": "Bearer " + security.create_access_token(
+            {"phone": "9000000001", "role": "farmer"})}
+        r = client.get("/passport/demo", headers=auth)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertTrue(body["success"])
@@ -106,8 +108,11 @@ class PassportTests(unittest.TestCase):
         self.assertIsInstance(ledger_block["history"], list)
 
     def test_passport_demo_fallback_when_unknown(self):
-        # In demo mode, any id falls back to demo farm with demo_mode: True
-        r = client.get("/passport/unknown-farm-999")
+        # In demo mode, any id falls back to demo farm with demo_mode: True.
+        # Use the demo farm's owner session to see the owner-visible farm name.
+        auth = {"Authorization": "Bearer " + security.create_access_token(
+            {"phone": "9000000001", "role": "farmer"})}
+        r = client.get("/passport/unknown-farm-999", headers=auth)
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertTrue(body["success"])

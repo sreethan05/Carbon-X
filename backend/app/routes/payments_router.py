@@ -130,6 +130,8 @@ def _resolve_purchase(listing_id: str, credits: float) -> dict:
             return {"error": {"success": False, "message": "Listing not found"}}
         if str(listing.get("status") or "Active").lower() not in ("active", ""):
             return {"error": {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}}
+        if str(listing.get("dispute_status") or "NONE").upper() in ("OPEN", "DISPUTED"):
+            return {"error": {"success": False, "code": "DISPUTED", "message": "Listing is frozen while a certificate dispute is open"}}
         available = float(listing.get("total_credits") or 0)
         if available <= 0:
             return {"error": {"success": False, "message": "This listing has no purchasable credits left"}}
@@ -142,6 +144,7 @@ def _resolve_purchase(listing_id: str, credits: float) -> dict:
             "credits": resolved,
             "farm": None,
             "apply_update": lambda fields: market_store.update_cas(listing_id, fields, expected_credits=available),
+            "rollback_update": lambda fields: market_store.update(listing_id, fields) is not None,
         }
 
     try:
@@ -154,6 +157,8 @@ def _resolve_purchase(listing_id: str, credits: float) -> dict:
     listing = rows[0]
     if str(listing.get("status") or "Active").lower() not in ("active", ""):
         return {"error": {"success": False, "message": f"Listing is no longer available (status: {listing.get('status')})"}}
+    if str(listing.get("dispute_status") or "NONE").upper() in ("OPEN", "DISPUTED"):
+        return {"error": {"success": False, "code": "DISPUTED", "message": "Listing is frozen while a certificate dispute is open"}}
     available = float(listing.get("total_credits") or 0)
     if available <= 0:
         return {"error": {"success": False, "message": "This listing has no purchasable credits left"}}
@@ -177,7 +182,19 @@ def _resolve_purchase(listing_id: str, credits: float) -> dict:
         )
         return bool(q.select("id").execute().data)
 
-    return {"listing": listing, "credits": resolved, "apply_update": _cas_update, "farm": farm}
+    def _rollback_update(fields: dict) -> bool:
+        try:
+            res = sb.table("marketplace_listings").update(fields).eq("id", listing_id).execute()
+            return bool(res.data)
+        except Exception:
+            core = {k: v for k, v in fields.items() if k not in ("credits_sold", "lifecycle_state")}
+            res = sb.table("marketplace_listings").update(core).eq("id", listing_id).execute()
+            return bool(res.data)
+
+    return {
+        "listing": listing, "credits": resolved, "apply_update": _cas_update,
+        "rollback_update": _rollback_update, "farm": farm,
+    }
 
 
 @router.get("/config")
@@ -223,6 +240,7 @@ def create_checkout(
         result = settle_listing_purchase(
             listing, credits, buyer, resolved["apply_update"],
             farm=resolved["farm"], payment_ref="SIMULATED",
+            rollback_update=resolved.get("rollback_update"),
         )
         if not result.get("success"):
             return result  # CONFLICT envelope — nothing was settled
@@ -356,6 +374,7 @@ async def razorpay_webhook(
                 resolved["listing"], resolved["credits"], pending["buyer_name"],
                 resolved["apply_update"], farm=resolved["farm"],
                 payment_ref=f"RZP-{payment_id}",
+                rollback_update=resolved.get("rollback_update"),
             )
             if not result.get("success"):
                 # Money was captured but the listing CAS lost a race — never retry into
