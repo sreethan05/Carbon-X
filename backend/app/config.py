@@ -37,6 +37,10 @@ def _env_str(name: str, default: str) -> str:
     return os.getenv(name, "").strip() or default
 
 
+ENVIRONMENT = _env_str("CARBONX_ENVIRONMENT", "development").lower()
+IS_PRODUCTION = ENVIRONMENT in {"production", "prod"}
+
+
 # ─── Core config ───
 # Formula version for auditability — bump when crop factors or methodology change.
 # Single source of truth: credit_engine imports this value.
@@ -63,6 +67,7 @@ FORCE_HTTPS = _env_bool("CARBONX_FORCE_HTTPS", False)
 # and labelled simulated) or "razorpay" (real orders once the key id + secret
 # are configured). Unknown values degrade to "simulated" with a warning.
 PAYMENTS_PROVIDER = _env_str("CARBONX_PAYMENTS_PROVIDER", "simulated")
+ALLOW_SIMULATED_SETTLEMENT = _env_bool("CARBONX_ALLOW_SIMULATED_SETTLEMENT", False)
 RAZORPAY_KEY_ID = _env_str("RAZORPAY_KEY_ID", "")
 RAZORPAY_KEY_SECRET = _env_str("RAZORPAY_KEY_SECRET", "")
 RAZORPAY_WEBHOOK_SECRET = _env_str("RAZORPAY_WEBHOOK_SECRET", "")
@@ -94,7 +99,7 @@ GEE_PROJECT = _env_str("GEE_PROJECT", "carbonx-507617")
 MONITOR_INTERVAL_SECONDS = 5 * 24 * 60 * 60  # 5 days (Sentinel-2 revisit)
 
 # ─── Redis ───
-REDIS_URL = _env_str("REDIS_URL", "redis://localhost:4000")
+REDIS_URL = _env_str("REDIS_URL", "redis://localhost:6379/0")
 
 # ─── Blockchain / Amoy (optional) ───
 AMOY_RPC_URL = _env_str("AMOY_RPC_URL", "https://rpc-amoy.polygon.technology")

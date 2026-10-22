@@ -168,7 +168,9 @@ export default function DetailedFarmAnalytics() {
         wsUrl = `${wsProto}//${window.location.host}${PY_API_BASE || '/py-api'}/ws/ledger/${farmId}`;
       }
 
-      ws = new WebSocket(wsUrl);
+      const token = window.localStorage.getItem('carbonx_token');
+      if (!token) throw new Error('Authentication required for live ledger updates');
+      ws = new WebSocket(`${wsUrl}?token=${encodeURIComponent(token)}`);
       ws.onopen = () => {
         refresh();
       };

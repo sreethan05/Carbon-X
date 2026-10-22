@@ -302,7 +302,7 @@ export default function SatellitePreview() {
                   url="https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"
                   subdomains={['mt0', 'mt1', 'mt2', 'mt3']}
                   maxZoom={22}
-                  attribution="&copy; Google Satellite · Sentinel-2 SR"
+                  attribution="&copy; Google Satellite basemap — NDVI values come from the server-side Sentinel-2 scan"
                 />
                 <FitParcelBounds points={parcelPoints} />
 

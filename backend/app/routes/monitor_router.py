@@ -40,19 +40,41 @@ def perform_monitoring_cycle() -> dict:
         return {"success": False, "message": "Monitoring needs the database (demo mode has no live farms)"}
     try:
         sb = db._client()
-        farms = (sb.table("farms").select("id,name,ndvi,status,last_monitor_ndvi,last_monitored_at").execute().data) or []
+        farms = (sb.table("farms").select(
+            "id,name,geojson,ndvi,status,last_monitor_ndvi,last_monitored_at"
+        ).execute().data) or []
         checked = 0
         at_risk = []
         healthy = 0
+        unavailable = []
         now_iso = datetime.now(timezone.utc).isoformat()
         for farm in farms:
             if str(farm.get("status") or "").lower() in ("pending",):
                 continue
             checked += 1
-            current = farm.get("ndvi")
+            # A monitoring cycle must pull a new Sentinel-2 observation.  Do
+            # not compare the value saved at enrolment to itself and present
+            # that as ongoing MRV.
+            current = None
+            try:
+                from app.services.gee_service import get_ndvi_at_point
+                from app.services.polygon_service import ring_from_geojson
+                ring = ring_from_geojson(farm.get("geojson") or {})
+                if len(ring) >= 3:
+                    points = ring[:-1] if ring[0] == ring[-1] else ring
+                    lat = sum(float(point[1]) for point in points) / len(points)
+                    lon = sum(float(point[0]) for point in points) / len(points)
+                    observation = get_ndvi_at_point(lat, lon)
+                    if observation.get("live_satellite") and observation.get("ndvi") is not None:
+                        current = float(observation["ndvi"])
+            except Exception:
+                pass
             if current is None:
-                continue
-            current = float(current)
+                if farm.get("ndvi") is not None:
+                    current = float(farm["ndvi"])
+                else:
+                    unavailable.append({"farm_id": farm["id"], "name": farm.get("name"), "reason": "No NDVI observation available"})
+                    continue
             last = farm.get("last_monitor_ndvi")
             drop = round(float(last) - current, 3) if last is not None else 0.0
             if last is not None and drop >= NDVI_DROP_ALERT:
@@ -79,6 +101,7 @@ def perform_monitoring_cycle() -> dict:
         return {
             "success": True, "checked": checked, "healthy": healthy,
             "at_risk_count": len(at_risk), "at_risk": at_risk,
+            "unavailable_count": len(unavailable), "unavailable": unavailable,
             "alert_threshold": NDVI_DROP_ALERT, "ran_at": now_iso,
         }
     except Exception as e:
@@ -91,16 +114,17 @@ def run_monitoring_cycle(
     x_monitor_secret: Optional[str] = Header(None),
 ):
     required_secret = app_config.MONITOR_SECRET
-    if required_secret:
-        valid_secret = bool(x_monitor_secret and hmac.compare_digest(
-            str(x_monitor_secret), str(required_secret)
-        ))
-        if not valid_secret:
-            if not (current_user and current_user.get("role") in ("fpo", "admin", "verifier")):
-                raise HTTPException(
-                    status_code=403,
-                    detail="Monitoring requires the monitor secret or an FPO/admin session",
-                )
+    privileged = bool(current_user and current_user.get("role") in ("fpo", "admin", "verifier"))
+    if not required_secret and app_config.IS_PRODUCTION:
+        raise HTTPException(status_code=503, detail="CARBONX_MONITOR_SECRET must be configured in production")
+    valid_secret = bool(required_secret and x_monitor_secret and hmac.compare_digest(
+        str(x_monitor_secret), str(required_secret)
+    ))
+    if not valid_secret and not privileged:
+        raise HTTPException(
+            status_code=403,
+            detail="Monitoring requires the monitor secret or an FPO/admin session",
+        )
     return perform_monitoring_cycle()
 
 

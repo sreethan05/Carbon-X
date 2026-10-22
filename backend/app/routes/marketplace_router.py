@@ -443,13 +443,21 @@ def buy_marketplace_credits(data: MarketplaceBuyModel, current_user: Optional[di
             status_code=401,
             detail="Sign in with a corporate buyer account to purchase credits",
         )
-    if current_user:
-        role = str(current_user.get("role", "")).lower()
-        if role in ("farmer",):
-            raise HTTPException(
-                status_code=403,
-                detail="Farmer accounts cannot purchase credits. Corporate buyer account required.",
-            )
+    if current_user and str((current_user or {}).get("role", "")).lower() in ("farmer",):
+        raise HTTPException(
+            status_code=403,
+            detail="Farmer accounts cannot purchase credits. Corporate buyer account required.",
+        )
+    if db.is_ready() and str((current_user or {}).get("role", "")).lower() != "buyer":
+        raise HTTPException(
+            status_code=403,
+            detail="Farmer accounts cannot purchase credits. Corporate buyer account required.",
+        )
+    if db.is_ready() and not app_config.ALLOW_SIMULATED_SETTLEMENT:
+        raise HTTPException(
+            status_code=503,
+            detail="Direct settlement is disabled until a live payment provider is configured.",
+        )
     buyer = data.buyer_name or (current_user or {}).get("name") or "Corporate Buyer"
 
     # Input validation: credit quantity must be positive

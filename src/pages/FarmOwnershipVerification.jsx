@@ -236,7 +236,7 @@ export default function FarmOwnershipVerification() {
             </span>
             <h1 className="text-2xl font-extrabold text-slate-900 font-manrope">Farm Ownership & Deed Verification</h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              Automated Trust Engine pipeline validating Telangana Pahani / RoR 1B records against Govt Cadastral Registry.
+              Pilot verification against uploaded Pahani / RoR 1B records and the platform's curated registry extract — not a live government registry lookup.
             </p>
           </div>
 
@@ -260,9 +260,10 @@ export default function FarmOwnershipVerification() {
                   <input
                     type="text"
                     value={surveyInput}
+                    disabled={isSearching}
                     onChange={e => setSurveyInput(e.target.value)}
                     placeholder="e.g. 124/A, 101/A, 102/B"
-                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-600"
+                    className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:border-emerald-600 disabled:opacity-50"
                     required
                   />
                   <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
@@ -270,12 +271,18 @@ export default function FarmOwnershipVerification() {
                 <button
                   type="submit"
                   disabled={isSearching}
-                  className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 transition-all disabled:opacity-50"
+                  className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg shadow-sm flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                  <span>Lookup</span>
+                  <span>{isSearching ? 'Looking up…' : 'Lookup'}</span>
                 </button>
               </div>
+              {lookupError && (
+                <p className="text-[11px] text-rose-700 font-semibold bg-rose-50 border border-rose-200 rounded-lg p-2 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{lookupError}</span>
+                </p>
+              )}
             </form>
 
             <hr className="border-slate-100" />
@@ -291,16 +298,22 @@ export default function FarmOwnershipVerification() {
                 <input
                   type="file"
                   accept="image/*,.pdf"
+                  disabled={isProcessingPipeline}
                   onChange={handlePahaniUpload}
                   id="doc-upload"
                   className="hidden"
                 />
-                <label htmlFor="doc-upload" className="cursor-pointer space-y-2 block">
+                <label
+                  htmlFor="doc-upload"
+                  className={isProcessingPipeline ? "cursor-not-allowed opacity-60 space-y-2 block" : "cursor-pointer space-y-2 block"}
+                >
                   <Upload className="w-8 h-8 text-emerald-700 mx-auto" />
                   <p className="text-xs font-bold text-slate-900">
                     {pahaniFile ? pahaniFile.name : 'Upload Telangana Pahani / RoR 1B Document'}
                   </p>
-                  <p className="text-[10px] text-slate-500">Click to upload PNG, JPG, or PDF</p>
+                  <p className="text-[10px] text-slate-500">
+                    {isProcessingPipeline ? 'Processing document…' : 'Click to upload PNG, JPG, or PDF'}
+                  </p>
                 </label>
               </div>
 
@@ -315,7 +328,7 @@ export default function FarmOwnershipVerification() {
                         <Loader2 className="w-4 h-4 text-emerald-700 animate-spin" />
                       )}
                       <span className="font-bold text-emerald-950">
-                        {pipelineDone ? 'Trust Engine Pipeline Passed' : `Running Check ${activeStep + 1} of ${trustChecklist.length}`}
+                        {pipelineDone ? 'Document OCR Preview Complete' : `Reading document ${activeStep + 1} of ${trustChecklist.length}`}
                       </span>
                     </div>
                     <span className="text-[11px] font-mono font-bold text-emerald-800">
@@ -333,7 +346,7 @@ export default function FarmOwnershipVerification() {
 
                   <p className="text-[11px] text-emerald-800 font-medium">
                     {pipelineDone
-                      ? 'Document processed by the OCR pipeline. Extracted fields are shown below.'
+                      ? 'Document text was extracted. Full ownership, duplicate, and fraud checks run only when you submit the verification request.'
                       : trustChecklist[Math.min(activeStep, trustChecklist.length - 1)].title}
                   </p>
 
@@ -437,7 +450,7 @@ export default function FarmOwnershipVerification() {
                     <div>
                       <span className="text-[10px] text-slate-500 font-semibold block">Recorded Area</span>
                       <span className="font-bold text-slate-900">
-                        {registryResult.areaHa != null
+                        {typeof registryResult.areaHa === 'number' && !isNaN(registryResult.areaHa) && registryResult.areaHa > 0
                           ? `${registryResult.areaHa} ha (${Math.round(registryResult.areaHa * 2.471 * 100) / 100} Acres)`
                           : '— (no area on record)'}
                       </span>
@@ -454,10 +467,12 @@ export default function FarmOwnershipVerification() {
             {searchDone && registryResult && (
               <button
                 onClick={proceedToMapping}
-                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-6"
+                disabled={isProceeding}
+                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 mt-6"
               >
-                <span>Proceed to Satellite Boundary Mapping</span>
-                <ArrowRight className="w-4 h-4" />
+                {isProceeding ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                <span>{isProceeding ? 'Preparing Map Workspace…' : 'Proceed to Satellite Boundary Mapping'}</span>
+                {!isProceeding && <ArrowRight className="w-4 h-4" />}
               </button>
             )}
           </div>

@@ -415,7 +415,7 @@ export default function LeafletMap({
                 : 'bg-white/95 text-carbon-800 border-forest-200 hover:bg-surface-sage'
             }`}
           >
-            <span>🌱 NDVI Heatmap</span>
+            <span>🌱 Boundary Overlay</span>
             {heatmapActive && <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />}
           </button>
         )}

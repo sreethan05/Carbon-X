@@ -239,7 +239,7 @@ export default function FarmMapRegistration() {
             {isReadOnly ? (
               <span className="flex items-center gap-1.5 text-emerald-800 font-semibold">
                 <ShieldCheck className="w-4 h-4 text-primary" />
-                Cadastral geometry verified from Telangana Dharani Portal (Tier 1A).
+                Boundary supplied by the platform registry extract (Tier 1A); confirm against the official record before relying on it.
               </span>
             ) : parcelGeojson ? (
               <span>

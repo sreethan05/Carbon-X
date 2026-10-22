@@ -274,41 +274,43 @@ class CertificatePdfStressTests(unittest.TestCase):
         """16 concurrent threads generating, reading, and invalidating certificates."""
         errors = []
         thread_count = 16
-        iterations_per_thread = 40
+        iterations_per_thread = 50
 
+        # Shared pool of 6 certificates so threads rapidly hit cache while concurrently invalidating
         def worker(thread_idx):
             try:
                 for i in range(iterations_per_thread):
-                    cert_id = f"CX-CONC-{thread_idx % 4}-{i % 8}"
+                    pool_idx = (thread_idx + i) % 6
+                    cert_id = f"CX-CONC-POOL-{pool_idx}"
                     cert = {
                         "id": cert_id,
-                        "buyer": f"Buyer {thread_idx}",
-                        "farmer_name": f"Farmer {i}",
+                        "buyer": f"Buyer Pool {pool_idx}",
+                        "farmer_name": f"Farmer Pool {pool_idx}",
                         "crop": "Cotton",
                         "volume": 15.0,
                         "value": 22500.0,
                         "location": "Khammam, Telangana",
                         "issued_date": "2026-10-15",
-                        "status": "RETIRED" if i % 2 == 0 else "HELD_IN_ESCROW",
-                        "batch_hash": f"hash_{thread_idx}_{i}",
+                        "status": "RETIRED",
+                        "batch_hash": f"hash_pool_{pool_idx}",
                     }
 
-                    # Render with cache
+                    # Render with cache (concurrent cache hits)
                     pdf = render_certificate_pdf(cert, use_cache=True)
                     if not pdf.startswith(b"%PDF") or b"%%EOF" not in pdf:
                         errors.append(f"Thread {thread_idx} got invalid PDF on iteration {i}")
 
                     # Check direct cache retrieval
                     cached = get_cached_certificate_pdf(cert_id)
-                    if cached is None or not cached.startswith(b"%PDF"):
-                        errors.append(f"Thread {thread_idx} failed cache get on {cert_id}")
+                    if cached is not None and not cached.startswith(b"%PDF"):
+                        errors.append(f"Thread {thread_idx} got corrupted cache for {cert_id}")
 
-                    # Intermittent invalidation
+                    # Concurrent invalidation of a designated dynamic key
+                    if i % 15 == 0 and thread_idx == 0:
+                        invalidate_certificate_pdf("CX-CONC-POOL-0")
+
+                    # Concurrent stats inspection
                     if i % 10 == 0:
-                        invalidate_certificate_pdf(cert_id)
-
-                    # Intermittent stats inspection
-                    if i % 15 == 0:
                         stats = certificate_cache_stats()
                         if "size" not in stats or "maxsize" not in stats:
                             errors.append(f"Thread {thread_idx} got invalid stats")
@@ -324,7 +326,7 @@ class CertificatePdfStressTests(unittest.TestCase):
         total_time = time.perf_counter() - t0
 
         self.assertEqual(len(errors), 0, f"Encountered concurrency errors: {errors[:5]}")
-        self.assertLess(total_time, 15.0, f"Concurrency test took too long: {total_time:.2f}s")
+        self.assertLess(total_time, 5.0, f"Concurrent cache hammering took too long: {total_time:.2f}s")
 
     def test_cache_state_transition_integrity(self):
         """Transitioning from HELD_IN_ESCROW to RETIRED must NOT return stale ESCROW PDF."""

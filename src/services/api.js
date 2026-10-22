@@ -197,8 +197,22 @@ export async function sendLoginOtp(phone) {
   return post(`${PY}/login/send-otp`, { phone });
 }
 
-export async function registerUser(payload) {
-  return post(`${PY}/register`, payload);
+export async function registerUser(payload = {}) {
+  const body = {
+    phone: payload.phone,
+    otp: payload.otp || '',
+    name: payload.name,
+    aadhaar: payload.aadhaar,
+    state: payload.state || 'Telangana',
+    district: payload.district,
+    village: payload.village,
+    upi: payload.upi || '',
+    email: payload.email || '',
+    role: 'farmer',
+    preferred_language: payload.preferred_language || payload.preferredLanguage || 'en',
+    otp_verification_token: payload.otp_verification_token || payload.otpVerificationToken || '',
+  };
+  return post(`${PY}/register`, body);
 }
 
 export async function loginUser(phone, otp) {
@@ -209,21 +223,39 @@ export async function getMe() {
   return get(`${PY}/me`);
 }
 
-export async function updateProfile(fields) {
-  return patch(`${PY}/profile`, fields);
+export async function updateProfile(fields = {}) {
+  const body = {};
+  if (fields.name !== undefined) body.name = fields.name;
+  if (fields.state !== undefined) body.state = fields.state;
+  if (fields.district !== undefined) body.district = fields.district;
+  if (fields.village !== undefined) body.village = fields.village;
+  if (fields.upi !== undefined) body.upi = fields.upi;
+  if (fields.email !== undefined) body.email = fields.email;
+  if (fields.preferred_language !== undefined || fields.preferredLanguage !== undefined) {
+    body.preferred_language = fields.preferred_language ?? fields.preferredLanguage;
+  }
+  return patch(`${PY}/profile`, body);
 }
 
 // Voice assistant
 
-export async function sendVoiceTextQuery(payload) {
-  return post(`${PY}/api/v1/voice/text-query`, payload);
+export async function sendVoiceTextQuery(payload = {}) {
+  const body = {
+    text: payload.text,
+    ...(payload.language_code || payload.languageCode ? { language_code: payload.language_code || payload.languageCode } : {}),
+    ...(payload.session_id || payload.sessionId ? { session_id: payload.session_id || payload.sessionId } : {}),
+    ...(payload.context ? { context: payload.context } : {}),
+  };
+  return post(`${PY}/api/v1/voice/text-query`, body);
 }
 
-export async function sendVoiceAudioQuery({ file, language_code, session_id }) {
+export async function sendVoiceAudioQuery({ file, language_code, languageCode, session_id, sessionId }) {
   const form = new FormData();
   form.append('file', file);
-  if (language_code) form.append('language_code', language_code);
-  if (session_id) form.append('session_id', session_id);
+  const lang = language_code || languageCode;
+  const sess = session_id || sessionId;
+  if (lang) form.append('language_code', lang);
+  if (sess) form.append('session_id', sess);
   return request(`${PY}/api/v1/voice/query`, {
     method: 'POST',
     headers: authHeaders(),
@@ -231,28 +263,79 @@ export async function sendVoiceAudioQuery({ file, language_code, session_id }) {
   });
 }
 
-// ── KYC ──
+// ── KYC & Land Registry ──
 
-export async function verifyAadhaar(payload) {
-  return post(`${PY}/verify-aadhaar`, payload);
+export async function verifyAadhaar(payload = {}) {
+  const body = {
+    front_image: payload.front_image || payload.frontImage,
+    back_image: payload.back_image || payload.backImage,
+    front_content_type: payload.front_content_type || payload.frontContentType || 'image/jpeg',
+    back_content_type: payload.back_content_type || payload.backContentType || 'image/jpeg',
+  };
+  return post(`${PY}/verify-aadhaar`, body);
 }
 
-export async function verifyLandDocument(payload) {
-  return post(`${PY}/verify-land`, payload);
+export async function verifyLandDocument(payload = {}) {
+  const body = {
+    document_name: payload.document_name || payload.documentName || 'document.png',
+    document_content_base64: payload.document_content_base64 || payload.documentContentBase64 || '',
+    extracted_text: payload.extracted_text || payload.extractedText || '',
+    survey_number: payload.survey_number || payload.surveyNumber || '',
+    village: payload.village || '',
+    district: payload.district || '',
+    ...(payload.area_acres !== undefined || payload.areaAcres !== undefined
+      ? { area_acres: payload.area_acres ?? payload.areaAcres }
+      : {}),
+    ...(payload.area_hectares !== undefined || payload.areaHectares !== undefined
+      ? { area_hectares: payload.area_hectares ?? payload.areaHectares }
+      : {}),
+    ...(payload.path ? { path: payload.path } : {}),
+    ...(payload.fpo_id || payload.fpoId ? { fpo_id: payload.fpo_id || payload.fpoId } : {}),
+    ...(payload.farm_id || payload.farmId ? { farm_id: payload.farm_id || payload.farmId } : {}),
+    ...(payload.geojson ? { geojson: payload.geojson } : {}),
+    ...(payload.aadhaar ? { aadhaar: payload.aadhaar } : {}),
+    confirm_polygon: Boolean(payload.confirm_polygon ?? payload.confirmPolygon),
+    pahani_file: payload.pahani_file || payload.pahaniFile || '',
+    document_content_type: payload.document_content_type || payload.documentContentType || 'image/jpeg',
+  };
+  return post(`${PY}/verify-land`, body);
 }
 
 export async function getKycStatus(phone) {
   return get(`${PY}/kyc/status/${encodeURIComponent(phone)}`);
 }
 
+export async function autoDrawPolygon(payload = {}) {
+  const body = {
+    ...(payload.survey_number || payload.surveyNumber ? { survey_number: payload.survey_number || payload.surveyNumber } : {}),
+    ...(payload.village ? { village: payload.village } : {}),
+    ...(payload.district ? { district: payload.district } : {}),
+    ...(payload.state ? { state: payload.state } : {}),
+    ...(payload.area_hectares !== undefined || payload.areaHectares !== undefined
+      ? { area_hectares: payload.area_hectares ?? payload.areaHectares }
+      : {}),
+  };
+  return post(`${PY}/auto-draw`, body);
+}
+
+export async function checkFarmland(geojson) {
+  return post(`${PY}/check-farmland`, { geojson });
+}
+
 // ── Farms & satellite (GEE + ML) ──
 
 export async function analyzeFarm(geojson, farmName, cropType, irrigation) {
+  let normalizedGeojson = geojson;
+  if (geojson && geojson.type === 'Polygon') {
+    normalizedGeojson = { type: 'Feature', geometry: geojson };
+  } else if (geojson && geojson.type === 'FeatureCollection' && Array.isArray(geojson.features) && geojson.features.length > 0) {
+    normalizedGeojson = geojson.features[0];
+  }
   return post(`${PY}/analyze`, {
-    geojson,
-    farm_name: farmName,
-    crop_type: cropType,
-    irrigation,
+    geojson: normalizedGeojson,
+    farm_name: farmName || 'My Farm',
+    crop_type: cropType || 'Mixed Crop',
+    irrigation: irrigation || 'Drip',
   });
 }
 
@@ -280,20 +363,53 @@ export async function getMarketplaceListings(params = {}) {
   return get(`${PY}/marketplace/listings${qs ? `?${qs}` : ''}`);
 }
 
-export async function createMarketplaceListing(payload) {
-  return post(`${PY}/marketplace/listings`, payload);
+export async function createMarketplaceListing(payload = {}) {
+  const body = {
+    price_per_credit: Number(payload.price_per_credit ?? payload.pricePerCredit ?? 520),
+    ...(payload.carbon_credits !== undefined || payload.carbonCredits !== undefined
+      ? { carbon_credits: Number(payload.carbon_credits ?? payload.carbonCredits) }
+      : {}),
+    ...(payload.biodiversity_credits !== undefined || payload.biodiversityCredits !== undefined
+      ? { biodiversity_credits: Number(payload.biodiversity_credits ?? payload.biodiversityCredits) }
+      : {}),
+    ...(payload.credits !== undefined ? { credits: Number(payload.credits) } : {}),
+    ...(payload.farm_id || payload.farmId ? { farm_id: payload.farm_id || payload.farmId } : {}),
+    ...(payload.crop !== undefined ? { crop: payload.crop } : {}),
+    ...(payload.token_id || payload.tokenId ? { token_id: payload.token_id || payload.tokenId } : {}),
+    ...(payload.tx_hash || payload.txHash ? { tx_hash: payload.tx_hash || payload.txHash } : {}),
+  };
+  return post(`${PY}/marketplace/listings`, body);
 }
 
 export async function placeListingBid(listingId, bidAmount, bidderName) {
-  return post(`${PY}/marketplace/listings/${encodeURIComponent(listingId)}/bid`, { bid_amount: bidAmount, bidder_name: bidderName });
+  const body = {
+    bid_amount: Number(bidAmount),
+    ...(bidderName ? { bidder_name: bidderName } : {}),
+  };
+  return post(`${PY}/marketplace/listings/${encodeURIComponent(listingId)}/bid`, body);
 }
 
-export async function buyCredits(payload) {
-  return post(`${PY}/marketplace/buy`, payload);
+export async function buyCredits(payload = {}) {
+  const body = {
+    listing_id: payload.listing_id || payload.listingId,
+    credits: Number(payload.credits),
+    ...(payload.unit_price !== undefined || payload.unitPrice !== undefined
+      ? { unit_price: Number(payload.unit_price ?? payload.unitPrice) }
+      : {}),
+    ...(payload.buyer_name || payload.buyerName
+      ? { buyer_name: payload.buyer_name || payload.buyerName }
+      : {}),
+  };
+  return post(`${PY}/marketplace/buy`, body);
 }
 
-export async function autoMatchCredits(targetVolume, priority = 'lowest_price') {
-  return post(`${PY}/marketplace/auto-match`, { target_volume: targetVolume, priority });
+export async function autoMatchCredits(targetVolume, priority = 'lowest_price', filters = null) {
+  const body = {
+    target_volume: Number(targetVolume),
+    priority: priority || 'lowest_price',
+    ...(filters ? { filters } : {}),
+  };
+  return post(`${PY}/marketplace/auto-match`, body);
 }
 
 // ── Certificates & wallet ──
@@ -306,6 +422,14 @@ export async function getCertificates() {
   return get(`${PY}/certificates`);
 }
 
+export async function getCertificate(certId) {
+  return get(`${PY}/certificates/${encodeURIComponent(certId)}`);
+}
+
+export function getCertificatePdfUrl(certId) {
+  return `${PY}/certificates/${encodeURIComponent(certId)}/pdf`;
+}
+
 export async function retireCertificate(certId, scope) {
   const qs = scope ? `?scope=${encodeURIComponent(scope)}` : '';
   return post(`${PY}/certificates/${encodeURIComponent(certId)}/retire${qs}`, {});
@@ -313,8 +437,26 @@ export async function retireCertificate(certId, scope) {
 
 // ── Trust & transparency (split engine, hash ledger, earnings calculator) ──
 
-export async function calculateEarnings(payload) {
-  return post(`${PY}/farms/earnings-calculator`, payload);
+export async function calculateEarnings(payload = {}) {
+  const body = {
+    area_hectares: Number(payload.area_hectares ?? payload.areaHectares ?? 0),
+    ...(payload.crop !== undefined ? { crop: payload.crop } : {}),
+    ...(payload.ndvi !== undefined ? { ndvi: Number(payload.ndvi) } : {}),
+    ...(payload.baseline_ndvi !== undefined || payload.baselineNdvi !== undefined
+      ? { baseline_ndvi: Number(payload.baseline_ndvi ?? payload.baselineNdvi) }
+      : {}),
+    ...(payload.badge !== undefined ? { badge: payload.badge } : {}),
+    ...(payload.has_photo !== undefined || payload.hasPhoto !== undefined
+      ? { has_photo: Boolean(payload.has_photo ?? payload.hasPhoto) }
+      : {}),
+    ...(payload.geotag_ok !== undefined || payload.geotagOk !== undefined
+      ? { geotag_ok: Boolean(payload.geotag_ok ?? payload.geotagOk) }
+      : {}),
+    ...(payload.fpo_or_registry !== undefined || payload.fpoOrRegistry !== undefined
+      ? { fpo_or_registry: Boolean(payload.fpo_or_registry ?? payload.fpoOrRegistry) }
+      : {}),
+  };
+  return post(`${PY}/farms/earnings-calculator`, body);
 }
 
 export async function getFarmLedger(farmId) {
@@ -322,7 +464,8 @@ export async function getFarmLedger(farmId) {
 }
 
 export async function demoLogin(phone) {
-  return post(`${PY}/demo/login`, { phone });
+  const body = phone ? { phone } : {};
+  return post(`${PY}/demo/login`, body);
 }
 
 export async function runMonitoring() {
@@ -354,8 +497,18 @@ export async function uploadEvidencePhoto(farmId, file, { latitude, longitude, c
   });
 }
 
-export async function addEvidenceGeotag(farmId, payload) {
-  return post(`${PY}/farms/${encodeURIComponent(farmId)}/evidence/geotag`, payload);
+export async function addEvidenceGeotag(farmId, payload = {}) {
+  const body = {
+    latitude: Number(payload.latitude),
+    longitude: Number(payload.longitude),
+    ...(payload.accuracy_m !== undefined || payload.accuracyM !== undefined
+      ? { accuracy_m: Number(payload.accuracy_m ?? payload.accuracyM) }
+      : {}),
+    ...(payload.captured_at || payload.capturedAt
+      ? { captured_at: payload.captured_at || payload.capturedAt }
+      : {}),
+  };
+  return post(`${PY}/farms/${encodeURIComponent(farmId)}/evidence/geotag`, body);
 }
 
 export async function getFarmEvidence(farmId) {
@@ -372,16 +525,24 @@ export async function getPaymentsConfig() {
   return get(`${PY}/payments/config`);
 }
 
-export async function createCheckout(payload) {
-  return post(`${PY}/payments/checkout`, payload);
+export async function createCheckout(payload = {}) {
+  const body = {
+    listing_id: payload.listing_id || payload.listingId,
+    credits: Number(payload.credits),
+    ...(payload.buyer_name || payload.buyerName ? { buyer_name: payload.buyer_name || payload.buyerName } : {}),
+  };
+  return post(`${PY}/payments/checkout`, body);
 }
 
 // ── FPO ──
 
 export async function fpoLogin(registrationNo) {
   // FPO sign-in is registration_no -> OTP to the linked officer's phone;
-  // the password step no longer exists (see POST /fpo/login).
-  return post(`${PY}/fpo/login`, { registration_no: registrationNo });
+  // accepts string or object with registration_no/registrationNo
+  const reg = typeof registrationNo === 'object' && registrationNo !== null
+    ? registrationNo.registration_no || registrationNo.registrationNo
+    : registrationNo;
+  return post(`${PY}/fpo/login`, { registration_no: reg });
 }
 
 export async function getFpos() {
@@ -396,8 +557,34 @@ export async function getGroundTruthEval() {
   return get(`${PY}/ops/ground-truth/eval`);
 }
 
+export async function addGroundTruth(payload = {}) {
+  const body = {
+    source: payload.source || 'field_survey',
+    ...(payload.farm_id || payload.farmId ? { farm_id: payload.farm_id || payload.farmId } : {}),
+    ...(payload.latitude !== undefined ? { latitude: Number(payload.latitude) } : {}),
+    ...(payload.longitude !== undefined ? { longitude: Number(payload.longitude) } : {}),
+    ...(payload.measured_soc_tco2e_ha !== undefined || payload.measuredSocTco2eHa !== undefined
+      ? { measured_soc_tco2e_ha: Number(payload.measured_soc_tco2e_ha ?? payload.measuredSocTco2eHa) }
+      : {}),
+    ...(payload.measured_species_count !== undefined || payload.measuredSpeciesCount !== undefined
+      ? { measured_species_count: Number(payload.measured_species_count ?? payload.measuredSpeciesCount) }
+      : {}),
+    ...(payload.measured_at || payload.measuredAt ? { measured_at: payload.measured_at || payload.measuredAt } : {}),
+    ...(payload.notes ? { notes: payload.notes } : {}),
+  };
+  return post(`${PY}/ops/ground-truth`, body);
+}
+
+export async function calibrateCropFactors() {
+  return post(`${PY}/ops/ground-truth/calibrate`, {});
+}
+
 export async function getSystemHealth() {
   return get(`${PY}/health`);
+}
+
+export async function getFpoFarms(status = 'PENDING') {
+  return get(`${PY}/fpo/farms?status=${encodeURIComponent(status)}`);
 }
 
 export async function getFpoFarmers() {
@@ -412,16 +599,29 @@ export async function getFpoFlagged() {
   return get(`${PY}/fpo/flagged`);
 }
 
-export async function fpoOnboardFarmer(payload) {
-  return post(`${PY}/fpo/onboard`, payload);
+export async function fpoOnboardFarmer(payload = {}) {
+  const body = {
+    name: payload.name,
+    phone: payload.phone,
+    survey_number: payload.survey_number || payload.surveyNumber || '',
+    acreage: Number(payload.acreage),
+    mandal: payload.mandal,
+    village: payload.village,
+    ...(payload.geojson ? { geojson: payload.geojson } : {}),
+  };
+  return post(`${PY}/fpo/onboard`, body);
 }
 
 export async function fpoConfirmFarm(farmId) {
   return post(`${PY}/fpo/confirm/${encodeURIComponent(farmId)}`, {});
 }
 
-export async function fpoReviewFarm(farmId, payload) {
-  return post(`${PY}/fpo/review/${encodeURIComponent(farmId)}`, payload);
+export async function fpoReviewFarm(farmId, payload = {}) {
+  const body = {
+    action: payload.action,
+    notes: payload.notes || '',
+  };
+  return post(`${PY}/fpo/review/${encodeURIComponent(farmId)}`, body);
 }
 
 // ── Corporate ──

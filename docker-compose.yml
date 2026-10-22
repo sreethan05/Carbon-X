@@ -11,8 +11,6 @@ services:
     depends_on:
       backend-py:
         condition: service_healthy
-      backend-bc:
-        condition: service_healthy
     networks:
       - carbonx-network
 
@@ -29,10 +27,12 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY:-}
+      - CARBONX_ENVIRONMENT=${CARBONX_ENVIRONMENT:-development}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-}
       - GEE_PROJECT=${GEE_PROJECT:-carbonx-507617}
       - CORS_ORIGINS=http://localhost:5000,http://localhost:80,http://frontend:80
-      - CARBONX_ALLOW_DEV_OTP=${CARBONX_ALLOW_DEV_OTP:-1}
+      - CARBONX_ALLOW_DEV_OTP=${CARBONX_ALLOW_DEV_OTP:-0}
+      - CARBONX_ALLOW_SIMULATED_SETTLEMENT=${CARBONX_ALLOW_SIMULATED_SETTLEMENT:-0}
       - SARVAM_API_KEY=${SARVAM_API_KEY:-}
       - SARVAM_DEFAULT_LANGUAGE=${SARVAM_DEFAULT_LANGUAGE:-te-IN}
       - CARBONX_PAYMENTS_PROVIDER=${CARBONX_PAYMENTS_PROVIDER:-simulated}

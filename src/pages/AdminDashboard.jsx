@@ -336,8 +336,18 @@ export default function AdminDashboard() {
             <p className="text-xs text-slate-500 mt-0.5">Real pending and flagged farm records. Approve certifies the farm (FPO-attested badge); reject keeps it flagged with credits blocked.</p>
           </div>
 
+          {actionSuccess && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-3 rounded-lg text-xs font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>{actionSuccess}</span>
+            </div>
+          )}
+
           {actionError && (
-            <p className="text-xs text-rose-700 font-bold bg-rose-50 border border-rose-200 p-2.5 rounded-lg">{actionError}</p>
+            <div className="bg-rose-50 border border-rose-200 text-rose-700 p-3 rounded-lg text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-700 shrink-0" />
+              <span>{actionError}</span>
+            </div>
           )}
 
           {queueRows.length === 0 && !isLoading ? (
@@ -347,8 +357,8 @@ export default function AdminDashboard() {
               <p className="text-xs text-slate-500 mt-1">Pending enrollments and monitoring flags will appear here as they are raised.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="overflow-x-auto -mx-6 px-6 sm:mx-0 sm:px-0">
+              <table className="w-full text-left text-xs border-collapse min-w-[720px]">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-semibold uppercase tracking-wider">
                     <th className="py-3 px-4">Stage</th>
@@ -378,7 +388,21 @@ export default function AdminDashboard() {
                       </td>
                       <td className="py-3 px-4 text-slate-700">{row.village || '—'}</td>
                       <td className="py-3 px-4 text-slate-900 font-mono">{row.areaHa ?? row.area ?? '—'}</td>
-                      <td className="py-3 px-4 text-slate-700">{row.detail}</td>
+                      <td className="py-3 px-4 text-slate-700">
+                        <div className="space-y-1">
+                          <p className="font-medium text-slate-800">{row.detail}</p>
+                          {row.stage === 'FLAGGED' && (row.drop != null || row.ndvi != null) && (
+                            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                                Δ NDVI: {row.drop != null ? `-${Number(row.drop).toFixed(2)}` : '≥ 0.15'}
+                              </span>
+                              <span className="text-[10px] font-semibold text-rose-700">
+                                Sentinel-2 Alert (Drop ≥ 0.15)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-3 px-4 text-slate-500 font-mono">{row.date || '—'}</td>
                       <td className="py-3 px-4">
                         <div className="flex gap-2">
