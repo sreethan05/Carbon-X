@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Phone, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { sendLoginOtp, loginUser, demoLogin } from '../services/api';
+import { sendLoginOtp, loginUser, demoLogin, getSystemHealth } from '../services/api';
 
 export default function FarmerLogin() {
   const navigate = useNavigate();
@@ -17,6 +17,18 @@ export default function FarmerLogin() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [isDevOtp, setIsDevOtp] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSystemHealth()
+      .then((h) => {
+        if (!cancelled && h && h.database && h.database.ready === false) {
+          setDbOffline(true);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const inputRefs = useRef([]);
 
@@ -364,10 +376,10 @@ export default function FarmerLogin() {
               Don't have a farm registered?{' '}
               <button
                 type="button"
-                onClick={() => navigate('/farmer/land-verification')}
+                onClick={() => navigate('/farmer/register')}
                 className="text-primary font-bold hover:underline"
               >
-                Start Verification
+                Register as Farmer
               </button>
             </p>
           </div>
