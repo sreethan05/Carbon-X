@@ -11,6 +11,23 @@ CarbonX is an agri carbon + biodiversity credits marketplace. Farmers register v
 - `backend/src` + `blockchain/` (Node/Express + Solidity) — **legacy / roadmap only.** Not part of the credit flow: the live ledger is the SHA-256 hash chain, and on-chain settlement (Polygon/Amoy) is a production-roadmap item. Built by Docker CI, but not used by the app's verification or payout path.
 - Local schema SQL lives in `supabase/` (`01_sreethan_initial_schema.sql`, `02_hasini_merged_schema.sql`, `schema.sql`).
 
+## Docs index (orientation table)
+
+| Topic | Document |
+|---|---|
+| Product WHAT/WHY (PRD) | `docs/PRD.md` |
+| System design | `docs/ARCHITECTURE.md` |
+| Visual system / design tokens | `docs/DESIGN.md` |
+| Verification & test coverage | `docs/TEST_PLAN.md` |
+| Engineering rules (agents & humans) | `docs/RULES.md`; this file is the always-on rulebook |
+| Decision log (ADRs) | `docs/DECISIONS.md` |
+| Deferred work / roadmap | `docs/BACKLOG.md`, `docs/ROADMAP.md` |
+| Deploy & ops | `SETUP.md`, `docs/DEPLOYMENT.md`, `docs/OPS_TARGETS.md`, `docs/DR_RUNBOOK.md` |
+| Trust, validation, privacy | `docs/VALIDATION_PROTOCOL.md`, `docs/PRIVACY_DPIA.md`, `docs/CREDIT_LIFECYCLE.md`, `docs/PUBLIC_ACCESS.md` |
+| MRV, models, economics | `docs/MRV_METHODOLOGY.md`, `docs/MODEL_CARD.md`, `docs/IMPACT_MODEL.md`, `docs/ECONOMICS.md` |
+| Security | `SECURITY.md` (repo root), `docs/SECURITY_UPDATES.md` |
+| External reviews status (NOT obtained) | `docs/INDEPENDENT_REVIEW.md` |
+
 ## Supabase (source of truth: remote DB)
 
 **Supabase project — the remote DB is the source of truth.**
