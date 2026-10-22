@@ -71,8 +71,9 @@ export default function CorporateLogin() {
 
           <form onSubmit={handleCorporateLogin} className="space-y-4">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Corporate Name / Identifier (`name`)</label>
+              <label htmlFor="corporate-name" className="block text-xs font-bold text-slate-700 mb-1">Corporate Name / Identifier (`name`)</label>
               <input
+                id="corporate-name"
                 type="text"
                 required
                 placeholder="e.g. Telangana Sustainable Agro Pvt Ltd"
@@ -83,8 +84,9 @@ export default function CorporateLogin() {
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Corporate Password (`password`)</label>
+              <label htmlFor="corporate-password" className="block text-xs font-bold text-slate-700 mb-1">Corporate Password (`password`)</label>
               <input
+                id="corporate-password"
                 type="password"
                 required
                 placeholder="••••••••••••"

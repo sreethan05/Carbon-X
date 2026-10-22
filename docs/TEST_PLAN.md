@@ -76,8 +76,11 @@ CI also skips 2 live-Earth-Engine tests without GEE creds).
 
 ## Known gaps (honest)
 
-- The frontend has **no unit-test runner and no browser E2E suite** — only
-  lint + build + API contract coverage via backend tests. Adding Playwright
-  E2E is backlog item (see docs/BACKLOG.md).
 - Ground-truth validation eval returns an honest empty state until real field
   SOC samples exist (external dependency, not a test gap).
+- axe accessibility gating covers `/` and `/marketplace` (critical violations
+  only); other routes are scanned ad-hoc, not gated in CI yet.
+- The gated Playwright suite covers the public surfaces + demo corporate login.
+  The full farmer signup → scan → list → buy money journey is exercised by the
+  510-test backend suite and API integration tests; browser-canvas flows (Leaflet
+  farm mapping, satellite preview) remain manual-QA items on the checklist below.

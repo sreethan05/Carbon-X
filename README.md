@@ -54,7 +54,8 @@ checkout with instant simulated escrow or Razorpay webhooks, real-time WebSocket
 ledger streaming, hash ledger with public recompute, marketplace, conditional splits,
 instant-retirement certificates as downloadable PDFs, FPO verification desk,
 5-day monitoring, consent/export/erasure controls, public-access redaction,
-partial-sale/refund/dispute lifecycle, offline demo mode, ~499 backend tests, CI.
+partial-sale/refund/dispute lifecycle, offline demo mode, 510 backend tests +
+21 frontend unit tests + 6 E2E tests (incl. axe accessibility gates), CI.
 
 **Simulated & labelled:** payments (simulated provider default with instant CAS settlement;
 Razorpay webhook mode ready for live keys), UPI payout (rails simulated), land registry
@@ -117,11 +118,15 @@ model, and every surface shows what it is running on.
 ```powershell
 cd backend; python -m unittest discover tests   # 510 tests: split/ledger/credit/ML/evidence/payments/voice/privacy/lifecycle/support/journeys
 npm run lint && npm run build
+npm run test          # Vitest unit tests (frontend logic)
+npm run test:e2e      # Playwright E2E (boots backend demo + vite; 6 tests incl. axe scans)
 ```
 
-CI runs lint + build + the backend suite on every push
-(.github/workflows/ci.yml). A weekly report-only dependency audit runs in
-.github/workflows/security-audit.yml (triage per docs/SECURITY_UPDATES.md).
+CI runs lint + Vitest + build + the backend suite + the Playwright E2E job
+(real FastAPI demo backend + Vite proxy, browser journeys + accessibility
+gates) on every push (.github/workflows/ci.yml). A weekly report-only
+dependency audit runs in .github/workflows/security-audit.yml (triage per
+docs/SECURITY_UPDATES.md).
 
 ## Repository map
 

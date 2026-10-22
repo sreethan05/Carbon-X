@@ -363,9 +363,27 @@ claim limits and consent/privacy controls.
 npm run dev        # root app, port 5000
 npm run build      # vite build
 npm run lint       # eslint .
+npm run test       # Vitest unit tests (tests/unit/, 21 tests)
+npm run test:e2e   # Playwright E2E (e2e/, 6 tests; boots backend demo-mode + vite; CARBONX_SKIP_DOTENV=1 forces demo even with backend/.env present)
+cd backend; python -m unittest discover tests            # 510 backend tests (hermetic, 1 live-DB opt-in skip)
 cd backend; uvicorn app.main:app --reload --port 8000   # Python API
 python scripts/seed_marketplace_data.py                 # seed sample marketplace data
 ```
+
+## Frontend test story (added 2026-10-22)
+
+- **Vitest** (`vitest.config.js`, jsdom): pure-logic suite in `tests/unit/` —
+  API error-envelope normalization (NETWORK/UNAUTHORIZED event/422 details),
+  `combinedCredits`, marketplace query building, `cn()`, analytics mappers.
+- **Playwright** (`playwright.config.js`): boots the REAL backend in forced
+  demo mode (`CARBONX_SKIP_DOTENV=1` in `backend/app/main.py` — prevents a
+  developer's `backend/.env` from overriding injected vars) + Vite dev proxy,
+  walks landing/trust/marketplace/corporate-login journeys, and gates axe-core
+  `critical` violations on `/` and `/marketplace`.
+- CI (`.github/workflows/ci.yml`): `frontend` job = lint + Vitest + build on
+  Node 22 (Vitest 4 floor); new `e2e` job = uvicorn + vite via webServer
+  array, `npx playwright install --with-deps chromium`, report artifact on
+  failure. Known remaining gaps live in docs/TEST_PLAN.md.
 
 ## Running with credentials removed (verified 2026-10-04)
 
