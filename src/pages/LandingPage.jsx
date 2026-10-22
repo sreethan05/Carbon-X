@@ -229,7 +229,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-lg font-bold text-slate-900">Farmer Onboarding & Passport</h3>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Voice assistance onboarding in Telugu/English, land verification, satellite reality check, and direct UPI payout ledger.
+                Voice assistance onboarding in Telugu/English, land verification, satellite reality check, and 70/30 verified ledger splits.
               </p>
             </div>
             <button

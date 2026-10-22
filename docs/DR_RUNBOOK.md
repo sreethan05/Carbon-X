@@ -38,6 +38,47 @@ RTO target: 1 hour. RPO: Supabase PITR (see below) + daily ledger export.
 2. Redeploy backend service from `backend/` (Railway/Render auto-deploys on
    push; verify `/health`).
 
+### 4. Automated Backup Utility
+A complete snapshot of all remote Postgres tables, the local hash ledger, and
+on-disk evidence photos can be generated and verified at any time:
+```powershell
+# Create timestamped tar.gz in backups/
+python scripts/backup_data.py
+
+# Verify archive integrity and manifest
+python scripts/backup_data.py --verify backups/carbonx_backup_<timestamp>.tar.gz
+```
+Backups should be cron-scheduled daily or run prior to major schema migrations.
+
+## Webhook & Background Job Monitoring
+
+### 1. Payment Webhook Monitoring
+Razorpay webhooks are processed at `POST /payments/webhook` with HMAC-SHA256 signature verification.
+- **Log identifier**: `logger="carbonx.payments"`
+- **Critical alarm**: Any log line matching `PAYMENT CONFLICT — captured payment <pay_id> for order <order_id> could not be settled` indicates that a listing was purchased or modified concurrently after payment capture.
+- **Action**: The webhook handler logs conflict details and marks the order `conflict_refund_required`. Operations must issue a reversal via the Razorpay dashboard within 1 hour.
+- **Health indicator**: `GET /health` reports Razorpay payment provider status.
+
+### 2. 5-Day Monitoring Cycle
+- The background Sentinel-2 revisit monitor runs via `CARBONX_AUTO_MONITOR=1` in-process or externally via GitHub Actions (`.github/workflows/monitor.yml`).
+- If an Earth Engine query or database update fails, it logs `logger="carbonx.monitor"`.
+- Verify the latest monitoring cycle: `GET /passport/{farm_id}` inspects the `monitoring.last_revisit_at` and `monitoring.status` fields.
+
+## Incident Response Matrix & SLAs
+
+| Incident Type | Primary Lead | Contact / Desk | Target Response | Target Resolution | Escalation Path |
+|---|---|---|---|---|---|
+| **P0: Complete Outage** (App or DB down) | DevOps / Infrastructure Lead | `oncall@carbonx.ag` | < 15 minutes | < 1 hour (RTO) | CTO / Co-founder |
+| **P1: Payment / Checkout Dispute** (Failed capture, double charge) | Operations & Finance Desk | `payments@carbonx.ag` | < 1 hour | < 24 hours | Finance Lead |
+| **P1: Data Privacy Incident** (DPDP Act 2023 breach or leak) | Data Protection Officer (DPO) | `privacy@carbonx.ag` | < 2 hours | < 72 hours (statutory DPBI notice) | Legal Counsel / Board |
+| **P2: Degraded Satellite Scan** (Earth Engine quota / slow jobs) | ML & Remote Sensing Lead | `mrv@carbonx.ag` | < 4 hours | < 1 business day | Engineering Lead |
+
+### Privacy Incident Protocol (DPDP Act 2023)
+In the event of an unauthorized disclosure of farmer personal identifiable information (e.g. phone, full Aadhaar, or precise GPS):
+1. **Containment**: Immediately revoke compromised API tokens via `POST /logout` or Redis flush, and restrict public access to affected endpoints.
+2. **Impact Assessment**: Determine the exact scope of data principals affected within 24 hours.
+3. **Statutory Notification**: If personal data of farmers is breached, notify the Data Protection Board of India (DPBI) and the affected data principals in writing within 72 hours as mandated by DPDP Act 2023.
+
 ## Non-negotiables during an incident
 - Never hand-edit `ledger_events` rows to "fix" state — a tamper breaks the
   chain visibly by design. Correct forward with new events.

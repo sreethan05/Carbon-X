@@ -230,6 +230,22 @@ def get_profile(phone: str) -> Optional[ProfileRow]:
         return None
 
 
+def get_corporate_by_id(c_id: Any) -> Optional[dict]:
+    sb = _client()
+    if not sb or c_id is None:
+        return None
+    try:
+        c_str = str(c_id).strip()
+        if not re.match(r"^[0-9a-fA-F-]{32,36}$", c_str):
+            return None
+        res = sb.table("corporates").select("*").eq("c_id", c_str).limit(1).execute()
+        rows = res.data or []
+        return rows[0] if rows else None
+    except Exception as e:
+        logger.warning(f"get_corporate_by_id failed for {c_id}: {e}")
+        return None
+
+
 def upsert_profile(profile: dict) -> bool:
     sb = _client()
     if not sb or not profile:

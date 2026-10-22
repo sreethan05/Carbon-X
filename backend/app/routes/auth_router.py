@@ -1,5 +1,5 @@
 """Auth routes: phone OTP registration/login, JWT sessions, demo login."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict
 from typing import Literal, Optional
 from datetime import timedelta
@@ -10,6 +10,7 @@ from app.security import (
     create_access_token,
     decode_token,
     get_current_user,
+    revoke_token,
 )
 from app.phone_service import generate_otp, send_phone_otp
 from app import supabase_db as db
@@ -405,9 +406,21 @@ def fpo_login(data: FpoLoginModel):
 def demo_login(data: Optional[DemoLoginModel] = None):
     if db.is_ready():
         return {"success": False, "message": "Demo login is only available in demo mode (database not configured)"}
-    phone = _normalize_phone((data.phone if data else None) or "9000000001")
+    raw_phone = (data.phone if data else None) or "9000000001"
     from app import sample_data
-    farmer = sample_data.FARMERS.get(phone)
+    phone = raw_phone
+    farmer = None
+    if "*" in raw_phone:
+        clean_prefix = raw_phone.replace("*", "")[:3]
+        clean_suffix = raw_phone.replace("*", "")[-2:]
+        for p, f in sample_data.FARMERS.items():
+            if p.startswith(clean_prefix) and p.endswith(clean_suffix):
+                phone = p
+                farmer = f
+                break
+    else:
+        phone = _normalize_phone(raw_phone)
+        farmer = sample_data.FARMERS.get(phone)
     if not farmer:
         return {"success": False, "message": "Unknown demo farmer"}
     token = create_access_token({"phone": phone, "name": farmer["name"], "role": "farmer", "demo": True})
@@ -426,6 +439,18 @@ def demo_login(data: Optional[DemoLoginModel] = None):
         },
         "message": f"Demo session started for {farmer['name']}",
     }
+
+
+@router.post("/logout")
+def logout(authorization: Optional[str] = Header(None)):
+    """Revoke the current JWT bearer token immediately across all workers."""
+    if authorization and authorization.strip():
+        parts = authorization.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            tok = parts[1].strip()
+            if tok:
+                revoke_token(tok)
+    return {"success": True, "message": "Successfully logged out"}
 
 
 @router.get("/me")

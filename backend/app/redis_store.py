@@ -24,6 +24,7 @@ _client_checked_at = 0.0
 _memory_store: dict[str, tuple[str, float, int]] = {}
 _memory_locks: dict[str, float] = {}
 _shared_memory: dict[str, tuple[float, str]] = {}
+_revoked_memory: dict[str, float] = {}
 _SHARED_MEMORY_MAX = 10000
 
 
@@ -53,6 +54,7 @@ def reset_all_memory_stores() -> None:
         _memory_locks.clear()
         _memory_cache.clear()
         _shared_memory.clear()
+        _revoked_memory.clear()
 
 
 
@@ -222,6 +224,52 @@ def otp_send_rate_limited(
         hits.append(now)
         _send_memory[phone] = hits
         return False
+
+
+# ── Token Revocation & Blocklist ──────────────────────────────────────────
+_REVOCATION_PREFIX = "carbonx:revoked_token:"
+
+
+def revoke_token(token_signature: str, ttl_seconds: int = 86400) -> None:
+    """Revoke a token identifier (e.g. SHA-256 of token) for the remainder of its lifetime."""
+    if not token_signature:
+        return
+    client = _redis_client()
+    key = f"{_REVOCATION_PREFIX}{token_signature}"
+    if client is not None:
+        try:
+            client.set(key, "1", ex=max(1, int(ttl_seconds)))
+            return
+        except Exception as e:
+            _handle_disconnect(e)
+    with _state_lock:
+        now = time.time()
+        _revoked_memory[token_signature] = now + max(1, int(ttl_seconds))
+        if len(_revoked_memory) > 5000:
+            expired = [k for k, exp in _revoked_memory.items() if now >= exp]
+            for k in expired:
+                _revoked_memory.pop(k, None)
+
+
+def is_token_revoked(token_signature: str) -> bool:
+    """Check if a token identifier has been revoked."""
+    if not token_signature:
+        return False
+    client = _redis_client()
+    key = f"{_REVOCATION_PREFIX}{token_signature}"
+    if client is not None:
+        try:
+            return bool(client.exists(key))
+        except Exception as e:
+            _handle_disconnect(e)
+    with _state_lock:
+        exp = _revoked_memory.get(token_signature)
+        if exp is None:
+            return False
+        if time.time() >= exp:
+            _revoked_memory.pop(token_signature, None)
+            return False
+        return True
 
 
 # ── Cross-worker coordination ─────────────────────────────────────────────

@@ -41,7 +41,7 @@ from PIL import Image  # noqa: E402
 
 from app.routes import evidence_router  # noqa: E402
 from app.routes.evidence_router import router as evidence_api_router  # noqa: E402
-from app.security import get_current_user  # noqa: E402
+from app.security import get_current_user, get_current_user_optional  # noqa: E402
 from app.services import evidence_service as evidence  # noqa: E402
 from app import supabase_db as _db  # noqa: E402
 
@@ -195,7 +195,9 @@ class EvidenceApiTests(unittest.TestCase):
     def setUp(self):
         evidence.reset_memory()
         self.app.dependency_overrides[get_current_user] = lambda: {"phone": "9000000001", "role": "farmer"}
+        self.app.dependency_overrides[get_current_user_optional] = lambda: {"phone": "9000000001", "role": "farmer"}
         self.addCleanup(self.app.dependency_overrides.pop, get_current_user, None)
+        self.addCleanup(self.app.dependency_overrides.pop, get_current_user_optional, None)
 
     # ── Photo upload ──
 
@@ -483,6 +485,33 @@ class EvidenceApiTests(unittest.TestCase):
         self.assertEqual(fetch_res.status_code, 200)
         self.assertEqual(fetch_res.headers.get("content-type"), "image/jpeg")
         self.assertGreater(len(fetch_res.content), 0)
+
+    def test_get_evidence_photo_unauthorized_when_private(self):
+        r = post_photo(self.client, "farm-priv")
+        self.assertEqual(r.status_code, 200)
+        digest = r.json()["photo"]["sha256"]
+
+        # Caller is unauthenticated or a different user with no consent
+        self.app.dependency_overrides[get_current_user_optional] = lambda: None
+        try:
+            fetch_res = self.client.get(f"/farms/farm-priv/evidence/photo/{digest}")
+            self.assertEqual(fetch_res.status_code, 403)
+        finally:
+            self.app.dependency_overrides[get_current_user_optional] = lambda: {"phone": "9000000001", "role": "farmer"}
+
+    def test_get_evidence_photo_allowed_with_public_consent(self):
+        r = post_photo(self.client, "farm-pub", data={"public_consent": "true"})
+        self.assertEqual(r.status_code, 200)
+        digest = r.json()["photo"]["sha256"]
+
+        # Caller is unauthenticated, but photo has public consent
+        self.app.dependency_overrides[get_current_user_optional] = lambda: None
+        try:
+            fetch_res = self.client.get(f"/farms/farm-pub/evidence/photo/{digest}")
+            self.assertEqual(fetch_res.status_code, 200)
+            self.assertEqual(fetch_res.headers.get("content-type"), "image/jpeg")
+        finally:
+            self.app.dependency_overrides[get_current_user_optional] = lambda: {"phone": "9000000001", "role": "farmer"}
 
     def test_get_evidence_photo_not_found(self):
         r = self.client.get("/farms/farm-serve/evidence/photo/0123456789abcdef0123456789abcdef")

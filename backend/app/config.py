@@ -104,3 +104,39 @@ REDIS_URL = _env_str("REDIS_URL", "redis://localhost:6379/0")
 # ─── Blockchain / Amoy (optional) ───
 AMOY_RPC_URL = _env_str("AMOY_RPC_URL", "https://rpc-amoy.polygon.technology")
 AMOY_CHAIN_ID = _env_int("AMOY_CHAIN_ID", 80002)
+
+
+# ─── Production Invariant Enforcement ───
+def validate_production_configuration() -> None:
+    """Enforce strict production invariants; block process startup on insecure settings."""
+    if not IS_PRODUCTION:
+        return
+
+    # 1. JWT Secret Key
+    jwt_secret = os.getenv("JWT_SECRET_KEY", "").strip()
+    if not jwt_secret:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: JWT_SECRET_KEY must be set in production")
+    if len(jwt_secret) < 32:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: JWT_SECRET_KEY must be at least 32 characters long")
+    if jwt_secret.lower() in ("secret", "change_me", "development", "jwt_secret_key_here"):
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: JWT_SECRET_KEY is using an insecure placeholder")
+
+    # 2. Dev OTP setting
+    if _env_bool("CARBONX_ALLOW_DEV_OTP", False):
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CARBONX_ALLOW_DEV_OTP cannot be enabled in production")
+
+    # 3. Simulated settlement with live Razorpay
+    if PAYMENTS_PROVIDER == "razorpay" and ALLOW_SIMULATED_SETTLEMENT:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CARBONX_ALLOW_SIMULATED_SETTLEMENT cannot be enabled with live Razorpay")
+
+    # 4. Supabase DB configuration
+    sb_url = os.getenv("SUPABASE_URL", "").strip()
+    sb_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if not sb_url or not sb_key:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in production")
+
+    # 5. Wildcard CORS
+    origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
+    if "*" in origins:
+        raise RuntimeError("CRITICAL PRODUCTION CONFIG ERROR: CORS_ORIGINS cannot contain wildcard '*' in production")
+

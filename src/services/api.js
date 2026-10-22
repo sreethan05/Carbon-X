@@ -484,12 +484,14 @@ export async function getNdviHistory(farmId) {
 
 // ── Evidence capture (practice photos & geotags) ──
 
-export async function uploadEvidencePhoto(farmId, file, { latitude, longitude, capturedAt } = {}) {
+export async function uploadEvidencePhoto(farmId, file, { latitude, longitude, capturedAt, public_consent, publicConsent } = {}) {
   const form = new FormData();
   form.append('file', file);
   if (latitude !== undefined && latitude !== null && latitude !== '') form.append('latitude', latitude.toString());
   if (longitude !== undefined && longitude !== null && longitude !== '') form.append('longitude', longitude.toString());
   if (capturedAt) form.append('captured_at', capturedAt);
+  const consent = public_consent ?? publicConsent ?? false;
+  form.append('public_consent', consent ? 'true' : 'false');
   return request(`${PY}/farms/${encodeURIComponent(farmId)}/evidence/photo`, {
     method: 'POST',
     headers: authHeaders(),
