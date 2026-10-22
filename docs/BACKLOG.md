@@ -80,10 +80,12 @@ and the trigger for doing them. "Deferred" ≠ rejected.
   "derive during render" patterns, most inside data-loading effects).
   Plan: fix per-feature alongside the React 19 upgrade (#41); keep CI gated
   on 0 lint errors, not warnings.
-- #41 React 18→19 + react-leaflet v4→v5: react-leaflet 5 requires React 19
-  peers (dependabot PR #12). Recharts ^3.8 / framer-motion ^12 / lucide ^1.16
-  support 19; needs a full local lint+build+E2E pass before adopting; if
-  clean, supersedes #12 and closes the #40 warning sites.
+- #41 React 18→19 + react-leaflet v4→v5 — **DONE 2026-10-22** (feat/react-19):
+  react@19.3.1, react-dom@19.3.1, react-leaflet@5.0.0, matching @types. Local
+  gates: lint (0 errors), vite build, full Playwright suite (6/6 incl. both
+  axe gates and the corporate login journey). The only flake encountered was
+  Vite dev-server re-optimization churn right after the install (cleared
+  node_modules/.vite — one-time). Supersedes dependabot #12.
 - #42 ESLint 9→10 + @eslint/js 10 (dependabot #11/#13): BLOCKED by
   ecosystem — eslint-plugin-react latest still peers `^3…^9.7` (verified via
   npm view 2026-10-22); attempting lint under eslint 10 fails everywhere in
