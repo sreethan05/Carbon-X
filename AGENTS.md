@@ -345,11 +345,14 @@ startup blocks unless JWT secret (≥32 chars), Supabase service vars, managed
 explicit payment mode (`razorpay` + all credentials, or `simulated` with
 `CARBONX_ACCEPT_SIMULATED_PAYMENTS=1`) are set.
 
-**Migration `supabase/10_trust_controls.sql` is idempotent but NOT yet applied**
-(DDL not possible from this machine) — before any live production/pilot deploy:
-consent/privacy evidence tables + columns, monitor lifecycle columns, sale
-lifecycle columns, evidence/KYC deletion markers, `corporate_settings`
-(section 9) and `support_tickets` (section 10).
+**Migration `supabase/10_trust_controls.sql` APPLIED 2026-10-22** (run in the
+Supabase SQL editor; verified read-only via `scripts/verify_trust_migration.py`
+against the live PostgREST schema — 4 new tables consent_records /
+privacy_requests / corporate_settings / support_tickets + all altered-table
+columns present). Live deployments now persist consent evidence, privacy
+requests, sale/dispute lifecycle, evidence/KYC deletion markers, buyer targets
+and tickets on the DB; the backend's labelled in-memory fallbacks remain the
+degradation path only for no-DB demo mode.
 
 Honesty docs (all external items explicitly NOT-done): `docs/VALIDATION_PROTOCOL.md`,
 `docs/INDEPENDENT_REVIEW.md` (register of reviews NOT obtained),

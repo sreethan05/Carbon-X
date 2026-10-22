@@ -69,8 +69,10 @@ impact. Reports are handled under coordinated disclosure.
 
 ## Known external dependencies
 
-- `supabase/10_trust_controls.sql` must be applied by a human with SQL access
-  before a live pilot (see docs/DEPLOYMENT.md).
+- `supabase/10_trust_controls.sql` was applied to the live database
+  (2026-10-22, verified via `scripts/verify_trust_migration.py`); future
+  migrations must follow the same human-with-SQL-editor path (DDL is not
+  possible from agent/CI machines).
 - Third-party services (Textplate SMS, Razorpay, Sarvam AI, Google Earth
   Engine, Azure Document Intelligence) require their credentials to stay
   secret and their usage to respect their own security terms.

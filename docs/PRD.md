@@ -119,9 +119,11 @@ precise-launch targets here.
 ## 8. Constraints, risks, open questions
 
 - **Constraint:** RLS denies anon/authenticated on all tables; the backend uses
-  `service_role`. DDL for `supabase/10_trust_controls.sql` must be applied by a
-  human in the Supabase SQL editor before considering live pilots (backend
-  runs with labelled in-memory fallbacks until then).
+  `service_role`. DDL for `supabase/10_trust_controls.sql` was applied
+  2026-10-22 in the Supabase SQL editor (verified via
+  `scripts/verify_trust_migration.py`); future migrations follow the same
+  human-applied path, and the labelled in-memory fallbacks remain only for
+  no-DB demo mode.
 - **Risk:** carbon estimates are satellite/biomass proxies until ≥30 verified
   field samples exist (`proxy_unvalidated`) — mitigated by pre-registered
   thresholds, public labels and honest claims ([docs/VALIDATION_PROTOCOL.md](VALIDATION_PROTOCOL.md)).

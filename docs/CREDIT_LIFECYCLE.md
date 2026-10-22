@@ -1,7 +1,8 @@
 # Credit Lifecycle, Disputes and Refunds (v1.0)
 
-**Status:** implemented; migration `supabase/10_trust_controls.sql` must be
-applied before production use. Last updated: 2026-10-22.
+**Status:** implemented; migration `supabase/10_trust_controls.sql` applied
+2026-10-22 (verified via `scripts/verify_trust_migration.py`). Last updated:
+2026-10-22.
 
 The SHA-256 ledger is the money/audit source of truth. Listing rows are the
 mutable balance; ledger events are append-only and must agree with that balance.
@@ -125,7 +126,8 @@ certificates for staff.
 
 ## 11. Operational checklist before production
 
-- [ ] Apply `supabase/10_trust_controls.sql`.
+- [x] Apply `supabase/10_trust_controls.sql` (applied 2026-10-22, verified via
+      `scripts/verify_trust_migration.py`).
 - [ ] Run a multi-process lock test against the real Redis deployment.
 - [ ] Confirm ledger path is durable and backed up.
 - [ ] Confirm every settlement path writes SALE/SPLIT/RETIRE or SALE_FAILED.
