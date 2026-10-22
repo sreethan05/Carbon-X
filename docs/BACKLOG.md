@@ -36,3 +36,30 @@ and the trigger for doing them. "Deferred" ≠ rejected.
 - #21 → listings/fpos stale-while-revalidate in the service worker
 - #26 → elevation + habitat-heterogeneity + seasonal features added; retrain gated on quality
 - #30/#31/#32/#33/#34 → SMS language hook, Dependabot, k6 script, DR runbook, passport CSV export
+
+## Deferred with sources (2026-10-22 - CI-warning research)
+
+- #36 Migrate `starlette.testclient` to `httpx2` - Starlette >=1.2 deprecates
+  plain `httpx` in the test client and auto-uses `httpx2` (pydantic's next-gen
+  client) when installed; with only `httpx` installed the suite emits
+  `StarletteDeprecationWarning` (test-only, harmless - we pass either way).
+  Widely deferred by the ecosystem (e.g. PrefectHQ/fastmcp PR #4393: belongs to
+  a later ecosystem-wide move) because the WS test-transport behaviour changed
+  in some httpx2 versions (2.5.0; clean again at 2.7.0) - our WS ledger tests
+  must be re-verified under httpx2 before switching. Do: add `httpx2` to the
+  CI test-client slice and re-run the WebSocket tests; NOT a runtime dependency.
+- #37 Pin/refresh sklearn pickles - models in `backend/ml/models/` were pickled
+  with scikit-learn 1.6.1; CI serves them under 1.9.1 and logs
+  `InconsistentVersionWarning`. scikit-learn maintainers: pickles are only
+  guaranteed same-version (Lemaetre, scikit-learn ML list 2023-06: you should
+  be in an environment that has the same version as the pickle to be safe).
+  No correctness risk today - the serving layer's quality/features gates refuse
+  these models anyway and fall back to labelled heuristics - but the honest
+  fix is to pin `scikit-learn==1.6.*` in requirements OR re-pickle with the
+  serving version, not ship cross-version loads in production.
+- #38 docker/* actions Node20->Node24 - `docker/setup-buildx-action@v3` /
+  `docker/build-push-action@v5` still declare node20 (forced onto Node 24 by
+  the runner since 2026-06-16; Node 20 removed 2026-09-23 - runner warning
+  only). build-push-action v6 bundles a provenance/attestations default
+  change, so the bump needs individual verification of image metadata before
+  landing.
