@@ -444,6 +444,24 @@ def get_me(current_user: dict = Depends(get_current_user)):
         phone = current_user.get("phone") or "9000000001"
         from app import sample_data
         farmer = sample_data.FARMERS.get(phone) or {"name": current_user.get("name", "Demo Farmer")}
+        sample_farms = [
+            {
+                "id": f["key"],
+                "name": f["name"],
+                "owner_phone": phone,
+                "crop_type": f["crop"],
+                "area_hectares": f["area"],
+                "carbon_tonnes": f["carbon"],
+                "biodiversity_score": f["score"],
+                "total_credits": round(float(f["carbon"]) * 0.8 + float(f["score"]) * 0.02, 2),
+                "ndvi": f["ndvi"],
+                "evi": f["evi"],
+                "status": "Verified",
+                "badge": "REGISTRY",
+                "geojson": sample_data.farm_geojson(),
+            }
+            for f in sample_data.FARMS if f["phone"] == phone
+        ]
         return {
             "success": True,
             "user": {
@@ -455,8 +473,8 @@ def get_me(current_user: dict = Depends(get_current_user)):
                 "upi": farmer.get("upi"),
                 "demo": True,
             },
-            "farms": [],
-            "kyc": None,
+            "farms": sample_farms,
+            "kyc": {"status": "VERIFIED", "extracted_fields": {"badge": "REGISTRY"}},
         }
     phone = current_user.get("phone")
     if not phone:

@@ -413,7 +413,35 @@ export default function DetailedFarmAnalytics() {
           </button>
         </div>
 
-        {/* Carbon Passport Overview Card */}
+        {!loading && !passport && (
+          <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-10 text-center space-y-4">
+            <div className="w-16 h-16 bg-surface-sage border border-forest-200 rounded-full flex items-center justify-center mx-auto text-primary">
+              <MapPin className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold text-carbon-900">No Farm Parcel Found</h2>
+            <p className="text-sm text-agriText-muted max-w-md mx-auto">
+              {loadError || "You don't have a farm enrolled under this identifier yet. Complete satellite parcel enrollment to generate your MRV passport and live ledger."}
+            </p>
+            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+              <button
+                onClick={() => navigate('/farmer/land-verification')}
+                className="px-5 py-2.5 bg-primary text-white font-bold text-xs rounded-xl hover:bg-forest-800 transition-all shadow-sm"
+              >
+                Enroll New Parcel
+              </button>
+              <button
+                onClick={() => navigate('/farmer/dashboard')}
+                className="px-5 py-2.5 bg-surface-sage border border-forest-200 text-carbon-800 font-bold text-xs rounded-xl hover:bg-forest-100 transition-all"
+              >
+                Back to Dashboard
+              </button>
+            </div>
+          </div>
+        )}
+
+        {passport && (
+          <>
+            {/* Carbon Passport Overview Card */}
         <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-forest-100 pb-4">
             <div>
@@ -955,6 +983,8 @@ export default function DetailedFarmAnalytics() {
             </div>
           )}
         </div>
+        </>
+        )}
 
       </div>
     </div>

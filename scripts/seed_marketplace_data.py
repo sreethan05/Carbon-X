@@ -36,6 +36,15 @@ from app.sample_data import (  # noqa: E402
     materialize_listings,
 )
 
+FPO_ID = "a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d"
+FPO_REG_NO = "FPO-TG-001"
+FPO_NAME = "Khammam Farmer Producer Org"
+
+CORP_ID = "b6fecf68-1d5c-4bb9-bb52-609d055c097b"
+CORP_NAME = "Telangana Sustainable Agro Pvt Ltd"
+# bcrypt hash for "Corporate@2026"
+CORP_PASSWORD_HASH = "$2b$12$KkQ1bK0j8j/T8G1oG8vVtep67p/rF3hUqQj9/q.xN3qF3wT4kM0ye"
+
 # Own CarbonX project (sreethan05). Override with SUPABASE_PROJECT_REF env var.
 PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF", "ihyqhisxgdwxudnxksts")
 
@@ -57,18 +66,32 @@ def build_rest_client():
 
 
 def _profile_rows():
-    return [
-        {
+    rows = []
+    # 1. Platform Admin
+    rows.append({
+        "phone": "9000000000",
+        "name": "Platform Administrator",
+        "role": "admin",
+        "state": "Telangana",
+        "district": "Hyderabad",
+        "village": "Platform HQ",
+        "upi": "admin@carbonx",
+    })
+    # 2. Farmers and FPO officer
+    for phone, f in FARMERS.items():
+        is_officer = (phone == "9000000001")
+        is_member = (phone in ("9000000002", "9000000003", "9000000004"))
+        rows.append({
             "phone": phone,
-            "name": f["name"],
-            "role": "farmer",
+            "name": "Srinivas Rao (FPO Officer)" if is_officer else f["name"],
+            "role": "fpo" if is_officer else "farmer",
+            "fpo_id": FPO_ID if (is_officer or is_member) else None,
             "state": f["state"],
             "district": f["district"],
             "village": f["village"],
             "upi": f.get("upi", ""),
-        }
-        for phone, f in FARMERS.items()
-    ]
+        })
+    return rows
 
 
 def _farm_row(f):
@@ -98,9 +121,24 @@ def seed_via_rest() -> int:
     """Seed through the live DB. Returns number of newly inserted listings."""
     sb = build_rest_client()
 
+    # 0. Ensure FPO and Corporate Buyer
+    sb.table("fpos").upsert([{
+        "id": FPO_ID,
+        "name": FPO_NAME,
+        "registration_no": FPO_REG_NO,
+    }], on_conflict="registration_no").execute()
+    print(f"  [LIVE DB] FPO ensured ({FPO_REG_NO}: {FPO_NAME})")
+
+    sb.table("corporates").upsert([{
+        "c_id": CORP_ID,
+        "name": CORP_NAME,
+        "password_hash": CORP_PASSWORD_HASH,
+    }], on_conflict="c_id").execute()
+    print(f"  [LIVE DB] Corporate Buyer ensured ({CORP_NAME})")
+
     profiles = _profile_rows()
     sb.table("profiles").upsert(profiles, on_conflict="phone").execute()
-    print(f"  [LIVE DB] {len(profiles)} farmer profiles ensured (upsert on phone)")
+    print(f"  [LIVE DB] {len(profiles)} profiles ensured (Admin, FPO, and Farmers; upsert on phone)")
 
     farm_ids = {}
     for f in FARMS:
@@ -210,16 +248,32 @@ def sql(value):
 
 def seed_via_sql() -> int:
     """Seed through the Management API. Returns number of newly inserted listings."""
+    # 0. Ensure FPO and Corporate Buyer
+    run_sql(
+        f"insert into fpos (id, name, registration_no)\n"
+        f"values ({sql(FPO_ID)}, {sql(FPO_NAME)}, {sql(FPO_REG_NO)})\n"
+        f"on conflict (registration_no) do update set name = excluded.name"
+    )
+    print(f"  [FALLBACK] FPO ensured ({FPO_REG_NO}: {FPO_NAME})")
+
+    run_sql(
+        f"insert into corporates (c_id, name, password_hash)\n"
+        f"values ({sql(CORP_ID)}, {sql(CORP_NAME)}, {sql(CORP_PASSWORD_HASH)})\n"
+        f"on conflict (c_id) do update set password_hash = excluded.password_hash, name = excluded.name"
+    )
+    print(f"  [FALLBACK] Corporate Buyer ensured ({CORP_NAME})")
+
+    profiles = _profile_rows()
     values = ",\n  ".join(
-        "(" + ", ".join(sql(v) for v in (phone, f["name"], "farmer", f["state"], f["district"], f["village"], f.get("upi", ""))) + ")"
-        for phone, f in FARMERS.items()
+        "(" + ", ".join(sql(v) for v in (p["phone"], p["name"], p["role"], p["state"], p["district"], p["village"], p.get("upi", ""), p.get("fpo_id"))) + ")"
+        for p in profiles
     )
     rows = run_sql(
-        "insert into profiles (phone, name, role, state, district, village, upi)\nvalues\n  "
+        "insert into profiles (phone, name, role, state, district, village, upi, fpo_id)\nvalues\n  "
         + values
-        + "\non conflict (phone) do nothing\nreturning phone"
+        + "\non conflict (phone) do update set name = excluded.name, role = excluded.role, fpo_id = excluded.fpo_id\nreturning phone"
     )
-    print(f"  [FALLBACK] {len(FARMERS)} farmer profiles ensured ({len(rows)} newly inserted)")
+    print(f"  [FALLBACK] {len(profiles)} profiles ensured ({len(rows)} affected)")
 
     farm_ids = {}
     for f in FARMS:
