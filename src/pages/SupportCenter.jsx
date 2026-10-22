@@ -1,9 +1,12 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   PhoneCall, HelpCircle, ChevronDown, ChevronUp, Send, MessageSquare, User,
-  ChevronLeft, Shield, Mail, Clock, CheckCircle2, AlertTriangle, FileText, Lock
+  ChevronLeft, Shield, Mail, Clock, CheckCircle2, AlertTriangle, FileText, Lock,
+  Ticket
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { createSupportTicket, getMySupportTickets } from '../services/api';
 
 const FAQS = [
   {
@@ -78,8 +81,25 @@ const QUICK_REPLIES = [
   'What is NDVI?',
 ];
 
+const SUPPORT_CATEGORIES = [
+  { value: 'boundary', label: 'Farm boundary is wrong / cannot be corrected' },
+  { value: 'ownership', label: 'Land ownership match is wrong' },
+  { value: 'estimate', label: 'Dispute the carbon estimate' },
+  { value: 'payout', label: 'Payout amount or status issue' },
+  { value: 'privacy', label: 'Privacy / data request' },
+  { value: 'other', label: 'Something else' },
+];
+
+const TICKET_STATUS_STYLES = {
+  Open: 'bg-sky-50 text-sky-800 border-sky-200',
+  'In Review': 'bg-amber-50 text-amber-900 border-amber-200',
+  Resolved: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  Rejected: 'bg-rose-50 text-rose-800 border-rose-200',
+};
+
 export default function SupportCenter() {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [openFaq, setOpenFaq] = useState(0);
   const [messages, setMessages] = useState([
     { role: 'bot', text: 'Hello! I am CarbonX Support. How can I assist you with farm verification, satellite monitoring, or credit transparent settlement?' }
@@ -87,7 +107,47 @@ export default function SupportCenter() {
   const [input, setInput] = useState('');
   const chatEnd = useRef(null);
 
+  // Tracked support requests (Open → In Review → Resolved/Rejected).
+  const [tickets, setTickets] = useState([]);
+  const [ticketForm, setTicketForm] = useState({ category: 'boundary', title: '', detail: '', farm_id: '' });
+  const [ticketBusy, setTicketBusy] = useState(false);
+  const [ticketError, setTicketError] = useState('');
+  const [ticketInfo, setTicketInfo] = useState('');
+
+  const loadTickets = useCallback(async () => {
+    if (!isAuthenticated) {
+      setTickets([]);
+      return;
+    }
+    const res = await getMySupportTickets(50);
+    if (res?.success) setTickets(res.tickets || []);
+  }, [isAuthenticated]);
+
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => { loadTickets(); }, [loadTickets]);
+
+  const submitTicket = async (e) => {
+    e.preventDefault();
+    setTicketBusy(true);
+    setTicketError('');
+    setTicketInfo('');
+    const res = await createSupportTicket({
+      category: ticketForm.category,
+      title: ticketForm.title.trim(),
+      detail: ticketForm.detail.trim(),
+      farm_id: ticketForm.farm_id.trim() || undefined,
+    });
+    setTicketBusy(false);
+    if (res?.success) {
+      setTicketInfo(res.storage === 'live_db'
+        ? `Request ${res.ticket?.id?.slice(0, 8) || ''}… filed — staff will respond within the published SLA.`
+        : `Request filed in labelled demo storage (DB not configured) — status tracking works within this device session.`);
+      setTicketForm({ category: ticketForm.category, title: '', detail: '', farm_id: '' });
+      loadTickets();
+    } else {
+      setTicketError(res?.message || 'The request could not be filed. Please retry.');
+    }
+  };
 
   const send = (text) => {
     if (!text.trim()) return;
@@ -164,6 +224,121 @@ export default function SupportCenter() {
             {openFaq === i && <p className="px-4 pb-4 text-xs text-carbon-600 leading-relaxed bg-[#FAFCFA]">{faq.a}</p>}
           </div>
         ))}
+      </div>
+
+      {/* Tracked requests — farmers can file and follow resolution */}
+      <div className="bg-white rounded-2xl border border-forest-100 shadow-sm p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Ticket className="w-5 h-5 text-primary" />
+          <h2 className="text-sm font-bold text-carbon-900 font-manrope uppercase tracking-wider">
+            My Requests
+          </h2>
+          <span className="text-[10px] font-bold text-carbon-500">
+            {tickets.length ? `${tickets.length} tracked request${tickets.length === 1 ? '' : 's'}` : ''}
+          </span>
+        </div>
+        <p className="text-xs text-agriText-muted">
+          Report a wrong boundary, an ownership mismatch, a disputed estimate, a payout issue or a privacy
+          request. Requests are tracked to a written resolution — payouts are corrected via refund/ledger
+          events, never by editing history, and no money moves from this form.
+        </p>
+
+        {isAuthenticated ? (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <form onSubmit={submitTicket} className="rounded-xl border border-forest-100 bg-surface-sage/30 p-4 space-y-3">
+              <select
+                value={ticketForm.category}
+                onChange={(e) => setTicketForm(f => ({ ...f, category: e.target.value }))}
+                className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs font-semibold text-carbon-800"
+              >
+                {SUPPORT_CATEGORIES.map(c => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <input
+                value={ticketForm.title}
+                onChange={(e) => setTicketForm(f => ({ ...f, title: e.target.value }))}
+                maxLength={140}
+                required
+                placeholder="Short title (e.g. Boundary misses the south canal)"
+                className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
+              />
+              <textarea
+                value={ticketForm.detail}
+                onChange={(e) => setTicketForm(f => ({ ...f, detail: e.target.value }))}
+                maxLength={4000}
+                rows={3}
+                required
+                placeholder="Describe what is wrong, what should change, and when it started."
+                className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
+              />
+              <input
+                value={ticketForm.farm_id}
+                onChange={(e) => setTicketForm(f => ({ ...f, farm_id: e.target.value }))}
+                maxLength={120}
+                placeholder="Farm / parcel reference (optional)"
+                className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
+              />
+              {ticketError && <p className="text-[11px] font-semibold text-rose-700">{ticketError}</p>}
+              {ticketInfo && <p className="text-[11px] font-semibold text-emerald-800">{ticketInfo}</p>}
+              <button
+                type="submit"
+                disabled={ticketBusy}
+                className="w-full py-2.5 rounded-xl bg-[#0C2A18] hover:bg-[#15803D] text-white text-xs font-bold disabled:opacity-60"
+              >
+                {ticketBusy ? 'Filing…' : 'File request'}
+              </button>
+            </form>
+
+            <div className="space-y-2">
+              {tickets.length === 0 ? (
+                <div className="rounded-xl border border-forest-100 bg-surface-sage/30 p-4 text-xs text-carbon-600">
+                  No requests yet. Filed requests appear here with their status and the staff resolution.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {tickets.map(t => (
+                    <div key={t.id} className="rounded-xl border border-forest-100 p-3 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${TICKET_STATUS_STYLES[t.status] || 'bg-slate-50 text-slate-700 border-slate-200'}`}>
+                          {t.status}
+                        </span>
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-carbon-500">
+                          {t.category}
+                        </span>
+                        <span className="ml-auto text-[10px] font-mono text-carbon-400">
+                          {String(t.id || '').slice(0, 8)}
+                        </span>
+                      </div>
+                      <p className="text-xs font-bold text-carbon-900">{t.title}</p>
+                      <p className="text-[11px] text-carbon-700 leading-snug">{t.detail}</p>
+                      {t.resolution && (
+                        <p className="text-[11px] text-emerald-900 bg-emerald-50 border border-emerald-100 rounded-lg px-2 py-1">
+                          <strong>Resolution:</strong> {t.resolution}
+                        </p>
+                      )}
+                      {t.staff_notes && !t.resolution && (
+                        <p className="text-[11px] text-carbon-600">
+                          <strong>Staff note:</strong> {t.staff_notes}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-carbon-400">
+                        Filed {String(t.created_at || '').slice(0, 10)}{t.updated_at && t.updated_at !== t.created_at ? ` · updated ${String(t.updated_at).slice(0, 10)}` : ''}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => navigate('/farmer/login')}
+            className="px-4 py-2 rounded-xl bg-[#0C2A18] text-white text-xs font-bold hover:bg-[#15803D]"
+          >
+            Sign in to file a request
+          </button>
+        )}
       </div>
 
       {/* Support & Helpdesk Contact Details */}

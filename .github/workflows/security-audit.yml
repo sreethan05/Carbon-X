@@ -1,0 +1,59 @@
+name: Security audit (weekly)
+
+on:
+  schedule:
+    # Mondays, 02:40 UTC — off-hours for the weekly update window.
+    - cron: "40 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+  frontend-audit:
+    name: npm audit report
+    runs-on: ubuntu-latest
+    continue-on-error: true  # report-only; urgent fixes are handled per docs/SECURITY_UPDATES.md
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: npm audit (high+)
+        run: npm audit --omit=dev --audit-level=high || true
+      - name: npm audit full report
+        run: npm audit --json > npm-audit.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit
+          path: npm-audit.json
+
+  backend-audit:
+    name: pip-audit report
+    runs-on: ubuntu-latest
+    continue-on-error: true  # report-only; urgent fixes are handled per docs/SECURITY_UPDATES.md
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install backend deps
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: pip-audit backend env
+        working-directory: backend
+        run: pip-audit --format json --output pip-audit.json || exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit
+          path: backend/pip-audit.json
+
+  dependabot-note:
+    name: Dependabot is enabled
+    runs-on: ubuntu-latest
+    steps:
+      - name: Surface current Dependabot config
+        run: |
+          test -f .github/dependabot.yml || echo "NOTE: .github/dependabot.yml missing"
+          cat .github/dependabot.yml 2>/dev/null | head -40
