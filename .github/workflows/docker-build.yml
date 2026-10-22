@@ -13,8 +13,8 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate production docker-compose.yml
         run: docker compose config
-      - name: Validate development docker-compose.dev.yml
-        run: docker compose -f docker-compose.dev.yml config
+      - name: Validate development overlay (merged with the base project)
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config
 
   build-images:
     name: Build Docker Images
