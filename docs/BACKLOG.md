@@ -73,3 +73,19 @@ and the trigger for doing them. "Deferred" ≠ rejected.
   job runs Vitest; new `e2e` job runs the whole browser suite on
   ubuntu (Node 22). TEST_PLAN gap note removed; residual gaps (non-critical
   axe rules, Leaflet canvas flows) listed in TEST_PLAN Known gaps.
+- #40 react-hooks v7 net-new rules (24 sites, 2026-10-22): the v7 upgrade
+  introduced `set-state-in-effect` (17 sites), `refs` (6) and `immutability`
+  (1). These stay at `warn` — reverting the rule would lose visibility;
+  promoting to `error` requires 24 behavioural refactors (React 19-era
+  "derive during render" patterns, most inside data-loading effects).
+  Plan: fix per-feature alongside the React 19 upgrade (#41); keep CI gated
+  on 0 lint errors, not warnings.
+- #41 React 18→19 + react-leaflet v4→v5: react-leaflet 5 requires React 19
+  peers (dependabot PR #12). Recharts ^3.8 / framer-motion ^12 / lucide ^1.16
+  support 19; needs a full local lint+build+E2E pass before adopting; if
+  clean, supersedes #12 and closes the #40 warning sites.
+- #42 ESLint 9→10 + @eslint/js 10 (dependabot #11/#13): BLOCKED by
+  ecosystem — eslint-plugin-react latest still peers `^3…^9.7` (verified via
+  npm view 2026-10-22); attempting lint under eslint 10 fails everywhere in
+  CI (`npm ci` peer conflicts). Revisit when eslint-plugin-react publishes
+  ^10 support.

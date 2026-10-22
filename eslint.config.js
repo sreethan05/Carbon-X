@@ -38,6 +38,11 @@ export default [
       'react/prop-types': 'off',
       'react/no-unescaped-entities': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
+      // react-hooks v7 rule upgrades net-new strict checks; refactor of the
+      // existing flows is tracked as BACKLOG #40 (docs/BACKLOG.md).
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/refs': 'warn',
+      'react-hooks/immutability': 'warn',
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^(React|_)' }],
       'react-refresh/only-export-components': [
         'warn',
