@@ -271,5 +271,9 @@ app.include_router(privacy_router)
 app.include_router(ops_privacy_router)
 app.include_router(fpo_router)
 app.include_router(corporate_router)
+
+# ── Public verification (no auth) — trust as marketing ──
+from app.routes.public_router import router as public_router
+app.include_router(public_router)
 app.include_router(support_router)
 app.include_router(voice_router)

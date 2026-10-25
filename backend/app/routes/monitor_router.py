@@ -76,11 +76,16 @@ def perform_monitoring_cycle(owner_phones: Optional[set[str]] = None, fpo_id: Op
             except Exception:
                 pass
             if current is None:
-                if farm.get("ndvi") is not None:
-                    current = float(farm["ndvi"])
-                else:
-                    unavailable.append({"farm_id": farm["id"], "name": farm.get("name"), "reason": "No NDVI observation available"})
-                    continue
+                # Enrollment NDVI is not a fresh observation. Reusing it here
+                # would make the monitoring pass look successful while
+                # silently comparing against stale data, so preserve the last
+                # monitor snapshot and report this farm as unavailable.
+                unavailable.append({
+                    "farm_id": farm["id"],
+                    "name": farm.get("name"),
+                    "reason": "No fresh live Sentinel-2 NDVI observation available",
+                })
+                continue
             last = farm.get("last_monitor_ndvi")
             drop = round(float(last) - current, 3) if last is not None else 0.0
             if last is not None and drop >= NDVI_DROP_ALERT:

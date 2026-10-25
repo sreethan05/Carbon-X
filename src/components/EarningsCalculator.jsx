@@ -134,8 +134,9 @@ export default function EarningsCalculator({ farm }) {
           />
         </div>
         <div>
-          <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Crop / practice</label>
+          <label htmlFor="ec-crop-practice" className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">Crop / practice</label>
           <select
+            id="ec-crop-practice"
             value={crop}
             onChange={e => setCrop(e.target.value)}
             className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-900 focus:outline-none"
@@ -144,7 +145,7 @@ export default function EarningsCalculator({ farm }) {
           </select>
         </div>
         <div className="md:col-span-2">
-          <label className="flex justify-between items-center text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">
+          <label htmlFor="ec-ndvi" className="flex justify-between items-center text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1">
             <span className="flex items-center gap-1.5">
               <span>Sentinel-2 NDVI</span>
               <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
@@ -154,6 +155,7 @@ export default function EarningsCalculator({ farm }) {
             <span className="text-emerald-800 font-mono text-xs">{Number(ndvi).toFixed(2)}</span>
           </label>
           <input
+            id="ec-ndvi"
             type="range"
             min="0.10"
             max="0.99"

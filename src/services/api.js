@@ -546,6 +546,10 @@ export async function demoLogin(phone) {
   return post(`${PY}/demo/login`, body);
 }
 
+export async function getPublicVerification(certId) {
+  return get(`${PY}/verify/${encodeURIComponent(certId)}`);
+}
+
 export async function runMonitoring() {
   return post(`${PY}/monitor/run`, {});
 }
@@ -715,7 +719,11 @@ export async function getCorporateSettings() {
 }
 
 export async function updateCorporateSettings(payload) {
-  return request(`${PY}/corporate/settings`, { method: 'PUT', body: payload });
+  return request(`${PY}/corporate/settings`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
 }
 
 // ── Support & grievance tickets ──
@@ -725,11 +733,11 @@ export async function createSupportTicket(payload) {
 }
 
 export async function getMySupportTickets(limit = 50) {
-  return request(`${PY}/support/tickets?limit=${limit}`);
+  return get(`${PY}/support/tickets?limit=${limit}`);
 }
 
 export async function getSupportStaffQueue(status = '', limit = 100) {
-  return request(`${PY}/support/staff/queue?status=${encodeURIComponent(status)}&limit=${limit}`);
+  return get(`${PY}/support/staff/queue?status=${encodeURIComponent(status)}&limit=${encodeURIComponent(limit)}`);
 }
 
 export async function updateSupportTicket(ticketId, payload) {

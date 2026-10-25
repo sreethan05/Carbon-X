@@ -182,6 +182,7 @@ export default function Layout({ children }) {
 
           {isAuthenticated && (
             <button
+              aria-label="Notifications"
               onClick={() => setShowNotifications(!showNotifications)}
               className="p-2 hover:bg-forest-50 rounded-xl text-carbon-700 transition-colors relative"
             >

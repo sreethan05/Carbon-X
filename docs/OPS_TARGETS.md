@@ -28,6 +28,11 @@ compare against, and they are intentionally not tuned after the fact.
 
 ## 2. Things that must alert (with their source of truth)
 
+Metric-source note: the current instrumentator exposition labels requests
+`handler="..."` and exposes `http_request_duration_seconds_*` series (with a
+`http_requests_total` counter when present). `scripts/alert_thresholds.py`
+reads either shape; the PromQL names below are the target stack's.
+
 | Signal | Source | Suggested threshold | Owner |
 |---|---|---|---|
 | API 5xx rate > 1% (5 min) | `carbonx_http_requests_total{code=~"5.."}` | page | DevOps lead |

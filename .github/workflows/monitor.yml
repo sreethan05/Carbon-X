@@ -1,4 +1,4 @@
-name: 5-day NDVI monitoring cycle
+name: 5-day NDVI monitoring + ops checks
 
 on:
   schedule:
@@ -26,3 +26,23 @@ jobs:
           cat response.json
           test "$code" = "200"
           grep -q '"success":[[:space:]]*true' response.json || { echo "Monitoring cycle failed"; exit 1; }
+
+  ops-check:
+    name: /metrics alert thresholds + DR restore drill
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Evaluate alert thresholds + run the DR drill against the deployed API
+        env:
+          OPS_BASE_URL: ${{ secrets.OPS_BASE_URL }}
+        run: |
+          if [ -z "$OPS_BASE_URL" ]; then
+            echo "OPS_BASE_URL secret not set — skipping ops checks (set it to https://<your-api> after deploy; scripts stay runnable locally)"
+            exit 0
+          fi
+          python scripts/alert_thresholds.py --base "$OPS_BASE_URL" --allow-db-off
+          echo "---"
+          python scripts/dr_restore_drill.py --base "$OPS_BASE_URL" --skip-backup

@@ -293,6 +293,7 @@ export default function LandingPage() {
             <button onClick={() => navigate('/role-selection')} className="hover:text-white transition-colors">Role Portal</button>
             <button onClick={() => navigate('/marketplace')} className="hover:text-white transition-colors">Marketplace</button>
             <button onClick={() => navigate('/fpo/dashboard')} className="hover:text-white transition-colors">FPO Desk</button>
+            <button onClick={() => navigate('/verify')} className="hover:text-white transition-colors">Verify a Certificate</button>
             <button onClick={() => navigate('/trust')} className="hover:text-white transition-colors">Trust &amp; Data</button>
           </div>
         </div>

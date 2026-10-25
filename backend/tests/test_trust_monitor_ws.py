@@ -194,6 +194,7 @@ class MonitorRouterTests(unittest.TestCase):
             # Farm 1: Drop = 0.65 - 0.45 = 0.20 >= 0.15 threshold -> Flagged + MONITOR event
             {
                 "id": "farm-drop-flagged",
+                "geojson": {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[79.0, 17.0], [79.01, 17.0], [79.01, 17.01], [79.0, 17.01], [79.0, 17.0]]]}},
                 "name": "Drought Impacted Parcel",
                 "ndvi": 0.45,
                 "status": "Active",
@@ -203,6 +204,7 @@ class MonitorRouterTests(unittest.TestCase):
             # Farm 2: Drop = 0.62 - 0.60 = 0.02 < 0.15 threshold -> Healthy
             {
                 "id": "farm-stable-healthy",
+                "geojson": {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[79.0, 17.0], [79.01, 17.0], [79.01, 17.01], [79.0, 17.01], [79.0, 17.0]]]}},
                 "name": "Healthy Agroforestry Parcel",
                 "ndvi": 0.60,
                 "status": "Active",
@@ -212,6 +214,7 @@ class MonitorRouterTests(unittest.TestCase):
             # Farm 3: Pending farm -> must be skipped
             {
                 "id": "farm-pending-skip",
+                "geojson": {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[79.0, 17.0], [79.01, 17.0], [79.01, 17.01], [79.0, 17.01], [79.0, 17.0]]]}},
                 "name": "Pending Verification Parcel",
                 "ndvi": 0.30,
                 "status": "Pending",
@@ -221,6 +224,7 @@ class MonitorRouterTests(unittest.TestCase):
             # Farm 4: Baseline first scan (last_monitor_ndvi is None) -> Healthy
             {
                 "id": "farm-first-baseline",
+                "geojson": {"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[79.0, 17.0], [79.01, 17.0], [79.01, 17.01], [79.0, 17.01], [79.0, 17.0]]]}},
                 "name": "Newly Registered Parcel",
                 "ndvi": 0.55,
                 "status": "Active",
@@ -256,7 +260,11 @@ class MonitorRouterTests(unittest.TestCase):
 
         mock_sb.table.side_effect = mock_table
 
-        with patch.object(_db, "is_ready", return_value=True), \
+        with patch("app.services.gee_service.get_ndvi_at_point",
+                     side_effect=[{"live_satellite": True, "ndvi": 0.45},
+                                 {"live_satellite": True, "ndvi": 0.60},
+                                 {"live_satellite": True, "ndvi": 0.55}]), \
+             patch.object(_db, "is_ready", return_value=True), \
              patch.object(_db, "_client", return_value=mock_sb), \
              patch.object(_ledger, "_sb", return_value=None):
 

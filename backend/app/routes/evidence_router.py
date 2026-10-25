@@ -82,12 +82,10 @@ def _authorize_farm(farm_id: str, current_user: dict) -> Optional[dict]:
     if farm.get("owner_phone") == phone:
         return farm
     if role == "fpo":
-        profile = db.get_profile(phone) if db.is_ready() else {}
-        user_fpo = (profile or {}).get("fpo_id")
-        farm_fpo = farm.get("fpo_id")
-        # Both sides must carry an FPO link and match.  Missing scope is not
-        # permission to cross FPO boundaries.
-        if not user_fpo or not farm_fpo or str(user_fpo) != str(farm_fpo):
+        from app.services.access_policy import is_fpo_for_farm
+        # Resolve the officer's FPO server-side and support legacy farm rows
+        # linked through the owner's profile. Missing scope fails closed.
+        if not is_fpo_for_farm(current_user, farm):
             raise HTTPException(status_code=403, detail="You can only attach evidence to your own or FPO-scoped farms")
         return farm
     raise HTTPException(status_code=403, detail="You can only attach evidence to your own farms")
@@ -138,8 +136,8 @@ def _caller_can_view_full(
     if farm and phone and farm.get("owner_phone") == phone:
         return True
     if role == "fpo" and farm and phone and db.is_ready():
-        profile = db.get_profile(phone) or {}
-        return bool(profile.get("fpo_id") and str(profile.get("fpo_id")) == str(farm.get("fpo_id")))
+        from app.services.access_policy import is_fpo_for_farm
+        return is_fpo_for_farm(current_user, farm)
     # Demo/offline mode has no farm table to prove ownership from.  The
     # uploader recorded on the evidence row is the only available proof, so
     # grant them full access to their own farm's evidence.

@@ -170,7 +170,7 @@ export default function SupportCenter() {
   return (
     <div className="pb-24 px-4 pt-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/dashboard')} className="p-2 rounded-xl bg-white border border-forest-100 text-carbon-600 hover:text-forest-800">
+        <button aria-label="Back to dashboard" onClick={() => navigate('/dashboard')} className="p-2 rounded-xl bg-white border border-forest-100 text-carbon-600 hover:text-forest-800">
           <ChevronLeft className="w-5 h-5" />
         </button>
         <div>
@@ -249,6 +249,7 @@ export default function SupportCenter() {
               <select
                 value={ticketForm.category}
                 onChange={(e) => setTicketForm(f => ({ ...f, category: e.target.value }))}
+                aria-label="Request category"
                 className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs font-semibold text-carbon-800"
               >
                 {SUPPORT_CATEGORIES.map(c => (
@@ -259,6 +260,7 @@ export default function SupportCenter() {
                 value={ticketForm.title}
                 onChange={(e) => setTicketForm(f => ({ ...f, title: e.target.value }))}
                 maxLength={140}
+                aria-label="Short title"
                 required
                 placeholder="Short title (e.g. Boundary misses the south canal)"
                 className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
@@ -268,6 +270,7 @@ export default function SupportCenter() {
                 onChange={(e) => setTicketForm(f => ({ ...f, detail: e.target.value }))}
                 maxLength={4000}
                 rows={3}
+                aria-label="Request details"
                 required
                 placeholder="Describe what is wrong, what should change, and when it started."
                 className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
@@ -276,6 +279,7 @@ export default function SupportCenter() {
                 value={ticketForm.farm_id}
                 onChange={(e) => setTicketForm(f => ({ ...f, farm_id: e.target.value }))}
                 maxLength={120}
+                aria-label="Farm or parcel reference"
                 placeholder="Farm / parcel reference (optional)"
                 className="w-full rounded-xl border border-forest-200 bg-white px-3 py-2 text-xs"
               />
@@ -422,11 +426,13 @@ export default function SupportCenter() {
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
+            aria-label="Ask the assistant"
             placeholder="Ask about farm mapping, credit calculations, 70% split floor, or hash ledger..."
             className="flex-1 min-w-0 p-2.5 bg-forest-50/50 border border-forest-100 rounded-xl text-xs focus:outline-none focus:border-forest-600 focus:bg-white text-carbon-900"
           />
           <button
             type="submit"
+            aria-label="Send question"
             className="p-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl transition-colors shadow-xs"
           >
             <Send size={16} />

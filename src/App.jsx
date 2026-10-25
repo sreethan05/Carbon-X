@@ -29,6 +29,7 @@ import CreateListing from './pages/CreateListing';
 import CorporateCreditAnalysis from './pages/CorporateCreditAnalysis';
 import CertificateRetirementPage from './pages/CertificateRetirementPage';
 import SupportCenter from './pages/SupportCenter';
+import VerifyPage from './pages/VerifyPage';
 import TrustCenter from './pages/TrustCenter';
 
 function ProtectedRoute({ children, roles }) {
@@ -63,6 +64,8 @@ export default function App() {
             <Routes>
               {/* Public Gateway & Role Routes */}
               <Route path="/" element={<LandingPage />} />
+              <Route path="/verify" element={<VerifyPage />} />
+              <Route path="/verify/:certId" element={<VerifyPage />} />
               <Route path="/role-selection" element={<RoleSelection />} />
 
               {/* Farmer Auth & Onboarding Routes */}
