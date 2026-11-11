@@ -1,36 +1,42 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import { LanguageProvider } from './context/LanguageContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 
-import LandingPage from './pages/LandingPage';
-import RoleSelection from './pages/RoleSelection';
-import FarmerRegister from './pages/FarmerRegister';
-import FarmerLogin from './pages/FarmerLogin';
-import WelcomeTutorial from './pages/WelcomeTutorial';
-import FarmMapRegistration from './pages/FarmMapRegistration';
-import FarmDetailsForm from './pages/FarmDetailsForm';
-import SatellitePreview from './pages/SatellitePreview';
-import SuccessScreen from './pages/SuccessScreen';
-import FarmOwnershipVerification from './pages/FarmOwnershipVerification';
-import VerificationSuccess from './pages/VerificationSuccess';
-import FarmerDashboard from './pages/FarmerDashboard';
-import DetailedFarmAnalytics from './pages/DetailedFarmAnalytics';
-import CarbonWallet from './pages/CarbonWallet';
-import FPODashboard from './pages/FPODashboard';
-import FPOLogin from './pages/FPOLogin';
-import AdminDashboard from './pages/AdminDashboard';
-import CorporateWelcome from './pages/CorporateWelcome';
-import CorporateLogin from './pages/CorporateLogin';
-import CorporateDashboard from './pages/CorporateDashboard';
-import Marketplace from './pages/Marketplace';
-import CreateListing from './pages/CreateListing';
-import CorporateCreditAnalysis from './pages/CorporateCreditAnalysis';
-import CertificateRetirementPage from './pages/CertificateRetirementPage';
-import SupportCenter from './pages/SupportCenter';
-import VerifyPage from './pages/VerifyPage';
-import TrustCenter from './pages/TrustCenter';
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const RoleSelection = lazy(() => import('./pages/RoleSelection'));
+const FarmerRegister = lazy(() => import('./pages/FarmerRegister'));
+const FarmerLogin = lazy(() => import('./pages/FarmerLogin'));
+const WelcomeTutorial = lazy(() => import('./pages/WelcomeTutorial'));
+const FarmMapRegistration = lazy(() => import('./pages/FarmMapRegistration'));
+const FarmDetailsForm = lazy(() => import('./pages/FarmDetailsForm'));
+const SatellitePreview = lazy(() => import('./pages/SatellitePreview'));
+const SuccessScreen = lazy(() => import('./pages/SuccessScreen'));
+const FarmOwnershipVerification = lazy(() => import('./pages/FarmOwnershipVerification'));
+const VerificationSuccess = lazy(() => import('./pages/VerificationSuccess'));
+const FarmerDashboard = lazy(() => import('./pages/FarmerDashboard'));
+const DetailedFarmAnalytics = lazy(() => import('./pages/DetailedFarmAnalytics'));
+const CarbonWallet = lazy(() => import('./pages/CarbonWallet'));
+const FPODashboard = lazy(() => import('./pages/FPODashboard'));
+const FPOLogin = lazy(() => import('./pages/FPOLogin'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const CorporateWelcome = lazy(() => import('./pages/CorporateWelcome'));
+const CorporateLogin = lazy(() => import('./pages/CorporateLogin'));
+const CorporateDashboard = lazy(() => import('./pages/CorporateDashboard'));
+const Marketplace = lazy(() => import('./pages/Marketplace'));
+const CreateListing = lazy(() => import('./pages/CreateListing'));
+const CorporateCreditAnalysis = lazy(() => import('./pages/CorporateCreditAnalysis'));
+const CertificateRetirementPage = lazy(() => import('./pages/CertificateRetirementPage'));
+const SupportCenter = lazy(() => import('./pages/SupportCenter'));
+const VerifyPage = lazy(() => import('./pages/VerifyPage'));
+const TrustCenter = lazy(() => import('./pages/TrustCenter'));
+
+const RouteFallback = () => (
+  <div className="min-h-[50vh] grid place-items-center text-sm text-slate-600" role="status">
+    Loading CarbonX…
+  </div>
+);
 
 function ProtectedRoute({ children, roles }) {
   const { isAuthenticated, role, loading } = useAuth();
@@ -61,6 +67,7 @@ export default function App() {
       <LanguageProvider>
         <Router>
           <Layout>
+            <Suspense fallback={<RouteFallback />}>
             <Routes>
               {/* Public Gateway & Role Routes */}
               <Route path="/" element={<LandingPage />} />
@@ -124,6 +131,7 @@ export default function App() {
               {/* Catch-all */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            </Suspense>
           </Layout>
         </Router>
       </LanguageProvider>

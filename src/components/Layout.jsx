@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  Home, Compass, ShoppingCart, Wallet, Menu, Bell, Globe, X, LogOut,
+  Home, Compass, ShoppingCart, Wallet, Menu, Bell, Globe, X, LogOut, Leaf,
   ShieldCheck, ClipboardList, BarChart3, Building2 } from 'lucide-react';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
@@ -98,8 +98,6 @@ export default function Layout({ children }) {
     return false;
   };
 
-  useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
-
   const goTo = (path) => { navigate(path); setSidebarOpen(false); };
   const handleLogout = () => { logout(); navigate('/farmer/login'); };
 
@@ -108,15 +106,15 @@ export default function Layout({ children }) {
     const Icon = item.icon;
     return (
       <button
-        key={item.path}
+        key={item.key || item.path}
         onClick={() => goTo(item.path)}
-        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+        className={`nav-item ${
           active
-            ? 'bg-forest-100 text-forest-900 shadow-sm'
-            : 'text-carbon-500 hover:bg-forest-50 hover:text-forest-800'
+            ? 'nav-item-active'
+            : ''
         }`}
       >
-        <Icon size={18} className={active ? 'text-forest-700' : 'text-carbon-400'} />
+        <span className="nav-item-icon"><Icon size={17} /></span>
         <span>{item.key ? t(item.key, item.name) : item.name}</span>
       </button>
     );
@@ -141,8 +139,8 @@ export default function Layout({ children }) {
   }
 
   return (
-    <div className="min-h-screen bg-warm-white flex flex-col">
-      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-forest-100/60 flex justify-between items-center px-4 py-3 shadow-sm">
+    <div className="app-shell">
+      <header className="app-header">
         <div className="flex items-center gap-3">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -150,12 +148,13 @@ export default function Layout({ children }) {
           >
             <Menu size={20} />
           </button>
-          <span
-            className="font-manrope font-extrabold text-lg text-forest-800 tracking-tight cursor-pointer"
+          <button
+            className="brand-lockup"
             onClick={() => navigate('/dashboard')}
           >
-            CarbonX
-          </span>
+            <span className="brand-mark"><Leaf size={17} /></span>
+            <span className="brand-wordmark">Carbon<span>X</span></span>
+          </button>
           {isAuthenticated && (
             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg uppercase tracking-wide ${roleMeta.classes}`}>
               {roleMeta.label}
@@ -229,7 +228,11 @@ export default function Layout({ children }) {
       )}
 
       <div className="flex flex-1">
-        <aside className="hidden md:flex flex-col w-56 bg-white border-r border-forest-100/60 p-4 sticky top-[57px] h-[calc(100vh-57px)]">
+        <aside className="app-sidebar hidden md:flex">
+          <div className="px-3 pb-3 mb-3 border-b border-white/10">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-300/70">Workspace</p>
+            <p className="mt-1 text-xs text-white/55">Evidence to impact</p>
+          </div>
           <nav className="flex-1 space-y-1">{renderNavItems()}</nav>
           {isAuthenticated && renderUserBlock()}
         </aside>
@@ -260,20 +263,20 @@ export default function Layout({ children }) {
           </>
         )}
 
-        <main className="flex-1 overflow-x-hidden pb-20 md:pb-0">
+        <main className="app-main">
           {children}
         </main>
       </div>
 
       {isAuthenticated && role === 'farmer' && <FarmerVoiceAssistant />}
 
-      <nav className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-xl border-t border-forest-100/50 py-2.5 px-4 flex justify-around items-center md:hidden shadow-lg">
+      <nav className="mobile-dock md:hidden">
         {navItems.slice(0, 5).map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
           return (
             <button
-              key={item.path}
+              key={item.key || item.path}
               onClick={() => navigate(item.path)}
               className="flex flex-col items-center justify-center gap-1 transition-all duration-200 flex-1"
             >

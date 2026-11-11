@@ -17,6 +17,10 @@ export default function FarmerLogin() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [isDevOtp, setIsDevOtp] = useState(false);
+  // Keep demo-mode state with the other hooks so the health check below never
+  // closes over a binding that has not been initialized yet.
+  const [dbOffline, setDbOffline] = useState(false);
+  const [isStartingDemo, setIsStartingDemo] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,8 +92,6 @@ export default function FarmerLogin() {
 
   // Demo-mode entry: lets the whole farmer loop be explored while the
   // database is unconfigured (login needs the DB to check the profile).
-  const [dbOffline, setDbOffline] = useState(false);
-  const [isStartingDemo, setIsStartingDemo] = useState(false);
   const handleDemoLogin = async () => {
     setError('');
     setIsStartingDemo(true);

@@ -351,9 +351,9 @@ export default function CorporateDashboard() {
                   </button>
                 </div>
               ) : (
-                certs.map((c) => (
+                certs.map((c, index) => (
                   <div
-                    key={c.id}
+                    key={`${c.id}-${c.escrow_ref || c.sale_seq || index}`}
                     onClick={() => navigate(`/buyer/certificates/${c.id}`)}
                     className="bg-[#F8FAF8] border border-slate-200 rounded-lg p-3 flex justify-between items-center hover:border-emerald-600 cursor-pointer transition-all"
                   >

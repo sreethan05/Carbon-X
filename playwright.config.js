@@ -1,4 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // E2E against the REAL app + REAL FastAPI backend in demo mode (no cloud creds
 // needed): uvicorn (:8000) + Vite dev server (:5000) whose /py-api proxy wiring
@@ -10,6 +12,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const FRONT_URL = 'http://127.0.0.1:5000';
 const API_URL = 'http://127.0.0.1:8000';
+const E2E_LEDGER_PATH = join(tmpdir(), `carbonx-e2e-ledger-${process.pid}-${Date.now()}.json`);
 
 const demoBackendEnv = {
   // Skip backend/.env re-loads so demo vars below win in every environment.
@@ -25,6 +28,8 @@ const demoBackendEnv = {
   CARBONX_ALLOW_DEV_OTP: '1',
   // Keep the 5-day NDVI scheduler out of browser tests.
   CARBONX_AUTO_MONITOR: '0',
+  // Browser purchases must never accumulate in the developer's demo ledger.
+  CARBONX_LEDGER_PATH: E2E_LEDGER_PATH,
   CARBONX_ENVIRONMENT: 'development',
   JWT_SECRET_KEY: 'e2e-only-secret-key-not-for-production-random-32chars',
 };

@@ -7,9 +7,11 @@
 
 ## Style
 
-Modern, premium, earthy-agri: calm **warm-white canvas**, generous whitespace,
-rounded-3xl "premium card" surfaces, subtle leaf-green gradients. Professional
-enough for corporate buyers, friendly enough for a farmer on a mid-range Android.
+Modern climate-intelligence workspace: a calm **warm-paper canvas** with a subtle
+technical grid, deep-forest navigation, emerald evidence accents, generous
+whitespace, and rounded premium surfaces. The authenticated shell intentionally
+feels operational and trustworthy while public pages remain welcoming. Motion is
+short and functional, with a complete reduced-motion fallback.
 
 ## Typography
 

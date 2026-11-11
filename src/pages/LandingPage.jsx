@@ -19,12 +19,12 @@ export default function LandingPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900">
+    <main className="public-site min-h-screen font-inter text-slate-900">
       {/* Full-width Organic Green Header */}
-      <header className="sticky top-0 z-50 bg-[#0C2A18] border-b border-emerald-900 text-white px-4 md:px-10 py-3.5 shadow-md">
+      <header className="public-header sticky top-0 z-50 text-white px-4 md:px-10 py-3.5">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
-            <div className="w-10 h-10 bg-[#15803D] border border-emerald-500 rounded-xl flex items-center justify-center text-white shadow-sm">
+            <div className="brand-mark w-10 h-10 text-emerald-950">
               <Leaf className="w-5 h-5" />
             </div>
             <div>
@@ -73,9 +73,9 @@ export default function LandingPage() {
       </header>
 
       {/* Hero Banner with authentic farmland imagery overlay */}
-      <section className="relative bg-gradient-to-br from-indigo-950 via-[#0C2A18] to-indigo-900 text-white py-20 px-4 md:px-10 overflow-hidden">
-        <div className="absolute inset-0 z-0 opacity-20 bg-[url('https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&q=80&w=1600')] bg-cover bg-center" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0C2A18]/85 via-[#0C2A18]/95 to-[#0C2A18]" />
+      <section className="public-hero relative text-white py-24 md:py-32 px-4 md:px-10 overflow-hidden">
+        <div className="hero-orbit hero-orbit-one" />
+        <div className="hero-orbit hero-orbit-two" />
 
         <div className="relative z-10 max-w-5xl mx-auto text-center pt-6">
           <div className="inline-flex items-center gap-2 bg-[#15803D]/80 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-semibold text-[#D1FAE5] mb-6 shadow-inner">
@@ -83,12 +83,12 @@ export default function LandingPage() {
             <span>Registry-Verified Parcels & Sentinel-2 Satellite MRV</span>
           </div>
 
-          <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight leading-tight mb-6 font-manrope">
+          <h1 className="text-4xl md:text-7xl font-extrabold tracking-[-0.055em] leading-[0.98] mb-7 font-manrope">
             <span className="text-white">Bridge Farmers to</span> <span className="text-emerald-300">Carbon Markets</span>
           </h1>
 
-          <p className="text-lg md:text-xl text-emerald-100 max-w-3xl mx-auto leading-relaxed mb-10">
-            Scientific land verification, automated satellite indexing, and direct wallet settlements.
+          <p className="text-base md:text-xl text-emerald-50/75 max-w-2xl mx-auto leading-relaxed mb-10">
+            Turn field evidence into trusted climate assets—with satellite MRV, transparent economics, and an audit trail buyers can verify.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 justify-center">

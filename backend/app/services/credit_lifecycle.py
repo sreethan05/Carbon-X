@@ -234,6 +234,26 @@ def derive_certificates(
                 "source": "legacy_row",
                 "on_chain": False,
             })
+    # A retry or an old demo ledger can contain the same immutable certificate
+    # event more than once.  Certificates are identified by id, so expose one
+    # canonical record instead of making every consumer render duplicates.
+    # Keep the earliest record (the original issuance) and retain an audit hint
+    # rather than silently discarding evidence that duplicate events existed.
+    unique_certificates: dict[str, dict] = {}
+    for cert in certificates:
+        cert_id = str(cert.get("id") or "").strip().upper()
+        if not cert_id:
+            continue
+        existing = unique_certificates.get(cert_id)
+        if existing is None:
+            cert["duplicate_event_count"] = 0
+            unique_certificates[cert_id] = cert
+        else:
+            existing["duplicate_event_count"] = int(
+                existing.get("duplicate_event_count") or 0
+            ) + 1
+
+    certificates = list(unique_certificates.values())
     certificates.sort(
         key=lambda c: (c.get("issued_date") or "", c.get("id") or ""), reverse=True
     )

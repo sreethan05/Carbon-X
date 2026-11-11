@@ -44,6 +44,10 @@ test.describe('public surfaces', () => {
 
 test.describe('corporate buyer journey (demo credentials, DB-off)', () => {
   test('sign in lands on the ESG desk for the demo corporate', async ({ page }) => {
+    const consoleErrors = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error') consoleErrors.push(message.text());
+    });
     await page.goto('/corporate/login');
     await expect(
       page.getByRole('heading', { name: 'Corporate Buyer Sign In' })
@@ -62,6 +66,7 @@ test.describe('corporate buyer journey (demo credentials, DB-off)', () => {
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
       'Telangana Sustainable Agro'
     );
+    expect(consoleErrors.filter((message) => /same key|unique key/i.test(message))).toEqual([]);
   });
 });
 
