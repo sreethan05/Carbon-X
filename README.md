@@ -22,6 +22,13 @@ credits** — because verification costs more than smallholder credits earn.
 CarbonX collapses verification from ₹2,000+ per soil test and 6–12-month
 audits to **≈₹29/farm/year**, monitored every 5 days by Sentinel-2.
 
+### Web and mobile clients
+
+- `src/` — React 19 + Vite responsive web application.
+- `mobile/` — Flutter Material 3 Android/iOS client using the same FastAPI
+  authentication, farms, marketplace, wallet and trust endpoints. See
+  [mobile/README.md](mobile/README.md) for SDK setup and API-base configuration.
+
 ## The five-flow trust pipeline
 
 1. **Register & Validate** — phone OTP, OCR of any land document (Aadhaar

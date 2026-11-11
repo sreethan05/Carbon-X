@@ -98,3 +98,13 @@ supabase/.temp/
 coverage/
 test-results/
 playwright-report/
+
+# Flutter mobile generated state and native build output
+mobile/.dart_tool/
+mobile/.flutter-plugins*
+mobile/.packages
+mobile/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/ios/Pods/
+mobile/ios/.symlinks/
