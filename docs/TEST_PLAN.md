@@ -14,6 +14,10 @@
 | Docker images | `docker compose build` (5 images) | Docker CI workflow |
 | Dependency audit (report-only) | npm audit + pip-audit | `security-audit.yml` weekly |
 
+The backend and Playwright jobs use Ubuntu 24.04. Neither suite invokes the
+Tesseract executable, so CI does not install it. The backend Docker image
+still provides it for document OCR.
+
 Harness note: local PowerShell exits 1 on stderr noise — judge the
 `Ran X tests … OK` line, not the exit code.
 

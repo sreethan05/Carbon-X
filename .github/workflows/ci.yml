@@ -24,7 +24,8 @@ jobs:
 
   e2e:
     name: E2E — Playwright (real backend, demo mode)
-    runs-on: ubuntu-latest
+    # Keep the browser job on a known Playwright-supported runner image.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -35,8 +36,6 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
       - name: Install backend dependencies
         working-directory: backend
         run: pip install -r requirements.txt
@@ -57,7 +56,7 @@ jobs:
 
   backend:
     name: Backend — tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       # Keep external services off during tests; the test suite is hermetic.
       SUPABASE_URL: ""
@@ -74,8 +73,6 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
       - name: Install dependencies
         working-directory: backend
         run: pip install -r requirements.txt
