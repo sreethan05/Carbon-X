@@ -42,7 +42,7 @@ export default function CorporateLogin() {
   };
 
   return (
-    <main className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
+    <main className="product-page auth-page min-h-screen font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
       <div className="max-w-md w-full space-y-6">
 
         {/* Corporate Auth Card */}

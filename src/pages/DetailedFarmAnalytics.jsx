@@ -383,7 +383,7 @@ export default function DetailedFarmAnalytics() {
   };
 
   return (
-    <div className="min-h-screen bg-surface font-inter text-agriText-main py-8 px-4 md:px-10">
+    <div className="product-page min-h-screen font-inter text-agriText-main py-8 px-4 md:px-10">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Page Header */}

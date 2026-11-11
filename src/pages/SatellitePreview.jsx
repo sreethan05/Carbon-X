@@ -184,7 +184,7 @@ export default function SatellitePreview() {
   const ndviColor = getNdviOverlayColor(result?.ndvi);
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 flex flex-col items-center justify-center p-4 md:p-8">
+    <div className="product-page min-h-screen font-inter text-slate-900 flex flex-col items-center justify-center p-4 md:p-8">
       <div className="max-w-3xl w-full space-y-6">
 
         {/* HUD Scanner Box */}

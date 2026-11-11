@@ -125,7 +125,7 @@ export default function FarmerDashboard() {
     currentPrice != null && currentFarm.credits > 0 ? Math.round(currentFarm.credits * currentPrice) : null;
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-8 px-4 md:px-10">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-8 px-4 md:px-10">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Top Profile Bar */}

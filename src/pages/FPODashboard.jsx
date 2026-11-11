@@ -354,7 +354,7 @@ export default function FPODashboard() {
   const flaggedCount = flaggedList.length;
 
   return (
-    <div className="min-h-screen bg-surface font-inter py-8 px-4 md:px-10 text-agriText-main">
+    <div className="product-page min-h-screen font-inter py-8 px-4 md:px-10 text-agriText-main">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Institutional Header */}

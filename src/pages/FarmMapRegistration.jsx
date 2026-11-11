@@ -140,7 +140,7 @@ export default function FarmMapRegistration() {
   };
 
   return (
-    <div className="min-h-screen bg-surface font-inter text-agriText-main flex flex-col">
+    <div className="product-page min-h-screen font-inter text-agriText-main flex flex-col">
 
       {/* Top Header Bar */}
       <div className="bg-white border-b border-forest-100 px-4 md:px-8 py-3.5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">

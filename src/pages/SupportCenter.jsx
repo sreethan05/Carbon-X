@@ -168,7 +168,7 @@ export default function SupportCenter() {
   };
 
   return (
-    <div className="pb-24 px-4 pt-6 max-w-5xl mx-auto space-y-6">
+    <div className="product-page pb-24 px-4 pt-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <button aria-label="Back to dashboard" onClick={() => navigate('/dashboard')} className="p-2 rounded-xl bg-white border border-forest-100 text-carbon-600 hover:text-forest-800">
           <ChevronLeft className="w-5 h-5" />

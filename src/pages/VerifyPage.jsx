@@ -35,7 +35,7 @@ export default function VerifyPage() {
     }
   };
 
-  useEffect(() => { if (certId) load(certId); // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (certId) load(certId);
   }, [certId]);
 
   const submit = (e) => {
@@ -51,7 +51,7 @@ export default function VerifyPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F6F5EE] font-inter text-slate-900">
+    <div className="product-page min-h-screen font-inter text-slate-900">
       {/* Header */}
       <div className="bg-[#0C2A18] text-white py-10 px-4 md:px-10">
         <div className="max-w-5xl mx-auto">

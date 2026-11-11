@@ -103,7 +103,7 @@ export default function WelcomeTutorial() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-10 px-4 flex flex-col items-center justify-center">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-10 px-4 flex flex-col items-center justify-center">
       <div className="max-w-md w-full space-y-6" role="region" aria-label="Welcome Onboarding Walkthrough">
 
         {/* Top Progress & Skip Controls */}

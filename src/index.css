@@ -164,6 +164,121 @@ input:focus, select:focus, textarea:focus {
   mask-image: linear-gradient(to bottom, black, transparent 88%);
 }
 
+/* Project-wide page and component language. This layer intentionally scopes
+   visual normalization to product routes so Leaflet and third-party widgets
+   retain their own layout contracts. */
+.product-page {
+  position: relative;
+  background: transparent !important;
+}
+
+.product-page::before {
+  content: '';
+  position: fixed;
+  inset: 57px 0 0 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 88% 8%, rgba(56,189,248,.06), transparent 22rem),
+    radial-gradient(circle at 12% 18%, rgba(16,185,129,.07), transparent 24rem);
+}
+
+.public-route-shell .product-page::before { inset: 0; }
+
+.product-page > .max-w-7xl,
+.product-page > .max-w-6xl,
+.product-page > .max-w-5xl,
+.product-page > .max-w-4xl,
+.product-page > .max-w-3xl,
+.product-page > .max-w-2xl {
+  animation: page-enter 380ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.product-page .bg-white.border,
+.product-page .premium-card {
+  border-color: rgba(6, 95, 70, 0.10) !important;
+  box-shadow: 0 1px 2px rgba(6,78,59,.025), 0 14px 36px rgba(6,78,59,.07);
+}
+
+.product-page .bg-white.border:hover {
+  border-color: rgba(16,185,129,.28) !important;
+}
+
+.product-page table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.product-page thead {
+  background: rgba(236, 253, 245, 0.72);
+}
+
+.product-page tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.product-page tbody tr:hover {
+  background: rgba(236, 253, 245, 0.48);
+}
+
+.product-page label {
+  letter-spacing: .01em;
+}
+
+.product-page input:not([type='checkbox']):not([type='radio']),
+.product-page select,
+.product-page textarea {
+  min-height: 42px;
+  border-radius: 12px;
+  background-color: rgba(255,255,255,.88) !important;
+  border-color: rgba(100,116,139,.2) !important;
+}
+
+.product-page textarea { min-height: 96px; }
+
+.product-page button {
+  transition: transform 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.product-page button:not(:disabled):active {
+  transform: translateY(1px) scale(.995);
+}
+
+.product-page [class*='bg-[#0C2A18]'],
+.product-page .bg-forest-800,
+.product-page .bg-forest-900 {
+  box-shadow: 0 8px 22px rgba(6,78,59,.18);
+}
+
+.auth-page {
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.auth-page::after {
+  content: '';
+  position: absolute;
+  width: 26rem;
+  height: 26rem;
+  right: -12rem;
+  bottom: -13rem;
+  z-index: -1;
+  border: 1px solid rgba(16,185,129,.18);
+  border-radius: 999px;
+  box-shadow: 0 0 0 70px rgba(16,185,129,.025), 0 0 0 140px rgba(16,185,129,.018);
+}
+
+@media (max-width: 767px) {
+  .product-page {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .product-page .bg-white.border {
+    border-radius: 18px;
+  }
+}
+
 .hero-orbit {
   position: absolute;
   z-index: -1;

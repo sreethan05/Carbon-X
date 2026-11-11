@@ -135,7 +135,7 @@ export default function Layout({ children }) {
   );
 
   if (isPublicPage) {
-    return <div className="min-h-screen bg-warm-white">{children}</div>;
+    return <div className="public-route-shell min-h-screen">{children}</div>;
   }
 
   return (

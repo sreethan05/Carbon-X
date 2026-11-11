@@ -17,14 +17,18 @@ export default function FPOLogin() {
   const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
-    let timer;
-    if (showOtp && countdown > 0) {
-      timer = setInterval(() => setCountdown((prev) => prev - 1), 1000);
-    } else if (countdown === 0) {
-      setCanResend(true);
-    }
+    if (!showOtp || canResend) return undefined;
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          setCanResend(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
     return () => clearInterval(timer);
-  }, [showOtp, countdown]);
+  }, [showOtp, canResend]);
 
   const handleSendOtp = async (e) => {
     e.preventDefault();
@@ -101,7 +105,7 @@ export default function FPOLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAF8] font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
+    <div className="product-page auth-page min-h-screen font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
       <div className="max-w-md w-full space-y-6">
 
         {/* FPO Auth Card */}

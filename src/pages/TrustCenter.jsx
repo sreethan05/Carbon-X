@@ -170,7 +170,7 @@ export default function TrustCenter() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+    <div className="product-page max-w-5xl mx-auto px-4 py-6 space-y-5">
       <header className="bg-gradient-to-br from-forest-900 to-carbon-900 text-white rounded-3xl p-6 sm:p-8 space-y-3">
         <div className="flex items-center gap-2 text-emerald-200 text-xs font-bold uppercase tracking-wider">
           <ShieldCheck size={16} /> Trust, evidence & data rights

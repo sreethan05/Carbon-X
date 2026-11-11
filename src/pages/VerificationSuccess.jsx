@@ -53,7 +53,7 @@ export default function VerificationSuccess() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
       <div className="max-w-xl w-full space-y-6">
 
         {/* Verification Card */}

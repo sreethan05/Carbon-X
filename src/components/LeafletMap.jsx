@@ -106,16 +106,16 @@ function AutoFitBounds({ points }) {
 
 function MapClickHandler({ readOnly, polygonMode, polygonPoints, setPolygonPoints, polygonClosed, setPolygonClosed, setPolygonMode, onComplete }) {
   const pointsRef = useRef(polygonPoints);
-  pointsRef.current = polygonPoints;
-
   const modeRef = useRef(polygonMode);
-  modeRef.current = polygonMode;
-
   const closedRef = useRef(polygonClosed);
-  closedRef.current = polygonClosed;
-
   const readOnlyRef = useRef(readOnly);
-  readOnlyRef.current = readOnly;
+
+  useEffect(() => {
+    pointsRef.current = polygonPoints;
+    modeRef.current = polygonMode;
+    closedRef.current = polygonClosed;
+    readOnlyRef.current = readOnly;
+  }, [polygonPoints, polygonMode, polygonClosed, readOnly]);
 
   useMapEvents({
     click(e) {

@@ -117,7 +117,7 @@ export default function AdminDashboard() {
   const metric = (value) => (value === null || value === undefined ? '—' : Number(value).toLocaleString('en-IN'));
 
   return (
-    <div className="min-h-screen bg-slate-50 font-inter text-slate-900 py-8 px-4 md:px-10">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-8 px-4 md:px-10">
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Header */}

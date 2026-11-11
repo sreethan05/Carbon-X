@@ -91,7 +91,7 @@ export default function FarmDetailsForm() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-inter text-slate-900 py-8 px-4 md:px-10">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-8 px-4 md:px-10">
       <div className="max-w-2xl mx-auto space-y-6">
 
         {/* Page Title */}

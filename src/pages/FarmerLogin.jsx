@@ -214,7 +214,7 @@ export default function FarmerLogin() {
   };
 
   return (
-    <div className="min-h-screen bg-surface font-inter text-agriText-main py-10 px-4 flex items-center justify-center">
+    <div className="product-page auth-page min-h-screen font-inter text-agriText-main py-10 px-4 flex items-center justify-center">
       <div className="max-w-md w-full space-y-6">
 
         {/* Auth Card */}

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Check, Loader2, Map, Mic, MicOff, Navigation, Pause, Play, Send, Volume2, X,
@@ -57,12 +57,7 @@ export default function FarmerVoiceAssistant() {
   const navigate = useNavigate();
   const { role, refreshUser } = useAuth();
   const { currentLang, changeLanguage } = useLanguage();
-  const [language, setLanguage] = useState(() => (currentLang === 'hi' ? 'hi-IN' : currentLang === 'en' ? 'en-IN' : 'te-IN'));
-
-  React.useEffect(() => {
-    const code = currentLang === 'hi' ? 'hi-IN' : currentLang === 'en' ? 'en-IN' : 'te-IN';
-    setLanguage(code);
-  }, [currentLang]);
+  const language = currentLang === 'hi' ? 'hi-IN' : currentLang === 'en' ? 'en-IN' : 'te-IN';
   const [sessionId, setSessionId] = useState(null);
   const [text, setText] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -73,6 +68,7 @@ export default function FarmerVoiceAssistant() {
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [hasAudio, setHasAudio] = useState(false);
   const recorderRef = useRef(null);
   const speechRecognitionRef = useRef(null);
   const chunksRef = useRef([]);
@@ -93,8 +89,10 @@ export default function FarmerVoiceAssistant() {
     if (data.audio_base64) {
       audioRef.current = new Audio(`data:${data.audio_mime_type || 'audio/wav'};base64,${data.audio_base64}`);
       audioRef.current.onended = () => setPlaying(false);
+      setHasAudio(true);
     } else {
       audioRef.current = null;
+      setHasAudio(false);
     }
   };
 
@@ -271,7 +269,6 @@ export default function FarmerVoiceAssistant() {
           value={language}
           onChange={(event) => {
             const nextVal = event.target.value;
-            setLanguage(nextVal);
             const short = nextVal.startsWith('hi') ? 'hi' : nextVal.startsWith('en') ? 'en' : 'te';
             changeLanguage(short);
           }}
@@ -330,7 +327,7 @@ export default function FarmerVoiceAssistant() {
               <div className="rounded-xl bg-white border border-forest-100 px-3 py-2">
                 <div className="flex items-start gap-2">
                   <p className="flex-1 text-xs text-carbon-800 leading-relaxed">{responseText}</p>
-                  {audioRef.current && (
+                  {hasAudio && (
                     <button
                       type="button"
                       onClick={playAudio}

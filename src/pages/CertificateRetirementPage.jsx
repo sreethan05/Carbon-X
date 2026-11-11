@@ -172,7 +172,7 @@ export default function CertificateRetirementPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 font-inter text-slate-900 py-10 px-4 md:px-10 flex flex-col items-center">
+    <div className="product-page min-h-screen font-inter text-slate-900 py-10 px-4 md:px-10 flex flex-col items-center">
       <div className="max-w-4xl w-full space-y-6">
 
         {/* Header Navigation */}
