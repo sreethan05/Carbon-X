@@ -4,28 +4,29 @@ Flutter Material 3 client for the existing CarbonX FastAPI backend.
 
 ## First-time platform setup
 
-Flutter is not installed on the machine where this source was created. After
-installing Flutter 3.24+ run this once from `mobile/`:
+The Android and iOS runners are included. With Flutter 3.44.0 on PATH, run
+these checks from `mobile/`:
 
 ```powershell
 .\setup.ps1
 ```
 
-The setup script generates version-matched Android/iOS runners, installs
-dependencies, formats the source, and runs `flutter analyze` plus `flutter test`.
+The setup script installs locked dependencies and runs `flutter analyze`
+and `flutter test`.
 
-The command generates native Android/iOS runners while retaining `lib/` and
-`pubspec.yaml`. Then run:
+For Android development, start the FastAPI backend and run:
 
 ```powershell
 # Android emulator (backend on the Windows host)
 flutter run --dart-define=CARBONX_API_BASE=http://10.0.2.2:8000
 
-# Physical phone on the same Wi-Fi: replace with the computer's LAN IP
+# Physical Android phone: bind FastAPI to the LAN and use the computer's IP.
 flutter run --dart-define=CARBONX_API_BASE=http://192.168.1.10:8000
 ```
 
-For a production build, use the deployed HTTPS backend URL:
+The Android debug runner allows local HTTP. Use HTTPS for release builds
+and configure your distribution signing before publishing. iOS builds
+require macOS and Xcode.
 
 ```powershell
 flutter build apk --release --dart-define=CARBONX_API_BASE=https://api.example.com

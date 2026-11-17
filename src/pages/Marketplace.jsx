@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, MapPin, ShoppingCart, CheckCircle2, ChevronRight, PlusCircle, Minus, Plus, X, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getMarketplaceListings, buyCredits, createCheckout } from '../services/api';
+import { getMarketplaceListings, createCheckout } from '../services/api';
+import { loadRazorpay } from '../services/razorpay';
 
 export default function Marketplace() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export default function Marketplace() {
   const [purchaseProof, setPurchaseProof] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
+  const checkoutInFlight = useRef(false);
 
   const [listings, setListings] = useState([]);
   const [dataSource, setDataSource] = useState('loading');
@@ -122,12 +124,13 @@ export default function Marketplace() {
   };
 
   const handleConfirmPurchase = async () => {
+    if (checkoutInFlight.current) return;
+    checkoutInFlight.current = true;
     setIsProcessing(true);
     setCheckoutError('');
     try {
       const maxAvail = parseFloat(checkoutModalItem.available);
       const qty = getQuantity(checkoutModalItem.id, checkoutModalItem.available);
-      const price = parseFloat(checkoutModalItem.price);
 
       if (!Number.isFinite(qty) || qty <= 0) {
         throw new Error('Requested volume must be at least 1 credit.');
@@ -148,22 +151,11 @@ export default function Marketplace() {
       });
 
       // Handle Razorpay live checkout if payment gateway is engaged
-      if (checkoutRes && checkoutRes.payment_required && checkoutRes.checkout?.key_id) {
-        if (!window.Razorpay) {
-          await new Promise((resolve, reject) => {
-            if (document.querySelector('script[src*="checkout.razorpay.com"]')) {
-              const checkInterval = setInterval(() => {
-                if (window.Razorpay) { clearInterval(checkInterval); resolve(); }
-              }, 100);
-              return;
-            }
-            const script = document.createElement('script');
-            script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-            script.onload = resolve;
-            script.onerror = () => reject(new Error('Failed to load Razorpay checkout SDK. Please verify your connection.'));
-            document.body.appendChild(script);
-          });
+      if (checkoutRes?.success && checkoutRes.payment_required) {
+        if (!checkoutRes.checkout?.key_id || !checkoutRes.checkout?.order_id) {
+          throw new Error('Checkout could not be confirmed. Check your certificates and payment status before retrying.');
         }
+        await loadRazorpay();
         const rzp = new window.Razorpay({
           key: checkoutRes.checkout.key_id,
           order_id: checkoutRes.checkout.order_id,
@@ -179,11 +171,13 @@ export default function Marketplace() {
               message: 'Payment authorized. CarbonX is waiting for the verified provider webhook before retiring credits and issuing the certificate.',
             });
             setIsProcessing(false);
+            checkoutInFlight.current = false;
             window.setTimeout(loadListings, 4000);
           },
           modal: {
             ondismiss: () => {
               setIsProcessing(false);
+              checkoutInFlight.current = false;
               setCheckoutError('Payment checkout window was closed before completion. You can retry payment when ready.');
             },
           },
@@ -193,8 +187,7 @@ export default function Marketplace() {
         rzp.on('payment.failed', (errResponse) => {
           const reason = errResponse?.error?.description || errResponse?.error?.reason || 'Transaction failed or was declined by bank.';
           const code = errResponse?.error?.code ? ` (${errResponse.error.code})` : '';
-          setCheckoutError(`Payment Failed: ${reason}${code}. Your account was not charged. Please retry or try another payment method.`);
-          setIsProcessing(false);
+          setCheckoutError(`Payment failed: ${reason}${code}. Check your payment status before trying again.`);
         });
         rzp.open();
         return;
@@ -202,30 +195,24 @@ export default function Marketplace() {
 
       // If simulated settlement or standard response
       const settlement = checkoutRes?.settlement || checkoutRes;
-      if (settlement && settlement.certificate_id) {
+      if (checkoutRes?.success && settlement?.certificate_id) {
         setIsProcessing(false);
-        setPurchaseProof(settlement);
+        checkoutInFlight.current = false;
+        setPurchaseProof({ ...settlement, simulated: checkoutRes.simulated === true });
         loadListings();
         return;
       }
 
-      // Fallback to legacy buyCredits if checkout endpoint returned an unexpected structure
-      const data = await buyCredits({
-        listing_id: checkoutModalItem.id,
-        credits: qty,
-        ...(Number.isFinite(price) ? { unit_price: price } : {}),
-        buyer_name: buyerName,
-      });
-      if (data && data.certificate_id) {
-        setIsProcessing(false);
-        setPurchaseProof(data);
-        loadListings();
-        return;
+      // An interrupted response can arrive after the server has settled.
+      // Never submit a second purchase automatically.
+      if (!checkoutRes || checkoutRes.success || !checkoutRes.status || checkoutRes.status >= 500) {
+        throw new Error('Checkout could not be confirmed. Check your certificates and payment status before retrying.');
       }
-      throw new Error((checkoutRes && (checkoutRes.message || checkoutRes.detail)) || (data && (data.message || data.detail)) || 'Purchase failed');
+      throw new Error(checkoutRes.message || 'Purchase failed');
     } catch (err) {
       setCheckoutError(err.message || 'Purchase could not be completed. Please try again.');
       setIsProcessing(false);
+      checkoutInFlight.current = false;
     }
   };
 
@@ -516,10 +503,10 @@ export default function Marketplace() {
         {/* Purchase Escrow Confirmation Modal */}
         {checkoutModalItem && (
           <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 max-w-md w-full space-y-4">
+            <div role="dialog" aria-labelledby="checkout-title" className="bg-white border border-slate-200 shadow-xl rounded-2xl p-6 max-w-md max-h-full overflow-y-auto w-full space-y-4">
               <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                <h3 className="text-base font-bold text-[#0F172A]">Confirm Credit Escrow Purchase</h3>
-                <button onClick={() => setCheckoutModalItem(null)} className="p-1 hover:bg-slate-100 rounded-lg">
+                <h3 id="checkout-title" className="text-base font-bold text-[#0F172A]">Confirm Credit Escrow Purchase</h3>
+                <button aria-label="Close checkout" disabled={isProcessing} onClick={() => setCheckoutModalItem(null)} className="p-1 hover:bg-slate-100 rounded-lg">
                   <X className="w-4 h-4 text-slate-500" />
                 </button>
               </div>
@@ -535,7 +522,11 @@ export default function Marketplace() {
                       ? <AlertTriangle className="w-8 h-8 text-amber-700 mx-auto" />
                       : <CheckCircle2 className="w-8 h-8 text-emerald-700 mx-auto" />}
                     <p className="font-bold text-sm">
-                      {purchaseProof.pending ? 'Payment authorized — settlement pending' : 'Purchase complete — credits retired'}
+                      {purchaseProof.pending
+                        ? 'Payment authorized — settlement pending'
+                        : purchaseProof.simulated
+                          ? 'Simulated purchase complete — credits retired'
+                          : 'Purchase complete — credits retired'}
                     </p>
                     <p className="text-[11px] text-slate-600">
                       {purchaseProof.pending
@@ -561,7 +552,9 @@ export default function Marketplace() {
                         </div>
                       ))}
                       <p className="text-[10px] text-slate-500 pt-1 border-t border-slate-100">
-                        Paid from escrow {purchaseProof.escrow_ref} — the farmer's 70% floor is guaranteed.
+                        {purchaseProof.simulated
+                          ? 'Simulated escrow. No money moved.'
+                          : 'Split recorded in the settlement ledger.'} The farmer share has a 70% floor.
                       </p>
                     </div>
                   )}
@@ -645,6 +638,7 @@ export default function Marketplace() {
 
                   <div className="flex gap-2">
                     <button
+                      disabled={isProcessing}
                       onClick={() => setCheckoutModalItem(null)}
                       className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-200"
                     >

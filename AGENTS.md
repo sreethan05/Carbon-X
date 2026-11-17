@@ -422,10 +422,9 @@ python scripts/seed_marketplace_data.py                 # seed sample marketplac
   fixed every axe finding (incl. serious contrast) to 0 on those routes.
 - CI (`.github/workflows/ci.yml`): `frontend` job = lint + Vitest + build on
   Node 22 (Vitest 4 floor); new `e2e` job = uvicorn + vite via webServer
-  array, `npx playwright install --with-deps chromium`, report artifact on
-  failure. Backend and E2E jobs use Ubuntu 24.04 and do not install the
-  Tesseract executable, which these suites do not invoke. Known remaining
-  gaps live in docs/TEST_PLAN.md.
+  array on Windows Server 2025, `npx playwright install chromium`, and a report
+  artifact on failure. The backend job uses Ubuntu 24.04. Neither suite invokes
+  Tesseract. Known remaining gaps live in docs/TEST_PLAN.md.
 
 ## Running with credentials removed (verified 2026-10-04)
 

@@ -17,6 +17,7 @@ const E2E_LEDGER_PATH = join(tmpdir(), `carbonx-e2e-ledger-${process.pid}-${Date
 const demoBackendEnv = {
   // Skip backend/.env re-loads so demo vars below win in every environment.
   CARBONX_SKIP_DOTENV: '1',
+  CARBONX_SKIP_GEE_INIT: '1',
   // Empty strings intentionally DEGRADE the backend to labelled demo mode —
   // the same honest-offline stance the unit/CI suites exercise.
   SUPABASE_URL: '',
@@ -25,6 +26,7 @@ const demoBackendEnv = {
   VITE_SUPABASE_URL: '',
   VITE_SUPABASE_ANON_KEY: '',
   CARBONX_PAYMENTS_PROVIDER: 'simulated',
+  REDIS_URL: '',
   CARBONX_ALLOW_DEV_OTP: '1',
   // Keep the 5-day NDVI scheduler out of browser tests.
   CARBONX_AUTO_MONITOR: '0',
@@ -45,6 +47,9 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
     baseURL: FRONT_URL,
+    // Lazy routes depend on app code and backend data, not remote font CSS.
+    // Block service workers so request interception is deterministic.
+    serviceWorkers: 'block',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
@@ -57,20 +62,20 @@ export default defineConfig({
   webServer: [
     {
       name: 'backend',
-      command: 'python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
+      command: 'python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log',
       cwd: 'backend',
       url: `${API_URL}/health`,
       env: { ...process.env, ...demoBackendEnv },
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 120_000,
-      stdout: 'ignore',
+      stdout: 'pipe',
       stderr: 'pipe',
     },
     {
       name: 'frontend',
       command: 'npx vite --host 127.0.0.1 --port 5000 --strictPort',
       url: FRONT_URL,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
       stdout: 'ignore',
       stderr: 'pipe',

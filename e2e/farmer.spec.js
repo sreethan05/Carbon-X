@@ -15,6 +15,10 @@ import AxeBuilder from '@axe-core/playwright';
 const DEMO_LOGIN_NOTE =
   'demo login requires the DB-off demo backend (see playwright.config.js)';
 
+test.beforeEach(async ({ context }) => {
+  await context.route(/^https:\/\/fonts\.(googleapis|gstatic)\.com\//, (route) => route.abort());
+});
+
 async function startDemoFarmerSession(request, page) {
   const res = await request.post('/py-api/demo/login', { data: {} });
   const session = await res.json();
@@ -37,7 +41,7 @@ async function startDemoFarmerSession(request, page) {
 
 test.describe('farmer demo session (demo credentials, DB-off)', () => {
   test('demo login opens the farmer dashboard', async ({ page }) => {
-    await page.goto('/farmer/login');
+    await page.goto('/farmer/login', { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
     await page
@@ -60,7 +64,7 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
     request,
   }) => {
     await startDemoFarmerSession(request, page);
-    await page.goto('/farm-map');
+    await page.goto('/farm-map', { waitUntil: 'domcontentloaded' });
 
     // The honest instruction and the disabled-gate are the guardrail: no
     // polygon, no proceeding to crop details / satellite scan.
@@ -78,7 +82,7 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
     request,
   }) => {
     await startDemoFarmerSession(request, page);
-    await page.goto('/farmer/dashboard');
+    await page.goto('/farmer/dashboard', { waitUntil: 'domcontentloaded' });
 
     await page.getByRole('button', { name: /Carbon Passport NDVI biomass/ }).click();
     // The dashboard may open the passport at /farmer/passport/:id or fall back
@@ -99,7 +103,7 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
     request,
   }) => {
     await startDemoFarmerSession(request, page);
-    await page.goto('/farmer/wallet');
+    await page.goto('/farmer/wallet', { waitUntil: 'domcontentloaded' });
 
     await expect(
       page.getByRole('heading', { level: 1 }).filter({ hasText: 'Farmer Carbon Wallet' })
@@ -120,7 +124,7 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
 
     // Drive the same demo-login flow a real farmer would (see test 1), then
     // file a grievance from the Support page and watch it land in My Requests.
-    await page.goto('/farmer/login');
+    await page.goto('/farmer/login', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: /Explore in Demo Mode/i }).click();
     await page.waitForURL('**/farmer/dashboard');
     await page.getByRole('button', { name: 'Support' }).click();
@@ -166,11 +170,8 @@ test.describe('accessibility (axe-core, farmer surfaces)', () => {
       request,
     }) => {
       await startDemoFarmerSession(request, page);
-      await page.goto(path);
-      // Same settle discipline as app.spec.js: domcontentloaded + settle,
-      // networkidle proved brittle on dev servers.
-      await page.waitForLoadState('domcontentloaded');
-      await page.waitForTimeout(2000);
+      await page.goto(path, { waitUntil: 'domcontentloaded' });
+      await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
       const axe = new AxeBuilder({ page });
       const results = await axe.analyze();
       const critical = results.violations.filter((v) => v.impact === 'critical');

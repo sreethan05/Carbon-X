@@ -14,9 +14,19 @@
 | Docker images | `docker compose build` (5 images) | Docker CI workflow |
 | Dependency audit (report-only) | npm audit + pip-audit | `security-audit.yml` weekly |
 
-The backend and Playwright jobs use Ubuntu 24.04. Neither suite invokes the
-Tesseract executable, so CI does not install it. The backend Docker image
-still provides it for document OCR.
+The backend suite runs on Ubuntu 24.04. The Playwright job runs on Windows
+Server 2025 and downloads Chromium directly, avoiding the Ubuntu package
+mirrors that failed during browser setup. The backend Docker image provides
+Tesseract for document OCR. These test suites do not invoke it.
+
+Browser checkout coverage includes the simulated sale and retirement
+certificate on a phone-width viewport, an interrupted response without a
+second purchase, and a partially completed bulk checkout. Live provider
+verification requires a separate Razorpay sandbox run.
+
+Flutter CI uses the locked dependencies and checks analysis and widgets.
+The mobile widget test covers OTP validation, sign-in, navigation, and
+sign-out with a fake backend.
 
 Harness note: local PowerShell exits 1 on stderr noise — judge the
 `Ran X tests … OK` line, not the exit code.

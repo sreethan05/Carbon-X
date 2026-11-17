@@ -24,8 +24,8 @@ jobs:
 
   e2e:
     name: E2E — Playwright (real backend, demo mode)
-    # Keep the browser job on a known Playwright-supported runner image.
-    runs-on: ubuntu-24.04
+    # Windows has Chromium's system libraries and avoids an apt mirror dependency.
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -42,7 +42,7 @@ jobs:
       - name: npm install
         run: npm ci
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
       # The Playwright config itself starts uvicorn (demo env, CARBONX_SKIP_DOTENV=1)
       # and the Vite dev server, so this exercises the real /py-api proxy path.
       - run: npm run test:e2e
@@ -59,6 +59,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       # Keep external services off during tests; the test suite is hermetic.
+      CARBONX_SKIP_DOTENV: "1"
+      CARBONX_SKIP_GEE_INIT: "1"
       SUPABASE_URL: ""
       SUPABASE_SERVICE_ROLE_KEY: ""
       VITE_SUPABASE_URL: ""
@@ -79,3 +81,19 @@ jobs:
       - name: Run test suite
         working-directory: backend
         run: python -m unittest discover tests -v
+
+  mobile:
+    name: Flutter — analysis and widget tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: '3.44.0'
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter analyze
+      - run: flutter test

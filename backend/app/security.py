@@ -72,6 +72,9 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
     to_encode.setdefault("iat", int(now.timestamp()))
+    # JWT timestamps have second precision. Keep sessions issued in the same
+    # second distinct so revoking one does not revoke another.
+    to_encode.setdefault("jti", secrets.token_urlsafe(24))
     to_encode["exp"] = now + (expires_delta or timedelta(hours=JWT_ACCESS_TOKEN_EXPIRE_HOURS))
     return jwt.encode(to_encode, _get_secret_key(), algorithm=ALGORITHM)
 

@@ -44,5 +44,6 @@ def init_earth_engine(project_id: Optional[str] = None) -> bool:
         return False
 
 
-# Attempt startup initialization with configured project
-init_earth_engine()
+# Demo browser tests must never contact Earth Engine using cached credentials.
+if os.getenv("CARBONX_SKIP_GEE_INIT") != "1":
+    init_earth_engine()

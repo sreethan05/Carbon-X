@@ -1,9 +1,46 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Sparkles, Layers, ArrowRight, ArrowLeft, CheckCircle2, Building, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import BadgePill from '../components/BadgePill';
 import { useAuth } from '../context/AuthContext';
-import { autoMatchCredits, buyCredits, createCheckout } from '../services/api';
+import { autoMatchCredits, createCheckout } from '../services/api';
+import { loadRazorpay } from '../services/razorpay';
+
+function openRazorpay(checkout, parcel, buyerName) {
+  return new Promise((resolve, reject) => {
+    const gateway = new window.Razorpay({
+      key: checkout.key_id,
+      order_id: checkout.order_id,
+      name: 'CarbonX Market',
+      description: `Bulk purchase: ${parcel.farm} (${parcel.credits} MT)`,
+      handler: resolve,
+      modal: {
+        ondismiss: () => reject(new Error('The payment window closed before confirmation.')),
+      },
+      prefill: { name: buyerName },
+      theme: { color: '#0C2A18' },
+    });
+    gateway.on('payment.failed', ({ error } = {}) => {
+      reject(new Error(error?.description || error?.reason || 'The payment provider reported a failure.'));
+    });
+    gateway.open();
+  });
+}
+
+function sumRecordedSplit(settled) {
+  const fields = [
+    ['Farmers', 'farmer_amount_inr'],
+    ['FPOs', 'fpo_amount_inr'],
+    ['Platform & monitoring', 'platform_amount_inr'],
+  ];
+  if (!settled.length || !settled.every((receipt) =>
+    fields.every(([, field]) => Number.isFinite(receipt.split?.[field]))
+  )) return [];
+  return fields.map(([recipient, field]) => ({
+    recipient,
+    amount: settled.reduce((paise, receipt) => paise + Math.round(receipt.split[field] * 100), 0) / 100,
+  }));
+}
 
 export default function CorporateCreditAnalysis() {
   const navigate = useNavigate();
@@ -12,20 +49,20 @@ export default function CorporateCreditAnalysis() {
   // Bulk Auto-Match Engine State
   const [targetVolume, setTargetVolume] = useState(100);
   const [priority, setPriority] = useState('lowest_price'); // nearest, highest_ndvi, lowest_price
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-  const [paymentDone, setPaymentDone] = useState(false);
+  const [checkoutParcels, setCheckoutParcels] = useState(null);
+  const [checkoutOutcome, setCheckoutOutcome] = useState(null);
   const [isMatching, setIsMatching] = useState(false);
+  const [matchedSettings, setMatchedSettings] = useState(null);
   const [isPaying, setIsPaying] = useState(false);
   const [matchError, setMatchError] = useState('');
-  const [payError, setPayError] = useState('');
-  const [lastCertId, setLastCertId] = useState(null);
-  const [allCertIds, setAllCertIds] = useState([]);
+  const checkoutInFlight = useRef(false);
+  const matchRequest = useRef(0);
 
   // Greedy fill matched parcels from the live auto-match API
   const [matchedParcels, setMatchedParcels] = useState([]);
-  const [lastProof, setLastProof] = useState(null);
 
   const runAutoMatch = async () => {
+    const request = ++matchRequest.current;
     setIsMatching(true);
     setMatchError('');
     try {
@@ -36,22 +73,26 @@ export default function CorporateCreditAnalysis() {
         return;
       }
       const data = await autoMatchCredits(vol, priority);
+      if (request !== matchRequest.current) return;
       if (data && data.success) {
         setMatchedParcels(data.matched_farms || []);
+        setMatchedSettings({ targetVolume, priority });
       } else {
         setMatchError((data && data.message) || 'Auto-match failed');
         setMatchedParcels([]);
       }
     } catch {
+      if (request !== matchRequest.current) return;
       setMatchError('Auto-match service unreachable. Is the backend running?');
       setMatchedParcels([]);
     } finally {
-      setIsMatching(false);
+      if (request === matchRequest.current) setIsMatching(false);
     }
   };
 
   // Re-run auto match with a debounce when targetVolume or priority change
   useEffect(() => {
+    matchRequest.current++;
     const timer = setTimeout(() => {
       runAutoMatch();
     }, 300);
@@ -62,139 +103,86 @@ export default function CorporateCreditAnalysis() {
   const farmerTotal = matchedParcels.reduce((acc, item) => acc + (parseFloat(item.farmer_share_inr) || 0), 0);
   const fpoPlatformTotal = grossValue - farmerTotal;
   const totalAllocatedCredits = matchedParcels.reduce((acc, item) => acc + (parseFloat(item.credits) || 0), 0);
+  const hasCurrentMatch = matchedSettings?.targetVolume === targetVolume && matchedSettings?.priority === priority;
+  const checkoutValue = (checkoutParcels || []).reduce((acc, item) => acc + (Number(item.credits) || 0) * (Number(item.rate) || 0), 0);
+  const needsPaymentReview = Boolean(checkoutOutcome?.pending.length || checkoutOutcome?.unconfirmed);
+  const recordedSplit = sumRecordedSplit(checkoutOutcome?.settled || []);
+
+  const openCheckout = () => {
+    if (needsPaymentReview) {
+      setCheckoutParcels([]);
+      return;
+    }
+    setCheckoutOutcome(null);
+    setCheckoutParcels(matchedParcels);
+  };
+
+  const closeCheckout = () => {
+    setCheckoutParcels(null);
+    if (checkoutOutcome && !needsPaymentReview) runAutoMatch();
+  };
 
   const handleExecutePayment = async () => {
+    if (checkoutInFlight.current || checkoutOutcome || !checkoutParcels?.length) return;
+    checkoutInFlight.current = true;
     setIsPaying(true);
-    setPayError('');
-    try {
-      // Execute real escrow purchases for each allocated parcel
-      let proof = null;
-      let purchased = 0;
-      let totalPurchasedGross = 0;
-      let totalFarmerShare = 0;
-      let totalFpoShare = 0;
-      let totalPlatformShare = 0;
-      const settledCerts = [];
-      const skipped = [];
-
-      for (const parcel of matchedParcels) {
-        const pCredits = parseFloat(parcel.credits);
-        if (!parcel.listing_id || !Number.isFinite(pCredits) || pCredits <= 0) continue;
-
-        let res = await createCheckout({
+    const outcome = { settled: [], pending: [], issue: '', unconfirmed: false, unattempted: checkoutParcels.length };
+    const buyerName = user?.name || 'Corporate Buyer';
+    for (const parcel of checkoutParcels) {
+      outcome.unattempted -= 1;
+      let orderId;
+      let paymentWindowOpened = false;
+      let awaitingCheckoutResponse = false;
+      const parcelName = parcel.farm || parcel.listing_id || 'Matched parcel';
+      try {
+        const credits = Number(parcel.credits);
+        if (!parcel.listing_id || !Number.isFinite(credits) || credits <= 0) {
+          throw new Error('The matched listing or volume is invalid.');
+        }
+        awaitingCheckoutResponse = true;
+        const result = await createCheckout({
           listing_id: parcel.listing_id,
-          credits: pCredits,
-          buyer_name: user?.name || 'Corporate Buyer',
+          credits,
+          buyer_name: buyerName,
         });
+        awaitingCheckoutResponse = false;
 
-        // Handle Razorpay gateway when payment_required is true
-        if (res && res.payment_required && res.checkout?.key_id) {
-          if (!window.Razorpay) {
-            await new Promise((resolve, reject) => {
-              if (document.querySelector('script[src*="checkout.razorpay.com"]')) {
-                const checkInterval = setInterval(() => {
-                  if (window.Razorpay) { clearInterval(checkInterval); resolve(); }
-                }, 100);
-                return;
-              }
-              const script = document.createElement('script');
-              script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-              script.onload = resolve;
-              script.onerror = () => reject(new Error('Failed to load Razorpay payment gateway'));
-              document.body.appendChild(script);
-            });
+        if (!result?.success) {
+          outcome.unconfirmed = !result?.status || result.status >= 500 || Boolean(result.requires_reconciliation);
+          throw new Error(result?.message || 'The checkout request failed.');
+        }
+
+        if (result.payment_required) {
+          orderId = result.checkout?.order_id;
+          if (!orderId || !result.checkout?.key_id) {
+            throw new Error('The checkout response is missing payment order details.');
           }
-
-          const rzpResult = await new Promise((resolve, reject) => {
-            const rzp = new window.Razorpay({
-              key: res.checkout.key_id,
-              order_id: res.checkout.order_id,
-              name: 'CarbonX Market',
-              description: `Bulk Escrow Purchase: ${parcel.farm} (${pCredits} MT)`,
-              handler: (response) => resolve(response),
-              modal: {
-                ondismiss: () => reject(new Error('Razorpay payment window closed before completion.')),
-              },
-              prefill: { name: user?.name || 'Corporate Buyer' },
-              theme: { color: '#0C2A18' },
-            });
-            rzp.on('payment.failed', (errResponse) => {
-              const reason = errResponse?.error?.description || errResponse?.error?.reason || 'Transaction failed or was declined.';
-              reject(new Error(`Payment Failed: ${reason}`));
-            });
-            rzp.open();
+          await loadRazorpay();
+          paymentWindowOpened = true;
+          const payment = await openRazorpay(result.checkout, parcel, buyerName);
+          outcome.pending.push({
+            orderId,
+            parcelName,
+            paymentId: payment?.razorpay_payment_id,
           });
-
-          res = {
-            success: true,
-            certificate_id: `PENDING-RZP-${(rzpResult.razorpay_payment_id || '').slice(-8)}`,
-            escrow_ref: rzpResult.razorpay_payment_id || 'RZP-ESCROW',
-            gross_amount: pCredits * (parseFloat(parcel.rate) || 0),
-            batch_hash: rzpResult.razorpay_signature || 'Awaiting signature verification',
-          };
+          continue;
         }
 
-        if (res && res.settlement) res = res.settlement;
-        if (!res || !res.certificate_id) {
-          res = await buyCredits({
-            listing_id: parcel.listing_id,
-            credits: pCredits,
-            unit_price: parcel.rate,
-            buyer_name: user?.name || 'Corporate Buyer',
-          });
+        const settlement = result.settlement;
+        if (!settlement?.success || !settlement.certificate_id) {
+          outcome.unconfirmed = true;
+          throw new Error('The server did not return a settlement receipt.');
         }
-        if (res && res.certificate_id) {
-          settledCerts.push(res.certificate_id);
-          proof = res;
-          purchased += 1;
-          const pGross = Number(res.gross_amount || (pCredits * (parseFloat(parcel.rate) || 0)));
-          totalPurchasedGross += pGross;
-          if (res.split) {
-            totalFarmerShare += Number(res.split.farmer_amount_inr || 0);
-            totalFpoShare += Number(res.split.fpo_amount_inr || 0);
-            totalPlatformShare += Number(res.split.platform_amount_inr || 0);
-          } else {
-            const fShare = Math.round(pGross * 0.70);
-            const fpShare = Math.round(pGross * 0.05);
-            totalFarmerShare += fShare;
-            totalFpoShare += fpShare;
-            totalPlatformShare += (pGross - fShare - fpShare);
-          }
-        } else {
-          skipped.push(`${parcel.farm || parcel.listing_id}: ${(res && (res.message || res.detail)) || 'listing unavailable'}`);
-        }
+        outcome.settled.push({ ...settlement, simulated: result.simulated === true });
+      } catch (error) {
+        outcome.unconfirmed ||= paymentWindowOpened || awaitingCheckoutResponse;
+        outcome.issue = `${parcelName}: ${error.message}${orderId ? ` Order ${orderId}.` : ''}`;
+        break;
       }
-
-      if (settledCerts.length > 0) {
-        const firstCert = settledCerts[0];
-        setLastCertId(firstCert);
-        setAllCertIds(settledCerts);
-        setLastProof({
-          ...proof,
-          purchased_count: purchased,
-          all_certificates: settledCerts,
-          skipped_purchases: skipped,
-          gross_amount: totalPurchasedGross,
-          split: {
-            model: '3-way aggregate',
-            lines: [
-              { recipient: 'Farmers (70% floor)', share_pct: 70, amount_inr: totalFarmerShare },
-              { recipient: 'FPO / Verifiers (5% where involved)', share_pct: 5, amount_inr: totalFpoShare },
-              { recipient: 'Platform & Monitoring', share_pct: 25, amount_inr: totalPlatformShare },
-            ],
-          },
-        });
-        setPaymentDone(true);
-      } else {
-        setPayError(skipped.length
-          ? `No purchases completed — ${skipped[0]}`
-          : 'No purchases completed — the matched parcels may no longer be available. Re-run the auto-match.');
-      }
-    } catch (err) {
-      setPayError(err.message || 'Payment execution failed. Please try again.');
-    } finally {
-      setIsPaying(false);
     }
+    setCheckoutOutcome(outcome);
+    setIsPaying(false);
+    checkoutInFlight.current = false;
   };
 
   return (
@@ -235,9 +223,10 @@ export default function CorporateCreditAnalysis() {
             {/* Target Volume Slider & Precise Input */}
             <div className="space-y-3">
               <div className="flex justify-between items-center text-xs font-bold">
-                <label className="text-slate-700 uppercase tracking-wider">Target Offset Volume (MT CO2e)</label>
+                <label htmlFor="bulk-target-volume" className="text-slate-700 uppercase tracking-wider">Target Offset Volume (MT CO2e)</label>
                 <div className="flex items-center gap-1.5">
                   <input
+                    id="bulk-target-volume"
                     type="number"
                     min="1"
                     max="2500"
@@ -258,6 +247,7 @@ export default function CorporateCreditAnalysis() {
               </div>
               <input
                 type="range"
+                aria-label="Target offset volume slider"
                 min="25"
                 max="1000"
                 step="25"
@@ -422,146 +412,92 @@ export default function CorporateCreditAnalysis() {
           </p>
 
           <button
-            onClick={() => setShowCheckoutModal(true)}
-            disabled={matchedParcels.length === 0 || isMatching}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-2 mt-4"
+            onClick={openCheckout}
+            disabled={!needsPaymentReview && (!hasCurrentMatch || matchedParcels.length === 0 || isMatching)}
+            className="w-full py-3 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 mt-4"
           >
-            <span>Proceed to Escrow Checkout</span>
+            {needsPaymentReview ? 'Review payment status' : 'Proceed to Escrow Checkout'}
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Payment Gateway Modal */}
-        {showCheckoutModal && (
+        {checkoutParcels && (
           <div className="fixed inset-0 z-50 bg-[#0C2A18]/60 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white border border-slate-200 shadow-xl rounded-xl p-6 max-w-md w-full space-y-4">
-              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <Building className="w-5 h-5 text-emerald-700" />
-                  <h3 className="text-sm font-bold text-slate-900">Corporate Payment Gateway (UPI / RTGS)</h3>
-                </div>
-              </div>
+            <div role="dialog" aria-labelledby="bulk-checkout-title" className="bg-white border border-slate-200 shadow-xl rounded-xl p-6 max-w-md max-h-full overflow-y-auto w-full space-y-4">
+              <h3 id="bulk-checkout-title" className="text-base font-bold flex items-center gap-2">
+                <Building className="w-5 h-5 text-emerald-700" /> Bulk escrow checkout
+              </h3>
 
-              {paymentDone ? (
-                <div className="space-y-3">
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 p-4 rounded-xl text-center space-y-2">
-                    <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                    <p className="font-bold text-sm">Escrow settlement executed — credits retired</p>
-                    
-                    {allCertIds.length > 1 ? (
-                      <div className="space-y-1.5 pt-1">
-                        <p className="text-[11px] font-semibold text-emerald-800">
-                          {allCertIds.length} Certificates Generated:
-                        </p>
-                        <div className="flex flex-wrap gap-1.5 justify-center">
-                          {allCertIds.map((cid) => (
-                            <button
-                              key={cid}
-                              type="button"
-                              onClick={() => navigate(`/buyer/certificates/${cid}`)}
-                              className="px-2 py-1 bg-white border border-emerald-300 rounded text-[10px] font-mono font-bold text-emerald-900 hover:bg-emerald-100 flex items-center gap-1 shadow-2xs"
-                            >
-                              <span>{cid}</span>
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-xs text-slate-600 font-mono">Certificate: {lastCertId}</p>
-                    )}
-
-                    {lastProof?.escrow_ref && (
-                      <p className="text-[11px] text-slate-500 font-mono">Escrow {lastProof.escrow_ref}</p>
-                    )}
-                    {lastProof?.skipped_purchases?.length > 0 && (
-                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2 mt-1 text-left font-semibold">
-                        {lastProof.purchased_count} purchase{lastProof.purchased_count === 1 ? '' : 's'} settled;{' '}
-                        {lastProof.skipped_purchases.length} skipped (listing changed): {lastProof.skipped_purchases[0]}
+              {checkoutOutcome ? (
+                <div className="space-y-3 text-xs">
+                  {checkoutOutcome.settled.length > 0 && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+                      <p className="font-bold flex items-center gap-2 text-emerald-900">
+                        <CheckCircle2 className="w-4 h-4" />
+                        {checkoutOutcome.settled.length} recorded settlement(s)
                       </p>
-                    )}
-                  </div>
-
-                  {lastProof?.split && (
-                    <div className="border border-slate-200 rounded-lg p-3 space-y-1 text-xs">
-                      <p className="font-bold text-slate-700 text-[11px] uppercase tracking-wide">
-                        Payout split executed ({lastProof.split.model})
-                      </p>
-                      {lastProof.split.lines.map(line => (
-                        <div key={line.recipient} className="flex justify-between">
-                          <span className="text-slate-600 font-semibold">{line.recipient} · {line.share_pct}%</span>
-                          <span className="font-mono font-bold text-slate-900">INR {Number(line.amount_inr).toLocaleString('en-IN')}</span>
-                        </div>
+                      {checkoutOutcome.settled.every((receipt) => receipt.simulated) && (
+                        <p>Simulated escrow. No money moved.</p>
+                      )}
+                      {checkoutOutcome.settled.map((receipt) => (
+                        <button
+                          key={receipt.certificate_id}
+                          type="button"
+                          onClick={() => navigate(`/buyer/certificates/${receipt.certificate_id}`)}
+                          className="flex gap-2 items-center text-emerald-900 font-mono underline break-all"
+                        >
+                          {receipt.certificate_id} <ExternalLink className="w-3 h-3 shrink-0" />
+                        </button>
                       ))}
+                      {recordedSplit.length > 0 && (
+                        <dl className="space-y-1 border-t border-emerald-200 pt-2">
+                          {recordedSplit.map(({ recipient, amount }) => (
+                            <div key={recipient} className="flex justify-between gap-2">
+                              <dt>{recipient}</dt>
+                              <dd>₹{amount.toLocaleString('en-IN')}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
                     </div>
                   )}
-
-                  {lastProof?.batch_hash && (
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                      <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Tamper-evident record</p>
-                      <p className="font-mono text-[10px] text-slate-600 break-all mt-0.5">sha256:{lastProof.batch_hash}</p>
+                  {checkoutOutcome.pending.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                      <p className="font-bold">Payment authorized. Settlement pending.</p>
+                      {checkoutOutcome.pending.map(({ orderId, parcelName, paymentId }) => (
+                        <p key={orderId} className="break-words">{parcelName} · {paymentId || orderId}</p>
+                      ))}
+                      <p>Certificates appear after the provider confirms settlement.</p>
                     </div>
                   )}
-
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { setShowCheckoutModal(false); setPaymentDone(false); runAutoMatch(); }}
-                      className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
-                    >
-                      Close
+                  {checkoutOutcome.issue && (
+                    <p role="alert" className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-rose-900 flex gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0" /> {checkoutOutcome.issue}
+                    </p>
+                  )}
+                  {checkoutOutcome.unattempted > 0 && <p>Parcels left unattempted: {checkoutOutcome.unattempted}</p>}
+                  {needsPaymentReview && (
+                    <button type="button" onClick={() => navigate('/corporate/dashboard')} className="text-emerald-800 underline font-bold">
+                      Check your certificates and payment status before retrying
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/buyer/certificates/${lastCertId}`)}
-                      className="flex-1 py-2.5 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 flex items-center justify-center gap-1"
-                    >
-                      <span>View Certificate</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  )}
+                  <button type="button" onClick={closeCheckout} className="w-full py-2.5 bg-slate-100 text-slate-700 rounded-lg font-bold">
+                    Close
+                  </button>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1 text-xs">
-                    <p className="font-semibold text-slate-700">Gross Procurement Amount: <strong className="text-slate-900">INR {grossValue.toLocaleString()}</strong></p>
-                    <p className="text-[11px] text-slate-500">
-                      Executes {matchedParcels.length} real escrow purchase{matchedParcels.length === 1 ? '' : 's'} against live listings.
-                    </p>
+                <div className="space-y-4 text-xs">
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+                    <p className="font-semibold">Estimated checkout value: ₹{checkoutValue.toLocaleString('en-IN')}</p>
+                    <p>Review and submit checkout for {checkoutParcels.length} matched parcel(s).</p>
                   </div>
-
-                  {payError && (
-                    <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl flex items-start gap-2.5 text-xs text-rose-800">
-                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <div className="flex-1 space-y-1">
-                        <p className="font-bold">Payment Execution Issue</p>
-                        <p className="text-[11px] leading-relaxed text-rose-700">{payError}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowCheckoutModal(false)}
-                      className="flex-1 py-2.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200"
-                    >
+                  <div className="flex gap-2">
+                    <button type="button" onClick={closeCheckout} disabled={isPaying} className="flex-1 py-2.5 bg-slate-100 rounded-lg font-bold">
                       Cancel
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleExecutePayment}
-                      disabled={isPaying || matchedParcels.length === 0}
-                      className="flex-1 py-2.5 bg-emerald-700 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 disabled:opacity-60 flex items-center justify-center gap-1 shadow-sm"
-                    >
-                      {isPaying ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Processing…</span>
-                        </>
-                      ) : (
-                        <span>{payError ? 'Retry Escrow Purchase' : 'Execute Escrow Purchase'}</span>
-                      )}
+                    <button type="button" onClick={handleExecutePayment} disabled={isPaying} className="flex-1 py-2.5 bg-emerald-700 text-white rounded-lg font-bold flex items-center justify-center gap-1">
+                      {isPaying && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {isPaying ? 'Processing…' : 'Submit escrow purchases'}
                     </button>
                   </div>
                 </div>
@@ -569,7 +505,6 @@ export default function CorporateCreditAnalysis() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

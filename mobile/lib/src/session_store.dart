@@ -9,8 +9,6 @@ class SessionStore extends ChangeNotifier {
   String? token;
   String? name;
   String? phone;
-  bool restored = false;
-
   bool get isAuthenticated => token?.isNotEmpty == true;
 
   Future<void> restore() async {
@@ -18,17 +16,29 @@ class SessionStore extends ChangeNotifier {
     token = prefs.getString(_tokenKey);
     name = prefs.getString(_nameKey);
     phone = prefs.getString(_phoneKey);
-    restored = true;
   }
 
-  Future<void> save({required String newToken, Map<String, dynamic>? user}) async {
-    token = newToken;
-    name = user?['name']?.toString();
-    phone = user?['phone']?.toString();
+  Future<void> save(
+      {required String newToken, Map<String, dynamic>? user}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_tokenKey, newToken);
-    if (name != null) await prefs.setString(_nameKey, name!);
-    if (phone != null) await prefs.setString(_phoneKey, phone!);
+    final newName = user?['name']?.toString();
+    final newPhone = user?['phone']?.toString();
+    if (newName == null) {
+      await prefs.remove(_nameKey);
+    } else {
+      await prefs.setString(_nameKey, newName);
+    }
+    if (newPhone == null) {
+      await prefs.remove(_phoneKey);
+    } else {
+      await prefs.setString(_phoneKey, newPhone);
+    }
+    if (!await prefs.setString(_tokenKey, newToken)) {
+      throw StateError('Session storage is unavailable.');
+    }
+    token = newToken;
+    name = newName;
+    phone = newPhone;
     notifyListeners();
   }
 

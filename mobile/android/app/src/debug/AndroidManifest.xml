@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The local FastAPI server uses HTTP during development. -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>
