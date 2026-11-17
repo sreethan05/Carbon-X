@@ -210,7 +210,7 @@ export default function CertificateRetirementPage() {
         ) : (
           <>
             {/* Official Certificate Layout */}
-            <div className="bg-[#F8FAFC] border-4 border-double border-slate-300 shadow-2xl rounded-2xl p-8 md:p-12 text-center space-y-6 relative overflow-hidden">
+            <div className="field-certificate text-center space-y-6 relative overflow-hidden">
               {/* Top Stamp / Badge */}
               <div className="flex justify-between items-center border-b border-slate-200 pb-6">
                 <div className="text-left">

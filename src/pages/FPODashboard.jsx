@@ -17,18 +17,11 @@ export default function FPODashboard() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, refreshUser } = useAuth();
-  const [activeTab, setActiveTab] = useState(() => {
-    if (typeof window !== 'undefined' && window.location.pathname.includes('credit-pooling')) {
-      return 'pooling';
-    }
-    return 'farmers';
-  });
-
-  useEffect(() => {
-    if (location.pathname.includes('credit-pooling')) {
-      setActiveTab('pooling');
-    }
-  }, [location.pathname]);
+  const [tabSelection, setTabSelection] = useState(null);
+  const activeTab = tabSelection?.routeKey === location.key
+    ? tabSelection.id
+    : location.pathname === '/fpo/credit-pooling' ? 'pooling' : 'farmers';
+  const setActiveTab = (id) => setTabSelection({ routeKey: location.key, id });
 
   // Search & Filter for Tab 1
   const [searchTerm, setSearchTerm] = useState('');
@@ -358,7 +351,7 @@ export default function FPODashboard() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Institutional Header */}
-        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div className="field-page-head bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 bg-surface-sage border border-forest-200 rounded-2xl flex items-center justify-center text-primary shadow-xs shrink-0">
               <Building2 className="w-7 h-7" />
@@ -427,13 +420,13 @@ export default function FPODashboard() {
         </div>
 
         {/* 6 Tab Navigation Ribbon */}
-        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-2 flex flex-wrap gap-2">
+        <div className="field-desk-tabs" role="group" aria-label="FPO desk sections">
           {[
             { id: 'farmers', label: 'My Farmers', icon: Users, count: farmersList.length },
             { id: 'pooling', label: 'Credit Pooling Workbench', icon: Layers, count: `${stats.pooledCredits} MT`, highlight: stats.pooledCredits > 0 },
             { id: 'onboard', label: 'Bulk Member Onboarding', icon: PlusCircle },
             { id: 'pending', label: 'Pending Queue', icon: FileText, count: pendingQueue.length },
-            { id: 'audit', label: `Flagged Reviews (${flaggedCount})`, icon: AlertTriangle, count: flaggedCount, highlight: flaggedCount > 0 },
+            { id: 'audit', label: 'Flagged Reviews', icon: AlertTriangle, count: flaggedCount, highlight: flaggedCount > 0 },
             { id: 'certificates', label: 'FPO Certificates', icon: Shield, count: certificates.length }
           ].map(tab => {
             const Icon = tab.icon;
@@ -441,19 +434,15 @@ export default function FPODashboard() {
             return (
               <button
                 key={tab.id}
+                type="button"
+                aria-pressed={active}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
-                  active
-                    ? 'bg-[#0C2A18] text-white shadow-xs'
-                    : tab.highlight
-                    ? 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
-                    : 'text-carbon-800 hover:bg-surface-sage'
-                }`}
+                className={`field-desk-tab ${tab.highlight ? 'text-amber-900' : ''}`}
               >
                 <Icon className="w-4 h-4" />
                 <span>{tab.label}</span>
                 {tab.count !== undefined && (
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${active ? 'bg-[#15803D] text-white' : 'bg-surface-sage text-carbon-800'}`}>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-surface-sage text-carbon-800">
                     {tab.count}
                   </span>
                 )}

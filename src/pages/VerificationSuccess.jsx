@@ -57,7 +57,7 @@ export default function VerificationSuccess() {
       <div className="max-w-xl w-full space-y-6">
 
         {/* Verification Card */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 text-center space-y-4">
+        <div className="field-result text-center space-y-4">
           <div className="w-14 h-14 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-700 mx-auto">
             <ShieldCheck className="w-8 h-8" />
           </div>

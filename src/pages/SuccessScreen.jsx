@@ -10,7 +10,7 @@ export default function SuccessScreen() {
       <div className="max-w-lg w-full space-y-6">
 
         {/* Enrollment Summary Card */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 text-center space-y-4">
+        <div className="field-result text-center space-y-4">
           <div className="w-14 h-14 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-700 mx-auto">
             <CheckCircle2 className="w-8 h-8" />
           </div>

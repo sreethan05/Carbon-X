@@ -129,7 +129,7 @@ export default function FarmerDashboard() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Top Profile Bar */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div className="field-page-head bg-white border border-slate-200 shadow-sm rounded-2xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-1.5">
               <VerificationBadge badge={currentFarm.badge} showTier size="sm" />
@@ -193,6 +193,73 @@ export default function FarmerDashboard() {
             </button>
           </div>
         )}
+
+        {/* Quick Action Navigation Grid */}
+        <section className="field-quick-actions space-y-4">
+          <div>
+            <h2 className="text-base font-bold text-slate-900 font-manrope">Farm Management & Marketplace Actions</h2>
+            <p className="text-xs text-slate-500">
+              Quickly navigate to land registration, passport analytics, tutorial walkthroughs, or marketplace trading.
+            </p>
+          </div>
+
+          <div className="field-quick-grid">
+            <button
+              onClick={() => navigate('/farmer/land-verification')}
+              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
+            >
+              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-900">Enroll New Parcel</p>
+              <p className="text-[11px] text-slate-500">Verify land deeds & registry</p>
+            </button>
+
+            <button
+              onClick={() => navigate('/create-listing', { state: { farmId: currentFarm.id } })}
+              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
+            >
+              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
+                <PlusCircle className="w-5 h-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-900">List Credits for Sale</p>
+              <p className="text-[11px] text-slate-500">Publish to corporate buyers</p>
+            </button>
+
+            <button
+              onClick={() => navigate(currentFarm.id ? `/farmer/passport/${currentFarm.id}` : '/farm-analytics')}
+              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
+            >
+              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-900">Carbon Passport</p>
+              <p className="text-[11px] text-slate-500">NDVI biomass & P3 score</p>
+            </button>
+
+            <button
+              onClick={() => navigate('/marketplace')}
+              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
+            >
+              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
+                <ShoppingCart className="w-5 h-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-900">Open Marketplace</p>
+              <p className="text-[11px] text-slate-500">Browse live carbon listings</p>
+            </button>
+
+            <button
+              onClick={() => navigate('/onboarding')}
+              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
+            >
+              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
+                <BookOpen className="w-5 h-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-900">Walkthrough Guide</p>
+              <p className="text-[11px] text-slate-500">Learn how CarbonX works</p>
+            </button>
+          </div>
+        </section>
 
         {/* Earnings Calculator — pre-signup estimate, Trust Engine Stage 2 */}
         <EarningsCalculator
@@ -318,73 +385,6 @@ export default function FarmerDashboard() {
               {currentFarm.bioScore ? `${currentFarm.bioScore} / 10` : '—'}
             </p>
             <p className="text-xs text-slate-500 font-medium pt-1">Ecosystem Richness Score</p>
-          </div>
-        </div>
-
-        {/* Quick Action Navigation Grid */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-          <div>
-            <h2 className="text-base font-bold text-slate-900 font-manrope">Farm Management & Marketplace Actions</h2>
-            <p className="text-xs text-slate-500">
-              Quickly navigate to land registration, passport analytics, tutorial walkthroughs, or marketplace trading.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4">
-            <button
-              onClick={() => navigate('/farmer/land-verification')}
-              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
-            >
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-                <ShieldCheck className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-slate-900">Enroll New Parcel</p>
-              <p className="text-[11px] text-slate-500">Verify land deeds & registry</p>
-            </button>
-
-            <button
-              onClick={() => navigate('/create-listing', { state: { farmId: currentFarm.id } })}
-              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
-            >
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-                <PlusCircle className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-slate-900">List Credits for Sale</p>
-              <p className="text-[11px] text-slate-500">Publish to corporate buyers</p>
-            </button>
-
-            <button
-              onClick={() => navigate(currentFarm.id ? `/farmer/passport/${currentFarm.id}` : '/farm-analytics')}
-              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
-            >
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-                <TrendingUp className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-slate-900">Carbon Passport</p>
-              <p className="text-[11px] text-slate-500">NDVI biomass & P3 score</p>
-            </button>
-
-            <button
-              onClick={() => navigate('/marketplace')}
-              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
-            >
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-                <ShoppingCart className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-slate-900">Open Marketplace</p>
-              <p className="text-[11px] text-slate-500">Browse live carbon listings</p>
-            </button>
-
-            <button
-              onClick={() => navigate('/onboarding')}
-              className="p-4 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 rounded-xl transition-all text-left space-y-2 group"
-            >
-              <div className="w-10 h-10 bg-emerald-100 text-emerald-800 rounded-lg flex items-center justify-center group-hover:scale-105 transition-transform">
-                <BookOpen className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-bold text-slate-900">Walkthrough Guide</p>
-              <p className="text-[11px] text-slate-500">Learn how CarbonX works</p>
-            </button>
           </div>
         </div>
 

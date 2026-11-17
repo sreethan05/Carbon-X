@@ -45,6 +45,30 @@ test.describe('public surfaces', () => {
       page.getByText(/proxy estimates until field validation passes/i).first()
     ).toBeVisible();
   });
+
+  test('mobile workspace navigation and marketplace status filters stay usable', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/marketplace', { waitUntil: 'domcontentloaded' });
+
+    const dock = page.getByRole('navigation', { name: 'Quick navigation' });
+    await expect(dock.getByRole('link', { name: 'Market' })).toHaveAttribute('aria-current', 'page');
+    await page.getByRole('button', { name: 'Open menu' }).click();
+    const menu = page.getByRole('navigation', { name: 'Workspace navigation' });
+    await expect(menu.getByRole('link', { name: 'Verify a certificate' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(menu).toBeHidden();
+
+    await expect(page.getByRole('button', { name: 'Buy Credits' }).first()).toBeVisible();
+    const allStatuses = page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return url.pathname === '/py-api/marketplace/listings' && url.searchParams.get('status') === 'all';
+    });
+    await page.getByRole('button', { name: 'All Statuses' }).click();
+    expect((await allStatuses).ok()).toBeTruthy();
+    await expect(page.getByRole('button', { name: 'All Statuses' })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Reset filters' }).click();
+    await expect(page.getByRole('button', { name: 'Active Only' })).toHaveAttribute('aria-pressed', 'true');
+  });
 });
 
 test.describe('corporate buyer journey (demo credentials, DB-off)', () => {

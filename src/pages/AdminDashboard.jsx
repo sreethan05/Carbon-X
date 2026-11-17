@@ -121,7 +121,7 @@ export default function AdminDashboard() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Header */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="field-page-head bg-white border border-slate-200 shadow-sm rounded-xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <span className="text-xs font-semibold text-rose-800 uppercase tracking-wider bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-full inline-block mb-1">
               Integrity Oversight

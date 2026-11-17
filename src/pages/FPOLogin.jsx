@@ -1,3 +1,4 @@
+import FieldSignIn from '../components/FieldSignIn';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Phone, ArrowRight, Loader2, RefreshCw } from 'lucide-react';
@@ -105,11 +106,10 @@ export default function FPOLogin() {
   };
 
   return (
-    <div className="product-page auth-page min-h-screen font-inter text-slate-900 py-10 px-4 flex items-center justify-center">
-      <div className="max-w-md w-full space-y-6">
+    <FieldSignIn title="A desk for your cooperative." description="Review the parcels, evidence, and pooled credits your organization manages.">
 
         {/* FPO Auth Card */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 space-y-5">
+        <div className="product-page field-form-panel space-y-5">
           <div className="text-center space-y-1">
             <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-center text-emerald-800 mx-auto mb-2 shadow-xs">
               <Building2 className="w-6 h-6" />
@@ -167,7 +167,7 @@ export default function FPOLogin() {
               <button
                 type="submit"
                 disabled={isVerifying}
-                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] disabled:opacity-60 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+                className="field-button field-button-dark w-full"
               >
                 {isVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 <span>Send Officer 6-Digit OTP</span>
@@ -246,7 +246,7 @@ export default function FPOLogin() {
               <button
                 type="submit"
                 disabled={isVerifying}
-                className="w-full py-3 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                className="field-button field-button-dark w-full"
               >
                 {isVerifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 <span>{isVerifying ? 'Authenticating FPO Officer...' : 'Verify & Access FPO Desk'}</span>
@@ -262,7 +262,6 @@ export default function FPOLogin() {
           </div>
         </div>
 
-      </div>
-    </div>
+    </FieldSignIn>
   );
 }

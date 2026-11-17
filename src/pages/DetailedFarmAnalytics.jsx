@@ -387,7 +387,7 @@ export default function DetailedFarmAnalytics() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Page Header */}
-        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="field-page-head bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-surface-sage border border-forest-200 px-2.5 py-0.5 rounded-full">

@@ -188,7 +188,7 @@ export default function SatellitePreview() {
       <div className="max-w-3xl w-full space-y-6">
 
         {/* HUD Scanner Box */}
-        <div className="bg-[#0C2A18] text-white border border-emerald-900 rounded-2xl p-6 md:p-8 text-center relative overflow-hidden shadow-xl">
+        <div className="field-tinted-head text-center relative overflow-hidden">
           <div className="relative w-20 h-20 mx-auto mb-3">
             <div className={`absolute inset-0 bg-emerald-400/20 rounded-full ${mrvLocked ? '' : 'animate-ping'}`} />
             <div className="absolute inset-0 border-2 border-emerald-400 rounded-full flex items-center justify-center bg-[#0C2A18] shadow-inner">

@@ -1,3 +1,4 @@
+import FieldSignIn from '../components/FieldSignIn';
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Phone, ArrowRight, RefreshCw, Loader2 } from 'lucide-react';
@@ -214,21 +215,17 @@ export default function FarmerLogin() {
   };
 
   return (
-    <div className="product-page auth-page min-h-screen font-inter text-agriText-main py-10 px-4 flex items-center justify-center">
-      <div className="max-w-md w-full space-y-6">
+    <FieldSignIn title="Your fields, in view." description="Sign in to see your parcels, verification status, and settlement history.">
 
         {/* Auth Card */}
-        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 space-y-5">
+        <div className="product-page field-form-panel space-y-5">
           <div className="text-center space-y-1">
             <div className="w-12 h-12 bg-surface-sage border border-forest-200 rounded-2xl flex items-center justify-center text-primary mx-auto mb-2 shadow-xs">
               <Phone className="w-6 h-6" />
             </div>
-            <div className="flex items-center justify-center gap-1.5">
+            <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-surface-sage border border-forest-200 px-2.5 py-0.5 rounded-full">
                 Phone OTP Verification
-              </span>
-              <span className="text-[10px] font-semibold text-agriText-subtle bg-warm-cream px-2 py-0.5 rounded">
-                Simulated
               </span>
             </div>
             <h1 className="text-2xl font-extrabold text-carbon-900 font-manrope">Sign In to CarbonX</h1>
@@ -278,7 +275,7 @@ export default function FarmerLogin() {
               <button
                 type="submit"
                 disabled={isVerifying || phone.length !== 10}
-                className="w-full py-3 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+                className="field-button field-button-dark w-full"
               >
                 {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
                 <span>{isVerifying ? 'Sending OTP…' : 'Send 6-Digit OTP'}</span>
@@ -364,7 +361,7 @@ export default function FarmerLogin() {
               <button
                 type="submit"
                 disabled={isVerifying || otpDigits.join('').length !== 6}
-                className="w-full py-3 bg-primary hover:bg-primary-hover text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                className="field-button field-button-dark w-full"
               >
                 {isVerifying && <Loader2 className="w-4 h-4 animate-spin" />}
                 <span>{isVerifying ? 'Verifying...' : 'Verify & Continue'}</span>
@@ -386,7 +383,6 @@ export default function FarmerLogin() {
             </p>
           </div>
         </div>
-      </div>
-    </div>
+    </FieldSignIn>
   );
 }

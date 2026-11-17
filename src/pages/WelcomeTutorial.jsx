@@ -154,7 +154,7 @@ export default function WelcomeTutorial() {
         </div>
 
         {/* Walkthrough Slide Card */}
-        <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-8 text-center space-y-5 transition-all">
+        <div className="field-result text-center space-y-5">
           <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto border shadow-xs ${currentStep.bgColor}`}>
             <Icon className="w-8 h-8" />
           </div>
@@ -171,7 +171,7 @@ export default function WelcomeTutorial() {
                 </span>
               )}
             </div>
-            <h2 className="text-xl font-extrabold text-slate-900 font-manrope">{currentStep.title}</h2>
+            <h1>{currentStep.title}</h1>
             <p className="text-xs text-slate-600 leading-relaxed max-w-sm mx-auto">{currentStep.desc}</p>
           </div>
 
@@ -183,7 +183,7 @@ export default function WelcomeTutorial() {
         {/* Next / Proceed Button */}
         <button
           onClick={handleNext}
-          className="w-full py-3.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+          className="field-button field-button-dark w-full"
         >
           <span>
             {slideIndex < steps.length - 1

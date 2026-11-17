@@ -13,7 +13,7 @@ export default function CorporateWelcome() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Hero */}
-        <div className="bg-[#0C2A18] text-white border border-emerald-900 shadow-sm rounded-xl p-8 relative overflow-hidden">
+        <div className="field-tinted-head relative overflow-hidden">
           <div className="max-w-3xl relative z-10 space-y-4">
             <span className="text-xs font-semibold text-emerald-300 uppercase tracking-wider bg-emerald-950 border border-emerald-700 px-3 py-1 rounded-full">
               Enterprise Buyer Portal Gateway

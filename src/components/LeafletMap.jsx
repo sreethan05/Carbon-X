@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Polygon, useMapEvents, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import * as turf from '@turf/turf';
+import { area } from '@turf/turf';
 
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
@@ -149,10 +149,8 @@ function calculatePolygonAreaHa(pts) {
       geometry: { type: 'Polygon', coordinates: [coords] }
     };
 
-    if (turf && turf.area) {
-      const areaM2 = turf.area(poly);
-      return Math.round((areaM2 / 10000) * 100) / 100;
-    }
+    const areaM2 = area(poly);
+    return Math.round((areaM2 / 10000) * 100) / 100;
   } catch (err) {
     console.warn('Turf area calculation error, using spherical fallback', err);
   }
@@ -437,16 +435,16 @@ export default function LeafletMap({
         {!readOnly && !polygonMode && (
           <button
             onClick={startPolygon}
-            className="bg-primary hover:bg-primary-hover text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md flex items-center gap-1.5 transition-all"
+            className="field-button field-button-dark shadow-md"
           >
-            <span>⬠ Redraw Boundary</span>
+            <span>{polygonPoints.length ? 'Redraw Boundary' : 'Draw Boundary'}</span>
           </button>
         )}
 
         {!readOnly && polygonMode && polygonPoints.length >= 3 && (
           <button
-            onClick={closePolygon}
-            className="bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md transition-all"
+            onClick={() => closePolygon()}
+            className="field-button field-button-dark shadow-md"
           >
             ✓ Close Boundary
           </button>

@@ -1,303 +1,105 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Leaf, ArrowRight, ShieldCheck, Cpu, Globe, Users, Building2, Wallet, CheckCircle2 } from 'lucide-react';
-import { CountUp, FadeIn } from '../components/ui/motion';
+import { ArrowDown, ArrowRight, Building2, Globe2, Leaf, Map, ScanLine, ShieldCheck, Sprout, Users } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 
+const steps = [
+  { title: 'Map the parcel', detail: 'Draw the field boundary and attach the land evidence needed for review.', icon: Map },
+  { title: 'Review the estimate', detail: 'Satellite observations and practice evidence inform a carbon estimate with a published uncertainty range.', icon: ScanLine },
+  { title: 'Follow the record', detail: 'Track purchases, settlement splits, and retirement in the ledger.', icon: ShieldCheck },
+];
+
+const roles = [
+  { title: 'Farmers', detail: 'Register a field, follow its review, and see what a sale could earn.', to: '/farmer/register', label: 'Register as a farmer', icon: Sprout },
+  { title: 'Farmer organizations', detail: 'Review member parcels and pool eligible credits across the cooperative.', to: '/fpo/login', label: 'Open the FPO desk', icon: Users },
+  { title: 'Corporate buyers', detail: 'Compare listings, inspect the evidence, and track retirement certificates.', to: '/corporate/login', label: 'Open the buyer desk', icon: Building2 },
+];
+
 export default function LandingPage() {
-  const navigate = useNavigate();
   const { currentLang, changeLanguage, supportedLanguages } = useLanguage();
   const { isAuthenticated, role } = useAuth();
 
-  const handleFpoClick = () => {
-    if (isAuthenticated && (role === 'fpo' || role === 'verifier')) {
-      navigate('/fpo/dashboard');
-    } else {
-      navigate('/fpo/login');
-    }
-  };
-
   return (
-    <main className="public-site min-h-screen font-inter text-slate-900">
-      {/* Full-width Organic Green Header */}
-      <header className="public-header sticky top-0 z-50 text-white px-4 md:px-10 py-3.5">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/')}>
-            <div className="brand-mark w-10 h-10 text-emerald-950">
-              <Leaf className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="font-manrope font-extrabold text-xl tracking-tight block leading-tight text-white">CarbonX</span>
-              <span className="text-[10px] font-medium text-emerald-200">Enterprise AgTech & Carbon Infrastructure</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 bg-[#15803D]/60 border border-emerald-600 rounded-xl px-3 py-1.5 text-xs text-white">
-              <Globe className="w-3.5 h-3.5 text-emerald-300" />
-              <select
-                value={currentLang}
-                onChange={(e) => changeLanguage(e.target.value)}
-                aria-label="Select interface language"
-                className="bg-transparent border-none outline-none text-xs font-semibold text-white cursor-pointer"
-              >
-                {(supportedLanguages || [
-                  { code: 'en', label: 'English', nativeLabel: 'English' },
-                  { code: 'hi', label: 'Hindi', nativeLabel: 'हिन्दी' },
-                  { code: 'te', label: 'Telugu', nativeLabel: 'తెలుగు' }
-                ]).map((lang) => (
-                  <option key={lang.code} value={lang.code} className="bg-[#0C2A18] text-white">
-                    {lang.nativeLabel} ({lang.label})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              onClick={() => navigate(isAuthenticated ? '/dashboard' : '/farmer/login')}
-              className="text-xs font-semibold text-emerald-100 hover:text-white px-3 py-2 rounded-xl transition-colors hidden sm:block"
-            >
-              {isAuthenticated ? 'My Dashboard' : 'Sign In'}
-            </button>
-
-            <button
-              onClick={() => navigate('/role-selection')}
-              className="text-xs font-bold text-white bg-[#15803D] hover:bg-[#10B981] px-4 py-2.5 rounded-xl transition-all shadow-sm flex items-center gap-2 border border-emerald-500"
-            >
-              <span>Launch Portal</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
+    <div className="field-site">
+      <header className="field-site-header">
+        <Link className="field-brand" to="/" aria-label="CarbonX home"><span><Leaf size={21} /></span>CarbonX</Link>
+        <nav aria-label="Public navigation" className="field-site-nav">
+          <a href="#how-it-works">How it works</a>
+          <Link to="/marketplace">Marketplace</Link>
+          <Link to="/trust">Trust center</Link>
+        </nav>
+        <div className="field-site-controls">
+          <label className="field-language">
+            <Globe2 size={16} aria-hidden="true" />
+            <select aria-label="Select interface language" value={currentLang} onChange={(event) => changeLanguage(event.target.value)}>
+              {supportedLanguages.map((language) => <option key={language.code} value={language.code}>{language.nativeLabel}</option>)}
+            </select>
+          </label>
+          <Link className="field-button field-button-dark" to={isAuthenticated ? '/dashboard' : '/role-selection'}>
+            {isAuthenticated ? 'Workspace' : 'Sign in'} <ArrowRight size={16} />
+          </Link>
         </div>
       </header>
 
-      {/* Hero Banner with authentic farmland imagery overlay */}
-      <section className="public-hero relative text-white py-24 md:py-32 px-4 md:px-10 overflow-hidden">
-        <div className="hero-orbit hero-orbit-one" />
-        <div className="hero-orbit hero-orbit-two" />
-
-        <div className="relative z-10 max-w-5xl mx-auto text-center pt-6">
-          <div className="inline-flex items-center gap-2 bg-[#15803D]/80 border border-emerald-400/40 px-4 py-1.5 rounded-full text-xs font-semibold text-[#D1FAE5] mb-6 shadow-inner">
-            <ShieldCheck className="w-4 h-4 text-emerald-300" />
-            <span>Registry-Verified Parcels & Sentinel-2 Satellite MRV</span>
-          </div>
-
-          <h1 className="text-4xl md:text-7xl font-extrabold tracking-[-0.055em] leading-[0.98] mb-7 font-manrope">
-            <span className="text-white">Bridge Farmers to</span> <span className="text-emerald-300">Carbon Markets</span>
-          </h1>
-
-          <p className="text-base md:text-xl text-emerald-50/75 max-w-2xl mx-auto leading-relaxed mb-10">
-            Turn field evidence into trusted climate assets—with satellite MRV, transparent economics, and an audit trail buyers can verify.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <button
-              onClick={() => navigate('/farmer/register')}
-              className="px-6 py-3.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-sm transition-all shadow-md flex items-center justify-center gap-2"
-            >
-              <span>Farmer Voice Registration</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleFpoClick}
-              className="px-6 py-3.5 bg-[#15803D] hover:bg-[#10B981] text-white border border-emerald-500 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
-            >
-              <span>FPO Command Center</span>
-            </button>
-            <button
-              onClick={() => navigate('/marketplace')}
-              className="px-6 py-3.5 bg-[#0C2A18] hover:bg-[#15803D] text-[#D1FAE5] border border-emerald-600 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2"
-            >
-              <span>Corporate Marketplace</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Key Performance Indicators (Bento Grid) — pilot targets, not achieved metrics */}
-      <section className="max-w-7xl mx-auto px-4 md:px-10 -mt-8 relative z-20 mb-16">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800">
-              <Leaf className="w-6 h-6" />
+      <main id="main-content">
+        <section className="field-hero">
+          <div className="field-hero-copy">
+            <p className="field-kicker"><span /> Agricultural carbon & biodiversity</p>
+            <h1>Carbon starts<br className="hidden sm:block" /> in the <em>field.</em></h1>
+            <p>CarbonX connects Indian smallholder farms to carbon markets through field evidence, satellite estimates, and a settlement record everyone can follow.</p>
+            <div className="field-actions">
+              <Link className="field-button field-button-lime" to="/farmer/register">Register a farm <ArrowRight size={17} /></Link>
+              <Link className="field-button field-button-outline" to="/marketplace">Explore marketplace</Link>
             </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmland Target (Pilot)</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1"><CountUp value={14200} /> Acres</p>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">Verified across 10 Telangana Mandals</p>
-            </div>
+            <a className="field-scroll-link" href="#how-it-works"><ArrowDown size={17} /> From parcel to purchase</a>
           </div>
+          <figure className="field-hero-photo">
+            <figcaption><Map size={17} aria-hidden="true" /> Telangana farmland <span>Illustrative aerial view</span></figcaption>
+          </figure>
+        </section>
 
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800">
-              <Cpu className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sequestration Target</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1"><CountUp value={285.4} decimals={1} suffix="K" /> Tonnes</p>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">Indexed via Sentinel-2 multi-spectral NDVI</p>
-            </div>
+        <section id="how-it-works" className="field-process">
+          <div className="field-section-heading">
+            <p className="field-kicker"><span /> How it works</p>
+            <h2>Follow the evidence.</h2>
           </div>
-
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex items-center gap-4">
-            <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800">
-              <Wallet className="w-6 h-6" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Farmer Payout Target</p>
-              <p className="text-2xl font-extrabold text-slate-900 font-manrope mt-1">INR <CountUp value={12.4} decimals={1} /> Cr</p>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">70% farmer floor, ledger-recorded (bank transfer simulated in pilot)</p>
-            </div>
+          <div className="field-process-grid">
+            {steps.map(({ title, detail, icon: Icon }) => (
+              <article key={title}><Icon size={23} aria-hidden="true" /><h3>{title}</h3><p>{detail}</p></article>
+            ))}
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Institutional Trust Ribbon */}
-      <section className="bg-[#0C2A18] text-indigo-100 py-6 border-y border-emerald-900/50 mb-16">
-        <div className="max-w-7xl mx-auto px-4 md:px-10 flex flex-wrap justify-between items-center gap-6 text-xs font-semibold">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>Sentinel-2 Multi-Spectral NDVI</span>
+        <section className="field-disclosure">
+          <div><p className="field-kicker"><span /> Claims & verification</p><h2>Know what you’re buying.</h2>
+            <p>Carbon volumes are proxy estimates until field validation passes. The pilot settlement ledger records a 70% farmer share floor. Pilot bank transfers are simulated.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>Automated Boundary Verification</span>
+          <div className="field-actions">
+            <Link className="field-button field-button-lime" to="/trust">Read the evidence policy <ArrowRight size={17} /></Link>
+            <Link className="field-button field-button-light" to="/verify">Verify a certificate</Link>
           </div>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>SHA-256 Tamper-Evident Ledger</span>
+        </section>
+
+        <section className="field-roles">
+          <div className="field-section-heading"><p className="field-kicker"><span /> Workspaces</p><h2>Choose your role.</h2></div>
+          <div className="field-role-grid">
+            {roles.map(({ title, detail, to, label, icon: Icon }) => (
+              <article key={to}>
+                <Icon size={25} aria-hidden="true" />
+                <h3>{title}</h3><p>{detail}</p>
+                <Link to={to === '/fpo/login' && isAuthenticated && (role === 'fpo' || role === 'verifier') ? '/fpo/dashboard' : to}>
+                  {label} <ArrowRight size={17} />
+                </Link>
+              </article>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-            <span>UPI Payout Rails (escrow simulated, labelled)</span>
-          </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      {/* How CarbonX Works — the five-flow trust story */}
-      <section className="max-w-7xl mx-auto px-4 md:px-10 mb-20">
-        <div className="text-center mb-12">
-          <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-widest bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full">
-            The Trust Pipeline
-          </span>
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope mt-4">From field photo to farmer payout — in five evidence-tracked steps</h2>
-          <p className="text-sm text-slate-600 mt-2 max-w-2xl mx-auto">
-            Every credit on CarbonX walks the same auditable path. Nothing silently fails, nothing invisibly passes — and the farmer sees every rupee.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-          {[
-            { n: '1', t: 'Register & Validate', d: 'OTP login, OCR of any land document, map-drawn boundary. Failed checks escalate to the FPO queue — never silently dropped.' },
-            { n: '2', t: 'Verify (Stage 1)', d: 'Declared crop cross-checked against Sentinel-2 NDVI signatures. Mismatch pauses for human review — satellites check, humans judge.' },
-            { n: '3', t: 'Calculate (Stage 2)', d: 'VM0042-style five-step math: additionality, biomass, soil carbon — minus a 10–30% uncertainty deduction. Conservative by design.' },
-            { n: '4', t: 'Anchor & Monitor', d: 'Every credit anchors a SHA-256 evidence hash. A 5-day NDVI cycle flags at-risk credits straight to FPO review.' },
-            { n: '5', t: 'Sell & Split', d: 'Buyers see the farmer-level breakdown before paying. Escrow splits 70/5/25 or 70/30, purchase = instant retirement, certificate issued.' },
-          ].map((s) => (
-            <div key={s.n} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-emerald-300 transition-all">
-              <div className="w-9 h-9 rounded-full bg-[#0C2A18] text-emerald-200 font-extrabold text-sm flex items-center justify-center mb-3 font-manrope">
-                {s.n}
-              </div>
-              <h3 className="text-sm font-extrabold text-slate-900 font-manrope">{s.t}</h3>
-              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{s.d}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
-          <p className="text-xs text-emerald-900 font-semibold">
-            <span className="font-extrabold">Example farmer sale screen:</span> Credit sold · Price ₹1,800 · Your share (70%) ₹1,260 · FPO (5%) ₹90 · Platform (25%) ₹450 · Verified record sha256:3a7f…9e21 (illustrative sample)
-          </p>
-          <p className="text-[11px] text-emerald-700 mt-1">Every rupee, every recipient, every hash — one screen.</p>
-        </div>
-      </section>
-
-      {/* Quick Portal Navigation Cards */}
-      <section className="max-w-7xl mx-auto px-4 md:px-10 mb-20">
-        <FadeIn>
-        <div className="text-center mb-12">
-          <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 font-manrope">Ecosystem Access Portals</h2>
-          <p className="text-sm text-slate-600 mt-2">Select your role to access dedicated tools and verification workflows.</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Farmer Card */}
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex flex-col justify-between hover:border-emerald-500 transition-all">
-            <div>
-              <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800 mb-4">
-                <Users className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">Farmer Onboarding & Passport</h3>
-              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Voice assistance onboarding in Telugu/English, land verification, a satellite reality check, and ledger-recorded splits with a 70% farmer floor.
-              </p>
-            </div>
-            <button
-              onClick={() => navigate('/farmer/register')}
-              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
-            >
-              <span>Register / Login as Farmer</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* FPO Card */}
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex flex-col justify-between hover:border-emerald-500 transition-all">
-            <div>
-              <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800 mb-4">
-                <Building2 className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">FPO & Cooperative Command Center</h3>
-              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Bulk member onboarding, flagged record ground-truth inspector, cooperative credit pooling, and certificate management.
-              </p>
-            </div>
-            <button
-              onClick={() => navigate('/fpo/dashboard')}
-              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
-            >
-              <span>Access FPO Desk</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Corporate Card */}
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex flex-col justify-between hover:border-emerald-500 transition-all">
-            <div>
-              <div className="w-12 h-12 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-center text-emerald-800 mb-4">
-                <Globe className="w-6 h-6" />
-              </div>
-              <h3 className="text-lg font-bold text-slate-900">Corporate Buyer Marketplace</h3>
-              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                Filter satellite-screened credits by badge tier, run bulk auto-match allocation, and manage scope 1-3 retirement certificates with the proxy-validation label attached.
-              </p>
-            </div>
-            <button
-              onClick={() => navigate('/marketplace')}
-              className="mt-6 w-full py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2"
-            >
-              <span>Explore Credit Marketplace</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </FadeIn>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-[#0C2A18] text-indigo-100 py-8 border-t border-emerald-900/50 text-center text-xs">
-        <div className="max-w-7xl mx-auto px-4 md:px-10 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <p>CarbonX Platform: Enterprise Institutional AgTech Ecosystem</p>
-          <div className="flex gap-4">
-            <button onClick={() => navigate('/role-selection')} className="hover:text-white transition-colors">Role Portal</button>
-            <button onClick={() => navigate('/marketplace')} className="hover:text-white transition-colors">Marketplace</button>
-            <button onClick={() => navigate('/fpo/dashboard')} className="hover:text-white transition-colors">FPO Desk</button>
-            <button onClick={() => navigate('/verify')} className="hover:text-white transition-colors">Verify a Certificate</button>
-            <button onClick={() => navigate('/trust')} className="hover:text-white transition-colors">Trust &amp; Data</button>
-          </div>
-        </div>
+      <footer className="field-footer">
+        <Link className="field-brand" to="/"><span><Leaf size={19} /></span>CarbonX</Link>
+        <nav aria-label="Footer"><Link to="/trust">Trust & privacy</Link><Link to="/verify">Verification</Link><Link to="/support">Support</Link></nav>
       </footer>
-    </main>
+    </div>
   );
 }

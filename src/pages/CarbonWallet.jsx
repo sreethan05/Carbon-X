@@ -121,7 +121,7 @@ export default function CarbonWallet() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Header */}
-        <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="field-page-head bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-surface-sage border border-forest-200 px-2.5 py-0.5 rounded-full">
@@ -181,21 +181,21 @@ export default function CarbonWallet() {
         </div>
 
         {/* Financial Summary Banner */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-surface-sage border border-forest-200 text-carbon-900 shadow-card rounded-2xl p-6 flex flex-col justify-between">
+        <section className="field-wallet-summary" aria-label="Settlement overview">
+          <div className="field-wallet-total">
             <div>
-              <p className="text-[11px] font-semibold text-agriText-subtle uppercase tracking-wider">Total Lifetime Earned</p>
-              <p className="text-3xl font-extrabold font-manrope text-primary mt-2">
+              <p className="font-semibold text-xs text-lime-100">Total Lifetime Earned</p>
+              <p className="field-wallet-amount">
                 ₹{totalEarned.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </p>
-              <p className="text-xs font-bold text-emerald-800 mt-1">
+              <p className="text-xs font-bold text-emerald-100 mt-1">
                 {transactions.reduce((acc, t) => acc + (parseFloat(t.creditsSold) || 0), 0).toFixed(2)} MT Carbon Credits Settled
               </p>
             </div>
-            <p className="text-[11px] text-agriText-muted mt-4">Settled into linked bank account via simulated UPI</p>
+            <p className="text-xs text-emerald-100 mt-4">Recorded in the settlement ledger. UPI transfers are simulated.</p>
           </div>
 
-          <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col justify-between">
+          <div className="field-wallet-figure">
             <div>
               <p className="text-[11px] font-semibold text-agriText-subtle uppercase tracking-wider">Pending Escrow Balance</p>
               <p className="text-3xl font-extrabold text-amber-700 font-manrope mt-2">
@@ -205,7 +205,7 @@ export default function CarbonWallet() {
             <p className="text-xs text-agriText-muted mt-4">Held in smart escrow until corporate purchase execution</p>
           </div>
 
-          <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-6 flex flex-col justify-between">
+          <div className="field-wallet-figure">
             <div>
               <p className="text-[11px] font-semibold text-agriText-subtle uppercase tracking-wider">Your Share (70% floor)</p>
               <p className="text-3xl font-extrabold text-carbon-900 font-manrope mt-2">
@@ -220,13 +220,13 @@ export default function CarbonWallet() {
                 setWithdrawAmt(withdrawableUpi > 0 ? String(Math.min(1000, Math.floor(withdrawableUpi))) : '0');
               }}
               disabled={withdrawableUpi <= 0}
-              className="mt-4 w-full py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2"
+              className="field-button field-button-dark mt-4 w-full whitespace-normal"
             >
               <Wallet className="w-4 h-4" />
               <span>{withdrawableUpi > 0 ? 'Simulate UPI Payout Preview' : 'No Withdrawable Balance'}</span>
             </button>
           </div>
-        </div>
+        </section>
 
         {/* Split composition strip */}
         <div className="bg-white border border-forest-100 shadow-card rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">

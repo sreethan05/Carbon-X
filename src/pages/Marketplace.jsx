@@ -19,6 +19,7 @@ export default function Marketplace() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const checkoutInFlight = useRef(false);
+  const requestSequence = useRef(0);
 
   const [listings, setListings] = useState([]);
   const [dataSource, setDataSource] = useState('loading');
@@ -26,9 +27,11 @@ export default function Marketplace() {
   const [validation, setValidation] = useState(null);
 
   const loadListings = async () => {
+    const requestId = ++requestSequence.current;
     setDataSource('loading');
     setLoadError('');
-    const data = await getMarketplaceListings({ limit: 50, status: statusFilter === 'Active' ? 'Active' : undefined });
+    const data = await getMarketplaceListings({ limit: 50, status: statusFilter === 'Active' ? 'Active' : 'all' });
+    if (requestId !== requestSequence.current) return;
     if (!data || !data.success) {
       setListings([]);
       setDataSource('error');
@@ -48,7 +51,6 @@ export default function Marketplace() {
         price: l.price_per_credit ?? null,
         status: l.status || '—',
         badge: l.badge || null,
-        imageUrl: l.image_url,
       }));
     setListings(mapped);
     setValidation(data.validation || null);
@@ -220,20 +222,10 @@ export default function Marketplace() {
   const checkoutPrice = checkoutModalItem ? parseFloat(checkoutModalItem.price) : NaN;
   const checkoutTotal = Number.isFinite(checkoutPrice) ? checkoutQty * checkoutPrice : null;
 
-  // Crop visual identity — gradient + emoji tiles that always render (no
-  // network dependency), keyed by crop name.
-  const cropArt = (crop) => {
-    const map = {
-      rice: { emoji: "🌾", grad: "from-emerald-100 to-lime-200" },
-      paddy: { emoji: "🌾", grad: "from-emerald-100 to-lime-200" },
-      maize: { emoji: "🌽", grad: "from-amber-100 to-yellow-200" },
-      cotton: { emoji: "☁️", grad: "from-sky-100 to-slate-200" },
-      millets: { emoji: "🌾", grad: "from-orange-100 to-amber-200" },
-      sugarcane: { emoji: "🎋", grad: "from-lime-100 to-green-200" },
-      turmeric: { emoji: "🟡", grad: "from-yellow-100 to-orange-200" },
-      chilli: { emoji: "🌶️", grad: "from-red-100 to-orange-200" },
-    };
-    return map[(crop || "").toLowerCase()] || { emoji: "🌱", grad: "from-emerald-100 to-teal-200" };
+  const resetFilters = () => {
+    setSearchQuery('');
+    setSelectedCrop('ALL');
+    setStatusFilter('Active');
   };
 
   return (
@@ -242,33 +234,33 @@ export default function Marketplace() {
 
         {/* Header & Search Bar */}
         <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="field-market-head">
             <div>
-              <h1 className="text-2xl font-extrabold text-[#0F172A] font-manrope">Carbon Credit Marketplace</h1>
-              <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-                Direct agricultural carbon credit procurement from registered Telangana farms. Volumes are proxy estimates until field validation passes.
+              <h1>Carbon Credit Marketplace</h1>
+              <p>
+                Compare credit volumes and prices from Telangana farms. Volumes are proxy estimates until field validation passes.
+              </p>
                 {dataSource === 'fallback' && (
-                  <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                  <span className="inline-block mt-3 text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2 py-1 rounded">
                     SAMPLE DATA (DB offline)
                   </span>
                 )}
-              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => navigate('/create-listing')}
-                className="px-4 py-2.5 bg-white border border-emerald-600 text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                className="field-button field-button-light"
               >
-                <PlusCircle className="w-4 h-4 text-emerald-700" />
+                <PlusCircle className="w-4 h-4" />
                 <span>List Credits for Sale</span>
               </button>
 
               <button
                 onClick={() => navigate('/marketplace/checkout')}
-                className="px-5 py-2.5 bg-[#0C2A18] hover:bg-[#15803D] text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-2"
+                className="field-button field-button-lime"
               >
-                <ShoppingCart className="w-4 h-4 text-emerald-300" />
+                <ShoppingCart className="w-4 h-4" />
                 <span>Bulk Auto-Match Engine</span>
               </button>
             </div>
@@ -297,15 +289,16 @@ export default function Marketplace() {
             </div>
           )}
 
-          {/* Full-width clean white search bar */}
+          <section className="field-market-filters" aria-label="Listing filters">
           <div className="relative w-full">
-            <Search className="w-5 h-5 text-slate-400 absolute left-5 top-4" />
+            <Search className="w-5 h-5 text-slate-500 absolute left-4 top-3.5 pointer-events-none" />
             <input
               type="text"
               placeholder="Search by crop, farmer, or location..."
+              aria-label="Search by crop, farmer, or location"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200 rounded-full text-sm text-slate-900 shadow-sm focus:outline-none focus:border-emerald-600 font-medium"
+              className="w-full pl-12 pr-4 py-3.5 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 focus:border-emerald-600 font-medium"
             />
           </div>
 
@@ -315,22 +308,19 @@ export default function Marketplace() {
             <div className="flex flex-wrap items-center gap-1.5">
               {[
                 { id: 'ALL', label: 'All Crops' },
-                { id: 'Rice', label: '🌾 Rice / Paddy' },
-                { id: 'Cotton', label: '☁️ Cotton' },
-                { id: 'Maize', label: '🌽 Maize' },
-                { id: 'Millets', label: '🌾 Millets' },
-                { id: 'Sugarcane', label: '🎋 Sugarcane' },
-                { id: 'Chilli', label: '🌶️ Chilli' },
+                { id: 'Rice', label: 'Rice / Paddy' },
+                { id: 'Cotton', label: 'Cotton' },
+                { id: 'Maize', label: 'Maize' },
+                { id: 'Millets', label: 'Millets' },
+                { id: 'Sugarcane', label: 'Sugarcane' },
+                { id: 'Chilli', label: 'Chilli' },
               ].map(c => (
                 <button
                   key={c.id}
                   type="button"
+                  aria-pressed={selectedCrop === c.id}
                   onClick={() => setSelectedCrop(c.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
-                    selectedCrop === c.id
-                      ? 'bg-[#0C2A18] text-emerald-100 shadow-sm'
-                      : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
+                  className="field-market-chip"
                 >
                   {c.label}
                 </button>
@@ -338,10 +328,11 @@ export default function Marketplace() {
             </div>
 
             {/* Status & Sort Controls */}
-            <div className="flex items-center gap-2 self-end md:self-auto text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <div className="flex items-center bg-white border border-slate-200 rounded-xl p-0.5 shadow-xs">
                 <button
                   type="button"
+                  aria-pressed={statusFilter === 'Active'}
                   onClick={() => setStatusFilter('Active')}
                   className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                     statusFilter === 'Active' ? 'bg-emerald-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
@@ -351,6 +342,7 @@ export default function Marketplace() {
                 </button>
                 <button
                   type="button"
+                  aria-pressed={statusFilter === 'ALL'}
                   onClick={() => setStatusFilter('ALL')}
                   className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
                     statusFilter === 'ALL' ? 'bg-emerald-800 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
@@ -372,8 +364,17 @@ export default function Marketplace() {
               </select>
             </div>
           </div>
+          </section>
         </div>
 
+        {(dataSource === 'fallback' || dataSource === 'live_db') && (
+          <div className="field-market-results">
+            <p aria-live="polite">{filteredListings.length} {filteredListings.length === 1 ? 'listing' : 'listings'}{listings.length === 50 ? ' on this page' : ''}</p>
+            {(selectedCrop !== 'ALL' || searchQuery || statusFilter !== 'Active') && (
+              <button className="field-back" type="button" onClick={resetFilters}>Reset filters</button>
+            )}
+          </div>
+        )}
         {/* Marketplace product grid */}
         {dataSource === 'loading' ? (
           <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center">
@@ -401,17 +402,14 @@ export default function Marketplace() {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
             {filteredListings.map(item => {
               const qty = getQuantity(item.id, item.available);
-              const art = cropArt(item.crop);
               const isAvailable = (item.status || '').toLowerCase() === 'active' && (item.available == null || item.available > 0);
               return (
-                <div key={item.id} className="bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md hover:border-emerald-300 transition-all overflow-hidden flex flex-col">
-                  {/* Crop art tile */}
-                  <div className={`relative h-28 bg-gradient-to-br ${art.grad} flex items-center justify-center`}>
-                    <span className="text-5xl drop-shadow-sm">{art.emoji}</span>
-                    <span className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-white/90 text-emerald-900 border border-emerald-200">
+                <article key={item.id} className="field-market-card">
+                  <div className="field-market-card-band">
+                    <span className="px-2.5 py-1 rounded text-[11px] font-bold bg-white text-emerald-900 border border-emerald-200">
                       {item.badge || 'UNRATED'}
                     </span>
-                    <span className={`absolute top-3 right-3 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                    <span className={`px-2.5 py-1 rounded text-[11px] font-bold ${
                       (item.status || '').toLowerCase() === 'active'
                         ? 'bg-[#0C2A18] text-emerald-100'
                         : 'bg-slate-700 text-slate-200'
@@ -442,7 +440,7 @@ export default function Marketplace() {
                       {item.farmer}
                     </p>
 
-                    <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="field-market-metrics">
                       <div className="bg-slate-50 border border-slate-100 rounded-lg py-1.5">
                         <p className="text-[9px] font-bold text-slate-500 uppercase">Available</p>
                         <p className="text-xs font-extrabold text-slate-900">{item.available ?? '—'}</p>
@@ -464,7 +462,7 @@ export default function Marketplace() {
                           aria-label="Decrease quantity"
                           disabled={!isAvailable || qty <= 1}
                           onClick={() => updateQuantity(item.id, -1, item.available)}
-                          className="p-0.5 hover:bg-slate-100 disabled:opacity-40 rounded text-slate-600"
+                          className="field-quantity hover:bg-slate-100 disabled:opacity-40 rounded text-slate-600"
                         >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
@@ -474,7 +472,7 @@ export default function Marketplace() {
                           aria-label="Increase quantity"
                           disabled={!isAvailable || (item.available != null && qty >= item.available)}
                           onClick={() => updateQuantity(item.id, 1, item.available)}
-                          className="p-0.5 hover:bg-slate-100 disabled:opacity-40 rounded text-slate-600"
+                          className="field-quantity hover:bg-slate-100 disabled:opacity-40 rounded text-slate-600"
                         >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
@@ -483,9 +481,9 @@ export default function Marketplace() {
                         type="button"
                         disabled={!isAvailable}
                         onClick={() => handleBuyClick(item)}
-                        className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1 ${
+                        className={`field-button flex-1 ${
                           isAvailable
-                            ? 'bg-[#0C2A18] hover:bg-[#15803D] text-white'
+                            ? 'field-button-dark'
                             : 'bg-slate-200 text-slate-500 cursor-not-allowed'
                         }`}
                       >
@@ -494,7 +492,7 @@ export default function Marketplace() {
                       </button>
                     </div>
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>

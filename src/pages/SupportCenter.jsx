@@ -105,7 +105,7 @@ export default function SupportCenter() {
     { role: 'bot', text: 'Hello! I am CarbonX Support. How can I assist you with farm verification, satellite monitoring, or credit transparent settlement?' }
   ]);
   const [input, setInput] = useState('');
-  const chatEnd = useRef(null);
+  const chatLog = useRef(null);
 
   // Tracked support requests (Open → In Review → Resolved/Rejected).
   const [tickets, setTickets] = useState([]);
@@ -123,7 +123,10 @@ export default function SupportCenter() {
     if (res?.success) setTickets(res.tickets || []);
   }, [isAuthenticated]);
 
-  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+  useEffect(() => {
+    const log = chatLog.current;
+    log?.scrollTo({ top: log.scrollHeight });
+  }, [messages]);
   useEffect(() => { loadTickets(); }, [loadTickets]);
 
   const submitTicket = async (e) => {
@@ -169,7 +172,7 @@ export default function SupportCenter() {
 
   return (
     <div className="product-page pb-24 px-4 pt-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="field-page-head flex items-start gap-3">
         <button aria-label="Back to dashboard" onClick={() => navigate('/dashboard')} className="p-2 rounded-xl bg-white border border-forest-100 text-carbon-600 hover:text-forest-800">
           <ChevronLeft className="w-5 h-5" />
         </button>
@@ -393,7 +396,7 @@ export default function SupportCenter() {
           <MessageSquare size={18} />
           <span className="text-xs font-bold font-manrope">CarbonX Transparency & Support Assistant</span>
         </div>
-        <div className="p-4 space-y-3 max-h-80 overflow-y-auto">
+        <div ref={chatLog} role="log" aria-label="Support conversation" className="p-4 space-y-3 max-h-80 overflow-y-auto">
           {messages.map((m, i) => (
             <div key={i} className={`flex gap-2 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${m.role === 'user' ? 'bg-forest-100 text-forest-700' : 'bg-forest-800 text-white'}`}>
@@ -404,7 +407,6 @@ export default function SupportCenter() {
               </div>
             </div>
           ))}
-          <div ref={chatEnd} />
         </div>
 
         {/* Quick replies */}

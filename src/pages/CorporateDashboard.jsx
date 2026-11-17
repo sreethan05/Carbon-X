@@ -1,11 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Download, FileText, Sparkles, ArrowRight, ShieldCheck, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getCertificates, getCorporateSettings, updateCorporateSettings } from '../services/api';
 
 export default function CorporateDashboard() {
   const navigate = useNavigate();
+  const { hash } = useLocation();
+
+  useEffect(() => {
+    if (hash === '#certificates') document.getElementById('certificates')?.scrollIntoView({ block: 'start' });
+  }, [hash]);
   const { user } = useAuth();
 
   const companyName = user?.name || 'Corporate Buyer';
@@ -150,7 +155,7 @@ export default function CorporateDashboard() {
       <div className="max-w-7xl mx-auto space-y-6">
 
         {/* Corporate Profile Header */}
-        <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div className="field-page-head bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <span className="text-xs font-semibold text-emerald-800 uppercase tracking-wider bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full">
               Enterprise ESG Desk
@@ -324,7 +329,7 @@ export default function CorporateDashboard() {
           </div>
 
           {/* Procurement Certificates */}
-          <div className="bg-white border border-slate-200 border-l-4 border-l-emerald-600 shadow-sm rounded-xl p-6 space-y-4">
+          <div id="certificates" className="scroll-mt-24 bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-emerald-50 text-emerald-800 rounded-xl flex items-center justify-center">
                 <ShieldCheck className="w-5 h-5" />

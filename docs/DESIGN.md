@@ -1,30 +1,40 @@
 # CarbonX — Design System (DESIGN.md)
 
 > HOW IT SHOULD LOOK AND FEEL. Single source of truth for visual tokens.
-> The tokens below are the actual values from `tailwind.config.js` and
-> `src/index.css` — do not invent new one-off colors; add a token here if one
-> is needed. Update this doc in the same PR that changes visual behaviour.
+> Shared web surfaces use `src/field-design.css`. Product components also
+> use the semantic tokens in `tailwind.config.js`. The Flutter palette is in
+> `mobile/lib/src/theme.dart`.
 
 ## Style
 
-Modern climate-intelligence workspace: a calm **warm-paper canvas** with a subtle
-technical grid, deep-forest navigation, emerald evidence accents, generous
-whitespace, and rounded premium surfaces. The authenticated shell intentionally
-feels operational and trustworthy while public pages remain welcoming. Motion is
-short and functional, with a complete reduced-motion fallback.
+CarbonX uses warm paper, pine, and chartreuse across its public site, web
+workspaces, and Flutter app. Headings establish the page hierarchy before forms
+or records. The landing photograph is an illustration of Telangana farmland
+and is labelled accordingly. Desktop web navigation uses a rail. On narrow
+screens, a bottom bar gives direct access to frequent routes and the menu shows
+the full workspace.
 
 ## Typography
 
-- **Headings:** `font-manrope` (Manrope, 600/semi-bold, tracking-tight) — applied
-  to all `h1…h6` via `@layer base`.
+- **Headings:** Instrument Serif on web page titles and Manrope on local component
+  headings. Flutter uses the platform sans serif.
 - **Body:** `font-inter` (Inter, weights 300–700) — default body font.
-- **Accent/marketing display:** `font-poppins` (Poppins, 300–800).
 - Fonts load from Google Fonts in `src/index.css` (include when offline
   fallbacks are needed; do not swap families silently).
 - Body text color: `carbon-900` (#0F172A). Muted: `agriText-muted` (#475569),
   subtle: `agriText-subtle` (#64748B).
 
 ## Color tokens
+
+| Shared web and Flutter color | Hex | Use |
+|---|---|---|
+| Paper | `#F6F5EE` | Page canvas |
+| Panel | `#FFFEF9` | Work surfaces and navigation |
+| Pine | `#102C23` | Primary buttons, dark panels |
+| Chartreuse | `#D9F08D` | Active navigation and actions on pine |
+| Ink | `#172A22` | Headings and text |
+| Muted | `#526159` | Supporting text |
+| Border | `#DBE0D2` | Panels and dividers |
 
 ### Brand / action
 | Token | Hex | Use |

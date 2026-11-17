@@ -59,7 +59,7 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
     ).toBeVisible();
   });
 
-  test('farm mapping refuses to submit without a drawn parcel boundary', async ({
+  test('farm mapping requires a parcel boundary and accepts a closed polygon', async ({
     page,
     request,
   }) => {
@@ -75,6 +75,15 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
       name: /Confirm Boundary & Proceed/i,
     });
     await expect(proceed).toBeDisabled();
+
+    await page.getByRole('button', { name: 'Draw Boundary', exact: true }).click();
+    const map = page.locator('.leaflet-container');
+    for (const position of [{ x: 260, y: 210 }, { x: 380, y: 227 }, { x: 320, y: 333 }]) {
+      await map.click({ position });
+    }
+    await page.getByRole('button', { name: /Close Boundary/i }).click();
+    await expect(page.getByText('Live Area:', { exact: true })).toBeVisible();
+    await expect(proceed).toBeEnabled();
   });
 
   test('carbon passport shows analytics and the trust & ledger card', async ({
@@ -127,7 +136,8 @@ test.describe('farmer demo session (demo credentials, DB-off)', () => {
     await page.goto('/farmer/login', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: /Explore in Demo Mode/i }).click();
     await page.waitForURL('**/farmer/dashboard');
-    await page.getByRole('button', { name: 'Support' }).click();
+    await page.getByRole('navigation', { name: 'Workspace navigation' })
+      .getByRole('link', { name: 'Support' }).click();
     await page.waitForURL('**/support');
     // Let the SupportCenter mount (ticket list + form) after client-side nav.
     await page.getByText('My Requests').waitFor();

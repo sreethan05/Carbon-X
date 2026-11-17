@@ -143,7 +143,7 @@ export default function FarmMapRegistration() {
     <div className="product-page min-h-screen font-inter text-agriText-main flex flex-col">
 
       {/* Top Header Bar */}
-      <div className="bg-white border-b border-forest-100 px-4 md:px-8 py-3.5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+      <div className="field-page-head field-map-head bg-white border-b border-forest-100 px-4 md:px-8 py-3.5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-primary uppercase tracking-wider bg-surface-sage border border-forest-200 px-2.5 py-0.5 rounded-full">

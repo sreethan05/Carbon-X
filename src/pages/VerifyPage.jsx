@@ -53,7 +53,7 @@ export default function VerifyPage() {
   return (
     <div className="product-page min-h-screen font-inter text-slate-900">
       {/* Header */}
-      <div className="bg-[#0C2A18] text-white py-10 px-4 md:px-10">
+      <div className="field-tinted-head">
         <div className="max-w-5xl mx-auto">
           <button onClick={() => navigate("/")} className="text-xs font-semibold text-emerald-200 hover:text-white transition flex items-center gap-1.5 mb-4">
             ← CarbonX
@@ -70,11 +70,12 @@ export default function VerifyPage() {
             <input
               type="text"
               value={searchId}
+              aria-label="Certificate ID"
               onChange={(e) => setSearchId(e.target.value)}
               placeholder="Enter certificate ID — e.g. CX-2026-CERT-7D39E1F7"
-              className="flex-1 px-4 py-3 rounded-xl bg-white/10 border border-white/20 text-white placeholder-emerald-200/50 text-sm font-mono focus:outline-none focus:border-emerald-300"
+              className="flex-1 min-w-0 px-4 py-3 rounded-lg bg-white/10 border border-white/30 text-white placeholder-emerald-100 text-sm font-mono focus:border-emerald-300"
             />
-            <button type="submit" className="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold text-sm rounded-xl transition flex items-center justify-center gap-2">
+            <button type="submit" className="field-button field-button-lime">
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               Verify
             </button>
